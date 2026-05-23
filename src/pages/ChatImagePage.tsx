@@ -676,6 +676,8 @@ export function ChatImagePage({
     const activeSession = sessionRef.current
     const userMessageId = retryMessageId ?? crypto.randomUUID()
     const waitingMessageId = crypto.randomUUID()
+    const referenceImageUrl = referenceImage?.url
+    const nextReferenceImage = referenceImage
     const waitingMessage: ChatMessage = {
       id: waitingMessageId,
       role: 'assistant',
@@ -703,6 +705,8 @@ export function ChatImagePage({
     }
     setMessages(submittedMessages)
     updateActiveSession({ messages: submittedMessages, prompt: retryMessageId ? prompt : '' })
+    setReferenceImage(null)
+    updateActiveSession({ referenceImage: null })
 
     try {
       const response = await clientApi.generateImage({
@@ -712,7 +716,7 @@ export function ChatImagePage({
         sizeTier,
         size: outputSize,
         quantity,
-        referenceImageUrl: referenceImage?.url,
+        referenceImageUrl,
       })
       if (sessionRef.current !== activeSession) return
       updateActiveSession({ currentTask: response.data })
@@ -735,13 +739,16 @@ export function ChatImagePage({
       if (sessionRef.current !== activeSession) return
       const completedMessages = applyCompletedTaskMessages(submittedMessages, completedTask)
       setMessages(completedMessages)
-      setReferenceImage(null)
       updateActiveSession({ messages: completedMessages, currentTask: completedTask, referenceImage: null })
       if (completedTask.durationSeconds > 0) {
         setEstimatedWaitSeconds(Math.max(10, Math.round(completedTask.durationSeconds)))
       }
     } catch (error) {
       if (sessionRef.current !== activeSession) return
+      if (nextReferenceImage) {
+        setReferenceImage(nextReferenceImage)
+        updateActiveSession({ referenceImage: nextReferenceImage })
+      }
       const message = error instanceof Error ? error.message : '生成失败'
       const failedMessages = submittedMessages
         .filter((item) => item.id !== waitingMessageId)
