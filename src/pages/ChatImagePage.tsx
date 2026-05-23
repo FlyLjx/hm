@@ -731,7 +731,8 @@ export function ChatImagePage({
       if (sessionRef.current !== activeSession) return
       const completedMessages = applyCompletedTaskMessages(submittedMessages, completedTask)
       setMessages(completedMessages)
-      updateActiveSession({ messages: completedMessages, currentTask: completedTask })
+      setReferenceImage(null)
+      updateActiveSession({ messages: completedMessages, currentTask: completedTask, referenceImage: null })
       if (completedTask.durationSeconds > 0) {
         setEstimatedWaitSeconds(Math.max(10, Math.round(completedTask.durationSeconds)))
       }
