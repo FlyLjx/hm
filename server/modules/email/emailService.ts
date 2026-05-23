@@ -35,12 +35,40 @@ export class EmailService {
       from: fromAddress,
     })
 
-    await transporter.sendMail({
-      from: `"${fromName}" <${fromAddress}>`,
-      to: input.to,
-      subject: input.subject,
-      text: input.text,
-      html: input.html,
-    })
+    try {
+      await transporter.verify()
+      const info = await transporter.sendMail({
+        from: `"${fromName}" <${fromAddress}>`,
+        to: input.to,
+        subject: input.subject,
+        text: input.text,
+        html: input.html,
+      })
+
+      console.info('[email:sent]', {
+        messageId: info.messageId,
+        accepted: info.accepted,
+        rejected: info.rejected,
+        response: info.response,
+      })
+
+      if (info.rejected.length > 0 || info.accepted.length === 0) {
+        throw new AppError(502, `邮件发送未被收件服务器接受：${info.response || info.rejected.join(', ')}`)
+      }
+    } catch (error) {
+      console.error('[email:error]', {
+        to: input.to,
+        subject: input.subject,
+        code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
+        command: error && typeof error === 'object' && 'command' in error ? error.command : undefined,
+        response: error && typeof error === 'object' && 'response' in error ? error.response : undefined,
+        message: error instanceof Error ? error.message : String(error),
+      })
+
+      if (error instanceof AppError) {
+        throw error
+      }
+      throw new AppError(502, error instanceof Error ? error.message : '邮件发送失败')
+    }
   }
 }
