@@ -216,11 +216,20 @@ export class UserService {
       expiresInMinutes: 30,
     })
     const resetUrl = `${settings.frontendUrl}/?resetPasswordToken=${encodeURIComponent(token)}`
+    const emailHtml = buildEmailTemplate({
+      title: '找回密码',
+      description: '你收到这封邮件是因为请求了密码重置。',
+      primaryText: '重置密码',
+      primaryUrl: resetUrl,
+      fallbackLabel: '如果按钮无法点击，请复制下面的链接：',
+      fallbackUrl: resetUrl,
+      footer: '如果这不是你发起的操作，可以忽略此邮件。',
+    })
     await this.emailService.sendMail({
       to: user.email,
       subject: `${settings.siteName} 找回密码`,
       text: `请在 30 分钟内打开链接重置密码：${resetUrl}`,
-      html: `<p>请在 30 分钟内打开下面的链接重置密码：</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
+      html: emailHtml,
     })
   }
 
@@ -255,11 +264,50 @@ export class UserService {
       expiresInMinutes: 60,
     })
     const verifyUrl = `${settings.frontendUrl}/?verifyEmailToken=${encodeURIComponent(token)}`
+    const emailHtml = buildEmailTemplate({
+      title: '邮箱验证',
+      description: '请点击下面的按钮完成邮箱验证。',
+      primaryText: '验证邮箱',
+      primaryUrl: verifyUrl,
+      fallbackLabel: '如果按钮无法点击，请复制下面的链接：',
+      fallbackUrl: verifyUrl,
+      footer: '如果这不是你发起的操作，可以忽略此邮件。',
+    })
     await this.emailService.sendMail({
       to: email,
       subject: `${settings.siteName} 邮箱验证`,
       text: `请在 60 分钟内打开链接完成邮箱验证：${verifyUrl}`,
-      html: `<p>请在 60 分钟内打开下面的链接完成邮箱验证：</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+      html: emailHtml,
     })
   }
+}
+
+function buildEmailTemplate(input: {
+  title: string
+  description: string
+  primaryText: string
+  primaryUrl: string
+  fallbackLabel: string
+  fallbackUrl: string
+  footer: string
+}) {
+  return `
+    <div style="margin:0;background:#f4f7fb;padding:24px 0;font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+        <div style="padding:28px 32px 18px;background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border-bottom:1px solid #d1fae5;">
+          <div style="font-size:13px;letter-spacing:.08em;color:#16a34a;font-weight:700;">AIπ</div>
+          <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;color:#0f172a;">${input.title}</h1>
+        </div>
+        <div style="padding:28px 32px 30px;">
+          <p style="margin:0 0 22px;font-size:15px;line-height:1.75;color:#334155;">${input.description}</p>
+          <div style="text-align:center;margin:0 0 24px;">
+            <a href="${input.primaryUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-size:15px;font-weight:700;">${input.primaryText}</a>
+          </div>
+          <p style="margin:0 0 10px;font-size:13px;line-height:1.7;color:#64748b;">${input.fallbackLabel}</p>
+          <p style="margin:0 0 24px;word-break:break-all;font-size:13px;line-height:1.7;color:#2563eb;">${input.fallbackUrl}</p>
+          <div style="padding-top:18px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.7;color:#94a3b8;">${input.footer}</div>
+        </div>
+      </div>
+    </div>
+  `
 }
