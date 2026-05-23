@@ -17,8 +17,6 @@ export class EmailTokenService {
   }) {
     await this.emailTokenRepository.invalidateOpenTokens(input.email, input.type)
     const token = randomBytes(32).toString('hex')
-    const now = new Date()
-    const expiresAt = new Date(now.getTime() + (input.expiresInMinutes ?? 30) * 60 * 1000)
 
     await this.emailTokenRepository.create({
       id: randomUUID(),
@@ -26,9 +24,8 @@ export class EmailTokenService {
       userId: input.userId ?? null,
       type: input.type,
       tokenHash: hashToken(token),
-      expiresAt: expiresAt.toISOString(),
+      expiresInMinutes: input.expiresInMinutes ?? 30,
       usedAt: null,
-      createdAt: now.toISOString(),
     })
 
     return token

@@ -6,7 +6,8 @@ export type EmailToken = {
   userId: string | null
   type: EmailTokenType
   tokenHash: string
-  expiresAt: string
+  expiresInMinutes?: number
+  expiresAt?: string
   usedAt: string | null
-  createdAt: string
+  createdAt?: string
 }

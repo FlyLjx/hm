@@ -38,6 +38,7 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(Boolean(initialResetToken))
   const [creditName, setCreditName] = useState('积分')
   const [resetPasswordToken, setResetPasswordToken] = useState<string | null>(initialResetToken)
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const isImmersivePage = activePage === 'canvas'
 
   useEffect(() => {
@@ -113,10 +114,13 @@ function App() {
       clientApi
         .verifyEmail(verifyToken)
         .then(() => {
-          window.alert('邮箱验证成功，请登录。')
+          setNotice({ type: 'success', text: '邮箱验证成功，请登录。' })
         })
         .catch((error) => {
-          window.alert(error instanceof Error ? error.message : '邮箱验证失败')
+          setNotice({
+            type: 'error',
+            text: error instanceof Error ? error.message : '邮箱验证失败',
+          })
         })
         .finally(() => {
           removeQueryToken('verifyEmailToken')
@@ -173,6 +177,17 @@ function App() {
         {activePage === 'canvas' && <WorkflowCanvasPage setActivePage={setActivePage} />}
         {activePage === 'video' && <VideoPage />}
       </section>
+
+      {notice && (
+        <div
+          className={`notice-toast ${notice.type}`}
+          role="status"
+          onAnimationEnd={() => window.setTimeout(() => setNotice(null), 3000)}
+        >
+          <strong>{notice.type === 'success' ? '提示' : '错误'}</strong>
+          <p>{notice.text}</p>
+        </div>
+      )}
 
       <LoginDialog
         key={resetPasswordToken ?? 'auth'}
