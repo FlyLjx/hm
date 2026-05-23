@@ -296,6 +296,7 @@ export function ChatImagePage({
   const [estimatedWaitSeconds, setEstimatedWaitSeconds] = useState(30)
   const [activeConfigMenu, setActiveConfigMenu] = useState<'ratio' | 'size' | 'quantity' | null>(null)
   const sessionRef = useRef(0)
+  const lastSyncedSessionIdRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -306,6 +307,8 @@ export function ChatImagePage({
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0]
   const sessionNo = activeSession?.no ?? 1
   const isGenerating = activeSession ? isRunningTask(activeSession.currentTask) : false
+  const activeSessionTaskId = activeSession?.currentTask?.id ?? null
+  const activeSessionTaskStatus = activeSession?.currentTask?.status ?? null
 
   const showNotice = (message: string, type: NoticeState['type'] = 'error') => {
     setNotice({ message, type })
@@ -373,12 +376,13 @@ export function ChatImagePage({
   }, [activeSessionId, sessions, storageKey])
 
   useEffect(() => {
+    if (!storageKey) return
+    if (lastSyncedSessionIdRef.current === activeSessionId) return
+    lastSyncedSessionIdRef.current = activeSessionId
     window.setTimeout(() => {
-      if (storageKey) {
-        void syncTasksFromBackend(sessions, activeSessionId)
-      }
+      void syncTasksFromBackend(sessions, activeSessionId)
     }, 0)
-  }, [activeSessionId, sessions, storageKey])
+  }, [activeSessionId, storageKey])
 
   const updateActiveSession = (input: Partial<Omit<ChatSession, 'id' | 'no' | 'createdAt'>>) => {
     setSessions((items) =>
@@ -563,7 +567,7 @@ export function ChatImagePage({
     return () => {
       ignore = true
     }
-  }, [activeSession])
+  }, [activeSessionId, activeSessionTaskId, activeSessionTaskStatus])
 
   const handleReferenceFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
