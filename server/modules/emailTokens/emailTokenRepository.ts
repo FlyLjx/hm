@@ -26,6 +26,14 @@ function toEmailToken(row: EmailTokenRow): EmailToken {
   }
 }
 
+function toMysqlDateTime(value: string | null) {
+  if (!value) {
+    return null
+  }
+
+  return value.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace(/Z$/, '')
+}
+
 export class EmailTokenRepository {
   async create(token: EmailToken) {
     await db.query(
@@ -33,7 +41,12 @@ export class EmailTokenRepository {
         (id, email, user_id, type, token_hash, expires_at, used_at, created_at)
        VALUES
         (:id, :email, :userId, :type, :tokenHash, :expiresAt, :usedAt, :createdAt)`,
-      token,
+      {
+        ...token,
+        expiresAt: toMysqlDateTime(token.expiresAt),
+        usedAt: toMysqlDateTime(token.usedAt),
+        createdAt: toMysqlDateTime(token.createdAt),
+      },
     )
     return this.findById(token.id)
   }
