@@ -1,9 +1,19 @@
 import { z } from 'zod'
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const optionalUuid = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value
+  }
+  const trimmed = value.trim()
+  return uuidPattern.test(trimmed) ? trimmed : null
+}, z.string().uuid().optional().nullable())
+
 export const createUserSchema = z.object({
-  email: z.string().email().max(120),
-  password: z.string().min(6).max(100),
+  email: z.string().email('请输入正确的邮箱地址').max(120, '邮箱不能超过 120 个字符'),
+  password: z.string().min(6, '密码至少需要 6 个字符').max(100, '密码不能超过 100 个字符'),
   role: z.enum(['admin', 'user']).default('user'),
+  inviterId: optionalUuid,
 })
 
 export const updateUserSchema = createUserSchema
@@ -16,8 +26,8 @@ export const updateUserSchema = createUserSchema
   })
 
 export const loginSchema = z.object({
-  email: z.string().email().max(120),
-  password: z.string().min(1),
+  email: z.string().email('请输入正确的邮箱地址').max(120, '邮箱不能超过 120 个字符'),
+  password: z.string().min(1, '请输入密码'),
 })
 
 export const updateUserStatusSchema = z.object({
@@ -25,7 +35,7 @@ export const updateUserStatusSchema = z.object({
 })
 
 export const rechargeUserSchema = z.object({
-  amount: z.number().positive().max(999999),
+  amount: z.number().min(-999999).max(999999).refine((value) => value !== 0, '调整额度不能为 0'),
   remark: z.string().max(200).optional(),
 })
 
@@ -34,10 +44,10 @@ export const verifyEmailSchema = z.object({
 })
 
 export const forgotPasswordSchema = z.object({
-  email: z.string().email().max(120),
+  email: z.string().email('请输入正确的邮箱地址').max(120, '邮箱不能超过 120 个字符'),
 })
 
 export const resetPasswordSchema = z.object({
   token: z.string().min(20).max(200),
-  password: z.string().min(6).max(100),
+  password: z.string().min(6, '密码至少需要 6 个字符').max(100, '密码不能超过 100 个字符'),
 })

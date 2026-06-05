@@ -17,8 +17,17 @@ function sendJson(socket: WebSocket, payload: unknown) {
 }
 
 export function attachTaskSocket(server: HttpServer) {
-  const wss = new WebSocketServer({ server, path: '/ws/tasks' })
+  const wss = new WebSocketServer({ noServer: true })
   const subscriptions = new Map<WebSocket, Set<string>>()
+
+  server.on('upgrade', (request, socket, head) => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+    if (pathname !== '/ws/tasks') return
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request)
+    })
+  })
 
   wss.on('connection', (socket) => {
     subscriptions.set(socket, new Set())
@@ -51,6 +60,14 @@ export function attachTaskSocket(server: HttpServer) {
     for (const [socket, taskIds] of subscriptions.entries()) {
       if (taskIds.has(task.id)) {
         sendJson(socket, { type: 'task', data: task })
+      }
+    }
+  })
+
+  taskEvents.onProgress((progress) => {
+    for (const [socket, taskIds] of subscriptions.entries()) {
+      if (taskIds.has(progress.taskId)) {
+        sendJson(socket, { type: 'progress', data: progress })
       }
     }
   })

@@ -6,12 +6,18 @@ type AiModelRow = RowDataPacket & {
   id: string
   provider_id: string
   provider_name?: string
+  provider_type?: 'sub2api' | 'custom'
   model_name: string
   display_name: string
   capability: AiModelCapability
+  cost_1k: string | number
+  cost_2k: string | number
+  cost_4k: string | number
+  markup_percent: string | number
   price_1k: string | number
   price_2k: string | number
   price_4k: string | number
+  append_size_to_prompt: number | boolean
   status: AiModelStatus
   created_at: Date
   updated_at: Date
@@ -22,12 +28,18 @@ function toAiModel(row: AiModelRow): AiModel {
     id: row.id,
     providerId: row.provider_id,
     providerName: row.provider_name,
+    providerType: row.provider_type,
     modelName: row.model_name,
     displayName: row.display_name,
     capability: row.capability,
+    cost1k: Number(row.cost_1k),
+    cost2k: Number(row.cost_2k),
+    cost4k: Number(row.cost_4k),
+    markupPercent: Number(row.markup_percent),
     price1k: Number(row.price_1k),
     price2k: Number(row.price_2k),
     price4k: Number(row.price_4k),
+    appendSizeToPrompt: Boolean(row.append_size_to_prompt),
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -37,13 +49,13 @@ function toAiModel(row: AiModelRow): AiModel {
 export class ModelRepository {
   async findAll() {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
+       WHERE ai_models.capability = 'chat_image'
        ORDER BY
         api_providers.name ASC,
         ai_models.model_name ASC,
-        FIELD(ai_models.capability, 'image', 'chat_image', 'workflow', 'video') ASC,
         ai_models.created_at DESC,
         ai_models.id ASC`,
     )
@@ -52,7 +64,7 @@ export class ModelRepository {
 
   async findById(id: string) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.id = :id
@@ -65,14 +77,23 @@ export class ModelRepository {
   async create(model: AiModel) {
     await db.query(
       `INSERT INTO ai_models
-        (id, provider_id, model_name, display_name, capability, price_1k, price_2k, price_4k, status)
+        (id, provider_id, model_name, display_name, capability,
+         cost_1k, cost_2k, cost_4k, markup_percent,
+         price_1k, price_2k, price_4k, append_size_to_prompt, status)
        VALUES
-        (:id, :providerId, :modelName, :displayName, :capability, :price1k, :price2k, :price4k, :status)
+        (:id, :providerId, :modelName, :displayName, :capability,
+         :cost1k, :cost2k, :cost4k, :markupPercent,
+         :price1k, :price2k, :price4k, :appendSizeToPrompt, :status)
        ON DUPLICATE KEY UPDATE
         display_name = VALUES(display_name),
+        cost_1k = VALUES(cost_1k),
+        cost_2k = VALUES(cost_2k),
+        cost_4k = VALUES(cost_4k),
+        markup_percent = VALUES(markup_percent),
         price_1k = VALUES(price_1k),
         price_2k = VALUES(price_2k),
         price_4k = VALUES(price_4k),
+        append_size_to_prompt = VALUES(append_size_to_prompt),
         updated_at = CURRENT_TIMESTAMP`,
       model,
     )
@@ -85,7 +106,7 @@ export class ModelRepository {
     capability: AiModelCapability,
   ) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.provider_id = :providerId
@@ -97,6 +118,25 @@ export class ModelRepository {
     return rows[0] ? toAiModel(rows[0]) : null
   }
 
+  async findByProviderDisplayNameAndCapability(
+    providerId: string,
+    displayName: string,
+    capability: AiModelCapability,
+  ) {
+    const [rows] = await db.query<AiModelRow[]>(
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+       FROM ai_models
+       LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
+       WHERE ai_models.provider_id = :providerId
+         AND ai_models.display_name = :displayName
+         AND ai_models.capability = :capability
+         AND ai_models.status = 'active'
+       ORDER BY ai_models.model_name ASC`,
+      { providerId, displayName, capability },
+    )
+    return rows.map(toAiModel)
+  }
+
   async update(id: string, input: Partial<AiModel>) {
     const fields: string[] = []
     const values: unknown[] = []
@@ -106,9 +146,14 @@ export class ModelRepository {
       modelName: 'model_name',
       displayName: 'display_name',
       capability: 'capability',
+      cost1k: 'cost_1k',
+      cost2k: 'cost_2k',
+      cost4k: 'cost_4k',
+      markupPercent: 'markup_percent',
       price1k: 'price_1k',
       price2k: 'price_2k',
       price4k: 'price_4k',
+      appendSizeToPrompt: 'append_size_to_prompt',
       status: 'status',
     } as const
 

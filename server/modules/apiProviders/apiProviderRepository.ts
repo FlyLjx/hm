@@ -6,6 +6,7 @@ type ApiProviderRow = RowDataPacket & {
   id: string
   name: string
   type: 'sub2api' | 'custom'
+  capability: 'chat_image'
   base_url: string
   api_key: string
   status: 'active' | 'disabled'
@@ -18,6 +19,7 @@ function toApiProvider(row: ApiProviderRow): ApiProvider {
     id: row.id,
     name: row.name,
     type: row.type,
+    capability: row.capability,
     baseUrl: row.base_url,
     apiKey: row.api_key,
     status: row.status,
@@ -45,9 +47,9 @@ export class ApiProviderRepository {
   async create(provider: ApiProvider) {
     await db.query(
       `INSERT INTO api_providers
-        (id, name, type, base_url, api_key, status)
+        (id, name, type, capability, base_url, api_key, status)
        VALUES
-        (:id, :name, :type, :baseUrl, :apiKey, :status)`,
+        (:id, :name, :type, :capability, :baseUrl, :apiKey, :status)`,
       provider,
     )
     return this.findById(provider.id)
@@ -60,6 +62,7 @@ export class ApiProviderRepository {
     const fieldMap = {
       name: 'name',
       type: 'type',
+      capability: 'capability',
       baseUrl: 'base_url',
       apiKey: 'api_key',
       status: 'status',

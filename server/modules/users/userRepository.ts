@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2'
 import { db } from '../../config/db.js'
+import { toMysqlDateTime } from '../../shared/mysqlDate.js'
 import type { User, UserRole, UserStatus } from './userTypes.js'
 
 type UserRow = RowDataPacket & {
@@ -28,6 +29,12 @@ function toUser(row: UserRow): User {
   }
 }
 
+function legacyIdFromCompatUuid(id: string) {
+  const match = id.match(/^00000000-0000-4000-8000-(\d{12})$/)
+  if (!match) return null
+  return `legacy-${Number(match[1])}`
+}
+
 export class UserRepository {
   async findAll() {
     const [rows] = await db.query<UserRow[]>('SELECT * FROM users ORDER BY created_at DESC')
@@ -35,7 +42,13 @@ export class UserRepository {
   }
 
   async findById(id: string) {
-    const [rows] = await db.query<UserRow[]>('SELECT * FROM users WHERE id = :id LIMIT 1', { id })
+    const legacyId = legacyIdFromCompatUuid(id)
+    const [rows] = await db.query<UserRow[]>(
+      legacyId
+        ? 'SELECT * FROM users WHERE id IN (:id, :legacyId) ORDER BY id = :id DESC LIMIT 1'
+        : 'SELECT * FROM users WHERE id = :id LIMIT 1',
+      { id, legacyId },
+    )
     return rows[0] ? toUser(rows[0]) : null
   }
 
@@ -53,7 +66,10 @@ export class UserRepository {
         (id, email, password_hash, credits, role, status, email_verified_at)
        VALUES
         (:id, :email, :passwordHash, :credits, :role, :status, :emailVerifiedAt)`,
-      user,
+      {
+        ...user,
+        emailVerifiedAt: toMysqlDateTime(user.emailVerifiedAt),
+      },
     )
     return this.findById(user.id)
   }
@@ -88,7 +104,7 @@ export class UserRepository {
       const value = input[key as keyof typeof input]
       if (value !== undefined) {
         fields.push(`${column} = ?`)
-        values.push(value)
+        values.push(key === 'emailVerifiedAt' ? toMysqlDateTime(value as string | null) : value)
       }
     })
 

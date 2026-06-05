@@ -1,9 +1,35 @@
 export type SystemSettings = {
   siteName: string
+  logoText: string
   creditName: string
   frontendUrl: string
   backendUrl: string
+  announcementEnabled: boolean
+  announcementTitle: string
+  announcementContent: string
+  supportEnabled: boolean
+  supportTitle: string
+  supportDescription: string
+  supportWechat: string
+  supportQq: string
+  supportEmail: string
+  supportUrl: string
+  supportQrCodeUrl: string
+  rechargeEnabled: boolean
+  rechargeRate: number
+  rechargeMinAmount: number
+  rechargePresets: string
+  checkinEnabled: boolean
+  checkinRewards: string
+  inviteEnabled: boolean
+  inviteRewardCredits: number
+  taskTimeoutMinutes: number
+  alipayAppId: string
+  alipayPrivateKey: string
+  alipayPublicKey: string
+  alipayGateway: string
   registerMode: 'open' | 'closed'
+  registerRewardCredits: number
   emailEnabled: boolean
   emailHost: string
   emailPort: number
@@ -13,4 +39,7 @@ export type SystemSettings = {
   emailFromName: string
   emailFromAddress: string
   registerEmailVerification: boolean
+  accountPoolEndpoint: string
+  accountPoolApiKey: string
+  accountPoolAuthHeader: string
 }

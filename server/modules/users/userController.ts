@@ -1,4 +1,6 @@
 import type { Request, Response } from 'express'
+import { getRequestOrigin } from '../../shared/origin.js'
+import { getRequestIp } from '../../shared/requestIp.js'
 import { getStringParam } from '../../shared/requestParams.js'
 import {
   createUserSchema,
@@ -28,7 +30,11 @@ export class UserController {
 
   async register(req: Request, res: Response) {
     const input = createUserSchema.parse({ ...req.body, role: 'user' })
-    const user = await userService.createUser(input, { source: 'public' })
+    const user = await userService.createUser(input, {
+      source: 'public',
+      userIp: getRequestIp(req),
+      origin: getRequestOrigin(req),
+    })
     res.status(201).json({ data: user })
   }
 
@@ -79,7 +85,7 @@ export class UserController {
 
   async forgotPassword(req: Request, res: Response) {
     const input = forgotPasswordSchema.parse(req.body)
-    await userService.sendPasswordResetEmail(input.email)
+    await userService.sendPasswordResetEmail(input.email, getRequestOrigin(req))
     res.json({ data: { sent: true } })
   }
 

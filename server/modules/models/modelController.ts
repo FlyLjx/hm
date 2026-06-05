@@ -12,7 +12,9 @@ const modelService = new ModelService()
 
 export class ModelController {
   async list(_req: Request, res: Response) {
-    const models = await modelService.listModels()
+    const models = _req.query.dedupe === 'display'
+      ? await modelService.listPublicModels()
+      : await modelService.listModels()
     res.json({ data: models })
   }
 
@@ -24,7 +26,13 @@ export class ModelController {
 
   async sync(req: Request, res: Response) {
     const input = syncModelsSchema.parse(req.body)
-    const models = await modelService.syncModels(input.providerId, input.capability, input.keyword)
+    const models = await modelService.syncModels(
+      input.providerId,
+      input.capability,
+      input.keyword,
+      input.aliasPrefix,
+      input.markupPercent,
+    )
     res.json({ data: models })
   }
 

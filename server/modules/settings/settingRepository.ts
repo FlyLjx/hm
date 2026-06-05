@@ -9,10 +9,36 @@ type SettingRow = RowDataPacket & {
 
 const defaultSettings: SystemSettings = {
   siteName: 'AIπ',
+  logoText: 'AIπ',
   creditName: '积分',
   frontendUrl: 'http://localhost:5173',
   backendUrl: 'http://localhost:3001',
+  announcementEnabled: true,
+  announcementTitle: '系统公告',
+  announcementContent: '欢迎使用 AIπ 生图工作台，充值后即可开始创作。',
+  supportEnabled: true,
+  supportTitle: '联系客服',
+  supportDescription: '遇到充值、生成或账号问题，可以通过下面方式联系管理员。',
+  supportWechat: '',
+  supportQq: '',
+  supportEmail: '',
+  supportUrl: '',
+  supportQrCodeUrl: '',
+  rechargeEnabled: true,
+  rechargeRate: 1,
+  rechargeMinAmount: 1,
+  rechargePresets: '10,30,50,100',
+  checkinEnabled: true,
+  checkinRewards: '0.1,0.2,0.3,0.5,0.8,1',
+  inviteEnabled: true,
+  inviteRewardCredits: 1,
+  taskTimeoutMinutes: 3,
+  alipayAppId: '',
+  alipayPrivateKey: '',
+  alipayPublicKey: '',
+  alipayGateway: 'https://openapi.alipay.com/gateway.do',
   registerMode: 'open',
+  registerRewardCredits: 0,
   emailEnabled: false,
   emailHost: '',
   emailPort: 465,
@@ -22,14 +48,45 @@ const defaultSettings: SystemSettings = {
   emailFromName: 'AIπ',
   emailFromAddress: '',
   registerEmailVerification: false,
+  accountPoolEndpoint: 'https://free-api.yccc.me/api/accounts',
+  accountPoolApiKey: '',
+  accountPoolAuthHeader: 'Authorization',
 }
 
 function parseSettingValue<Key extends keyof SystemSettings>(
   key: Key,
   value: string,
 ): SystemSettings[Key] {
-  if (key === 'emailEnabled' || key === 'emailSecure' || key === 'registerEmailVerification') {
+  if (
+    key === 'emailEnabled' ||
+    key === 'emailSecure' ||
+    key === 'registerEmailVerification' ||
+    key === 'announcementEnabled' ||
+    key === 'supportEnabled' ||
+    key === 'rechargeEnabled' ||
+    key === 'checkinEnabled' ||
+    key === 'inviteEnabled'
+  ) {
     return (value === 'true' || value === '1') as SystemSettings[Key]
+  }
+
+  if (key === 'registerRewardCredits') {
+    const numberValue = Number(value)
+    return (
+      Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : defaultSettings[key]
+    ) as SystemSettings[Key]
+  }
+
+  if (
+    key === 'rechargeRate' ||
+    key === 'rechargeMinAmount' ||
+    key === 'inviteRewardCredits' ||
+    key === 'taskTimeoutMinutes'
+  ) {
+    const numberValue = Number(value)
+    return (
+      Number.isFinite(numberValue) && numberValue > 0 ? numberValue : defaultSettings[key]
+    ) as SystemSettings[Key]
   }
 
   if (key === 'emailPort') {

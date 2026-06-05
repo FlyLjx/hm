@@ -3,10 +3,13 @@ import { AppError } from '../../shared/AppError.js'
 import { CreditLogRepository } from '../creditLogs/creditLogRepository.js'
 import { EmailService } from '../email/emailService.js'
 import { EmailTokenService } from '../emailTokens/emailTokenService.js'
+import { InviteService } from '../invites/inviteService.js'
 import { SettingRepository } from '../settings/settingRepository.js'
+import { SubscriptionService } from '../subscriptions/subscriptionService.js'
 import { TaskRepository } from '../tasks/taskRepository.js'
 import { hashPassword, verifyPassword } from './password.js'
 import { UserRepository } from './userRepository.js'
+import { userEvents } from './userEvents.js'
 import type { PublicUser, User, UserRole } from './userTypes.js'
 
 function toPublicUser(user: User | null): PublicUser {
@@ -34,16 +37,39 @@ export class UserService {
     private readonly settingRepository = new SettingRepository(),
     private readonly emailTokenService = new EmailTokenService(),
     private readonly emailService = new EmailService(),
+    private readonly inviteService = new InviteService(),
+    private readonly subscriptionService = new SubscriptionService(),
   ) {}
+
+  async withSubscription(user: PublicUser) {
+    const subscription = await this.subscriptionService.getUserSubscription(user.id)
+    const plan = subscription ? await this.subscriptionService.getUserPlan(user.id) : null
+    const discountPercent = plan ? Math.min(100, Math.max(0, plan.discountPercent)) : 0
+    return {
+      ...user,
+      subscription: subscription
+        ? {
+            id: subscription.id,
+            planId: subscription.planId,
+            planName: subscription.planName,
+            status: subscription.status,
+            expiresAt: subscription.expiresAt,
+            discountPercent,
+            allowedProviderIds: plan?.allowedProviderIds ?? [],
+            allowedModelIds: plan?.allowedModelIds ?? [],
+          }
+        : null,
+    }
+  }
 
   async listUsers() {
     const users = await this.userRepository.findAll()
-    return users.map(toPublicUser)
+    return Promise.all(users.map((user) => this.withSubscription(toPublicUser(user))))
   }
 
   async createUser(
-    input: { email: string; password: string; role: UserRole },
-    options: { source: 'admin' | 'public' } = { source: 'admin' },
+    input: { email: string; password: string; role: UserRole; inviterId?: string | null },
+    options: { source: 'admin' | 'public'; userIp?: string | null; origin?: string } = { source: 'admin' },
   ) {
     const settings = await this.settingRepository.getSettings()
     if (options.source === 'public' && settings.registerMode === 'closed') {
@@ -64,11 +90,15 @@ export class UserService {
       this.assertEmailCanSend(settings)
     }
 
+    const registerRewardCredits =
+      options.source === 'public' && input.role === 'user'
+        ? Math.max(0, Number(settings.registerRewardCredits) || 0)
+        : 0
     const user = await this.userRepository.create({
       id: randomUUID(),
       email: input.email,
       passwordHash: hashPassword(input.password),
-      credits: 0,
+      credits: registerRewardCredits,
       role: input.role,
       status: 'active',
       emailVerifiedAt: shouldVerifyEmail ? null : now,
@@ -76,11 +106,31 @@ export class UserService {
       updatedAt: now,
     })
 
-    if (shouldVerifyEmail && user) {
-      await this.sendRegisterVerifyEmail(user.id, user.email)
+    if (user && registerRewardCredits > 0) {
+      await this.creditLogRepository.create({
+        id: randomUUID(),
+        userId: user.id,
+        type: 'recharge',
+        amount: registerRewardCredits,
+        balanceAfter: user.credits,
+        remark: '注册送额度',
+        createdAt: now,
+      })
     }
 
-    return toPublicUser(user)
+    if (shouldVerifyEmail && user) {
+      await this.sendRegisterVerifyEmail(user.id, user.email, options.origin)
+    }
+
+    if (options.source === 'public' && user && input.inviterId) {
+      await this.inviteService.rewardInvite({
+        inviterId: input.inviterId,
+        inviteeId: user.id,
+        inviteeIp: options.userIp ?? null,
+      })
+    }
+
+    return this.withSubscription(toPublicUser(user))
   }
 
   async login(input: { email: string; password: string }) {
@@ -100,7 +150,7 @@ export class UserService {
       throw new AppError(403, '邮箱未验证，已重新发送验证邮件，请前往邮箱完成验证')
     }
 
-    return toPublicUser(user)
+    return this.withSubscription(toPublicUser(user))
   }
 
   async getPublicUser(id: string) {
@@ -112,7 +162,7 @@ export class UserService {
       throw new AppError(403, '用户已被禁用')
     }
 
-    return toPublicUser(user)
+    return this.withSubscription(toPublicUser(user))
   }
 
   async updateStatus(id: string, status: 'active' | 'disabled') {
@@ -147,16 +197,23 @@ export class UserService {
       throw new AppError(404, '用户不存在')
     }
 
-    const updatedUser = await this.userRepository.addCredits(id, input.amount)
+    if (input.amount < 0 && user.credits + input.amount < 0) {
+      throw new AppError(400, '扣减额度不能超过当前余额')
+    }
+
+    const updatedUser = input.amount > 0
+      ? await this.userRepository.addCredits(id, input.amount)
+      : await this.userRepository.deductCredits(id, Math.abs(input.amount))
     const publicUser = toPublicUser(updatedUser)
+    userEvents.emitUpdated(publicUser)
     const now = new Date().toISOString()
     const log = await this.creditLogRepository.create({
       id: randomUUID(),
       userId: id,
-      type: 'recharge',
-      amount: input.amount,
+      type: input.amount > 0 ? 'recharge' : 'deduct',
+      amount: Math.abs(input.amount),
       balanceAfter: publicUser.credits,
-      remark: input.remark || '后台充值',
+      remark: input.remark || (input.amount > 0 ? '后台增加额度' : '后台扣减额度'),
       createdAt: now,
     })
 
@@ -178,7 +235,7 @@ export class UserService {
     ])
 
     return {
-      user: toPublicUser(user),
+      user: await this.withSubscription(toPublicUser(user)),
       creditLogs,
       tasks,
     }
@@ -201,7 +258,7 @@ export class UserService {
     return toPublicUser(user)
   }
 
-  async sendPasswordResetEmail(email: string) {
+  async sendPasswordResetEmail(email: string, origin?: string) {
     const user = await this.userRepository.findByEmail(email)
     if (!user || user.status !== 'active') {
       return
@@ -215,7 +272,8 @@ export class UserService {
       type: 'password_reset',
       expiresInMinutes: 30,
     })
-    const resetUrl = `${settings.frontendUrl}/?resetPasswordToken=${encodeURIComponent(token)}`
+    const frontendUrl = origin || settings.frontendUrl
+    const resetUrl = `${frontendUrl}/?resetPasswordToken=${encodeURIComponent(token)}`
     const emailHtml = buildEmailTemplate({
       title: '找回密码',
       description: '你收到这封邮件是因为请求了密码重置。',
@@ -255,7 +313,7 @@ export class UserService {
     }
   }
 
-  private async sendRegisterVerifyEmail(userId: string, email: string) {
+  private async sendRegisterVerifyEmail(userId: string, email: string, origin?: string) {
     const settings = await this.settingRepository.getSettings()
     const token = await this.emailTokenService.createToken({
       email,
@@ -263,7 +321,8 @@ export class UserService {
       type: 'register_verify',
       expiresInMinutes: 60,
     })
-    const verifyUrl = `${settings.frontendUrl}/?verifyEmailToken=${encodeURIComponent(token)}`
+    const frontendUrl = origin || settings.frontendUrl
+    const verifyUrl = `${frontendUrl}/?verifyEmailToken=${encodeURIComponent(token)}`
     const emailHtml = buildEmailTemplate({
       title: '邮箱验证',
       description: '请点击下面的按钮完成邮箱验证。',

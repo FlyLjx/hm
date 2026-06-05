@@ -12,8 +12,56 @@ export class SettingService {
     return this.settingRepository.getSettings()
   }
 
+  async getPublicSettings() {
+    const settings = await this.settingRepository.getSettings()
+    return {
+      siteName: settings.siteName,
+      logoText: settings.logoText,
+      creditName: settings.creditName,
+      frontendUrl: settings.frontendUrl,
+      backendUrl: settings.backendUrl,
+      announcementEnabled: true,
+      supportEnabled: settings.supportEnabled,
+      supportTitle: settings.supportTitle,
+      supportDescription: settings.supportDescription,
+      supportWechat: settings.supportWechat,
+      supportQq: settings.supportQq,
+      supportEmail: settings.supportEmail,
+      supportUrl: settings.supportUrl,
+      supportQrCodeUrl: settings.supportQrCodeUrl,
+      rechargeEnabled: settings.rechargeEnabled,
+      rechargeRate: settings.rechargeRate,
+      rechargeMinAmount: settings.rechargeMinAmount,
+      rechargePresets: settings.rechargePresets,
+      checkinEnabled: settings.checkinEnabled,
+      checkinRewards: settings.checkinRewards,
+      inviteEnabled: settings.inviteEnabled,
+      inviteRewardCredits: settings.inviteRewardCredits,
+      registerMode: settings.registerMode,
+      registerRewardCredits: settings.registerRewardCredits,
+      registerEmailVerification: settings.registerEmailVerification,
+    }
+  }
+
   async updateSettings(input: SystemSettings) {
     return this.settingRepository.updateSettings(input)
+  }
+
+  async getAccountPoolSettings() {
+    const settings = await this.settingRepository.getSettings()
+    return {
+      accountPoolEndpoint: settings.accountPoolEndpoint,
+      accountPoolApiKey: settings.accountPoolApiKey,
+      accountPoolAuthHeader: settings.accountPoolAuthHeader,
+    }
+  }
+
+  async updateAccountPoolSettings(input: Pick<SystemSettings, 'accountPoolEndpoint' | 'accountPoolApiKey' | 'accountPoolAuthHeader'>) {
+    const settings = await this.settingRepository.getSettings()
+    return this.settingRepository.updateSettings({
+      ...settings,
+      ...input,
+    })
   }
 
   async sendTestEmail(email: string) {

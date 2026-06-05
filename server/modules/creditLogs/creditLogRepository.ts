@@ -48,14 +48,16 @@ export class CreditLogRepository {
     return rows[0] ? toCreditLog(rows[0]) : null
   }
 
-  async findByUserId(userId: string) {
+  async findByUserId(userId: string, limit = 20) {
+    const pageSize = Math.min(100, Math.max(1, limit))
     const [rows] = await db.query<CreditLogRow[]>(
       `SELECT credit_logs.*, users.email AS user_email
        FROM credit_logs
        LEFT JOIN users ON users.id = credit_logs.user_id
        WHERE credit_logs.user_id = :userId
-       ORDER BY credit_logs.created_at DESC, credit_logs.id DESC`,
-      { userId },
+       ORDER BY credit_logs.created_at DESC, credit_logs.id DESC
+       LIMIT :pageSize`,
+      { userId, pageSize },
     )
     return rows.map(toCreditLog)
   }

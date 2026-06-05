@@ -7,8 +7,11 @@ type GenerationTaskRow = RowDataPacket & {
   id: string
   user_id: string
   user_email?: string
+  user_subscription_plan_name?: string | null
+  user_subscription_expires_at?: Date | null
   model_id: string
   model_name?: string
+  model_display_name?: string
   provider_id: string
   provider_name?: string
   capability: AiModelCapability
@@ -16,6 +19,7 @@ type GenerationTaskRow = RowDataPacket & {
   reference_image_url?: string | null
   size_tier: GenerationSizeTier
   size?: string | null
+  transparent_background?: number | string | null
   quantity: number
   user_ip: string
   cost_credits: string | number
@@ -24,6 +28,9 @@ type GenerationTaskRow = RowDataPacket & {
   status: GenerationTaskStatus
   error_message?: string | null
   result_json?: unknown
+  has_result?: number | string | boolean | null
+  display_enabled?: number | string | null
+  display_note?: string | null
   created_at: Date
   updated_at: Date
 }
@@ -39,43 +46,128 @@ function parseJson(value: unknown) {
   }
 }
 
-function toImageUrl(image: { url?: string; b64_json?: string } | null | undefined) {
-  if (image?.url) {
-    return image.url
-  }
-  if (image?.b64_json) {
-    return `data:image/png;base64,${image.b64_json}`
-  }
-  return null
-}
-
 function getResultUrls(resultJson: unknown): string[] {
-  if (!resultJson || typeof resultJson !== 'object') {
+  if (!resultJson) {
     return []
   }
 
-  const directImage = resultJson as { b64_json?: string; url?: string }
-  const directUrl = toImageUrl(directImage)
-  if (directUrl) {
-    return [directUrl]
+  if (typeof resultJson === 'string') {
+    return extractUrlsFromString(resultJson)
   }
 
-  const streamingResult = resultJson as {
-    final?: { b64_json?: string; url?: string }
-    partial?: { b64_json?: string; url?: string }
-  }
-  const eventImage = streamingResult.final ?? streamingResult.partial
-  const eventUrl = toImageUrl(eventImage)
-  if (eventUrl) {
-    return [eventUrl]
+  if (Array.isArray(resultJson)) {
+    return resultJson.flatMap(getResultUrls)
   }
 
-  const data = (resultJson as { data?: Array<{ url?: string; b64_json?: string }> }).data
-  if (Array.isArray(data)) {
-    return data.map(toImageUrl).filter((url): url is string => Boolean(url))
+  if (typeof resultJson !== 'object') {
+    return []
   }
+
+  const payload = resultJson as Record<string, unknown>
+  const urls = [
+    payload.url,
+    payload.image_url,
+    payload.imageUrl,
+    payload.output_url,
+    payload.outputUrl,
+    payload.file_url,
+    payload.fileUrl,
+  ].filter((item): item is string => typeof item === 'string')
+  const base64Values = [
+    payload.b64_json,
+    payload.b64,
+    payload.base64,
+    payload.image,
+    payload.image_base64,
+    payload.imageBase64,
+    payload.partial_image_b64,
+  ].filter((item): item is string => typeof item === 'string')
+  const directUrls = [
+    ...urls.flatMap(extractUrlsFromString),
+    ...base64Values.map((value) => {
+      const trimmed = value.trim()
+      return trimmed.startsWith('data:image/')
+        ? trimmed
+        : `data:image/png;base64,${trimmed.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, '')}`
+    }),
+  ]
+  const nestedKeys = [
+    'data',
+    'result',
+    'results',
+    'output',
+    'outputs',
+    'images',
+    'image',
+    'final',
+    'partial',
+    'choices',
+    'message',
+    'content',
+  ]
+  const nestedUrls = nestedKeys.flatMap((key) => getResultUrls(payload[key]))
+  return uniqueUrls([...directUrls, ...nestedUrls].filter((url) => url.startsWith('data:image/') || /^https?:\/\//i.test(url)))
+}
+
+function getDisplayResultUrls(resultJson: unknown): string[] {
+  if (!resultJson || typeof resultJson !== 'object' || Array.isArray(resultJson)) {
+    return getResultUrls(resultJson)
+  }
+
+  const payload = resultJson as Record<string, unknown>
+  if (payload.stream === true && !payload.final && !payload.data) {
+    return []
+  }
+
+  const finalUrls = getResultUrls(payload.final)
+  if (finalUrls.length) return uniqueUrls(finalUrls)
+
+  const dataUrls = getResultUrls(payload.data)
+  if (dataUrls.length) return uniqueUrls(dataUrls)
+
+  const resultUrls = getResultUrls(payload.result ?? payload.results ?? payload.output ?? payload.outputs ?? payload.images)
+  if (resultUrls.length) return uniqueUrls(resultUrls)
+
+  const withoutPartial = { ...payload }
+  delete withoutPartial.partial
+  delete withoutPartial.partial_image_b64
+  const nonPartialUrls = getResultUrls(withoutPartial)
+  if (nonPartialUrls.length) return uniqueUrls(nonPartialUrls)
 
   return []
+}
+
+function extractUrlsFromString(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return []
+  if (trimmed.startsWith('data:image/') || /^https?:\/\//i.test(trimmed)) return [cleanUrl(trimmed)]
+  if (/^[A-Za-z0-9+/=\s]+$/.test(trimmed) && trimmed.length > 200) {
+    return [`data:image/png;base64,${trimmed.replace(/\s/g, '')}`]
+  }
+
+  return [
+    ...Array.from(trimmed.matchAll(/!\[[^\]]*]\(([^)\s]+)\)/g)).map((match) => match[1]),
+    ...Array.from(trimmed.matchAll(/<(?:img|video|source)[^>]+\bsrc=["']([^"']+)["']/gi)).map((match) => match[1]),
+    ...Array.from(trimmed.matchAll(/(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)/g)).map((match) => match[1]),
+    ...Array.from(trimmed.matchAll(/(https?:\/\/[^\s<>"'`\]]+)/gi)).map((match) => match[1]),
+  ].map(cleanUrl)
+}
+
+function cleanUrl(value: string) {
+  return value.trim().replace(/[),.;]+$/g, '')
+}
+
+function uniqueUrls(urls: string[]) {
+  const seen = new Set<string>()
+  return urls.filter((url) => {
+    if (seen.has(url)) return false
+    seen.add(url)
+    return true
+  })
+}
+
+function isTruthyDbValue(value: unknown) {
+  return value === true || value === 1 || value === '1'
 }
 
 function getTaskImageUrl(taskId: string, index: number) {
@@ -86,18 +178,65 @@ function getTaskThumbnailUrl(taskId: string, index: number) {
   return `/api/tasks/${taskId}/thumbnails/${index}`
 }
 
+const taskListSelect = `
+  generation_tasks.id,
+  generation_tasks.user_id,
+  generation_tasks.model_id,
+  generation_tasks.provider_id,
+  generation_tasks.capability,
+  generation_tasks.prompt,
+  NULL AS reference_image_url,
+  generation_tasks.size_tier,
+  generation_tasks.size,
+  generation_tasks.transparent_background,
+  generation_tasks.quantity,
+  generation_tasks.user_ip,
+  generation_tasks.cost_credits,
+  generation_tasks.remaining_credits,
+  generation_tasks.duration_seconds,
+  generation_tasks.status,
+  generation_tasks.error_message,
+  generation_tasks.display_enabled,
+  generation_tasks.display_note,
+  generation_tasks.created_at,
+  generation_tasks.updated_at,
+  generation_tasks.status = 'success' AS has_result,
+  users.email AS user_email,
+  ai_models.model_name,
+  ai_models.display_name AS model_display_name,
+  api_providers.name AS provider_name,
+  subscription_plans.name AS user_subscription_plan_name,
+  user_subscriptions.expires_at AS user_subscription_expires_at
+`
+
+const taskListJoins = `
+  LEFT JOIN users ON users.id = generation_tasks.user_id
+  LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+  LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+  LEFT JOIN user_subscriptions ON user_subscriptions.user_id = generation_tasks.user_id
+    AND user_subscriptions.status = 'active'
+    AND user_subscriptions.expires_at > generation_tasks.created_at
+    AND user_subscriptions.created_at <= generation_tasks.created_at
+  LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+`
+
 function toTask(row: GenerationTaskRow): GenerationTask {
   const resultJson = parseJson(row.result_json)
-  const resultUrls = getResultUrls(resultJson)
-  const imageUrls = resultUrls.map((_, index) => getTaskImageUrl(row.id, index))
-  const thumbnailUrls = resultUrls.map((_, index) => getTaskThumbnailUrl(row.id, index))
+  const resultUrls = uniqueUrls(getDisplayResultUrls(resultJson))
+  const hasResult = row.has_result === undefined ? resultUrls.length > 0 : isTruthyDbValue(row.has_result)
+  const imageCount = resultUrls.length || (hasResult ? Math.max(1, Number(row.quantity) || 1) : 0)
+  const imageUrls = Array.from({ length: imageCount }, (_, index) => getTaskImageUrl(row.id, index))
+  const thumbnailUrls = Array.from({ length: imageCount }, (_, index) => getTaskThumbnailUrl(row.id, index))
 
   return {
     id: row.id,
     userId: row.user_id,
     userEmail: row.user_email,
+    userSubscriptionPlanName: row.user_subscription_plan_name ?? null,
+    userSubscriptionExpiresAt: row.user_subscription_expires_at?.toISOString() ?? null,
     modelId: row.model_id,
     modelName: row.model_name,
+    modelDisplayName: row.model_display_name,
     providerId: row.provider_id,
     providerName: row.provider_name,
     capability: row.capability,
@@ -105,6 +244,7 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     referenceImageUrl: row.reference_image_url,
     sizeTier: row.size_tier,
     size: row.size,
+    transparentBackground: Boolean(row.transparent_background),
     quantity: row.quantity,
     userIp: row.user_ip,
     costCredits: Number(row.cost_credits),
@@ -112,45 +252,163 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     durationSeconds: Number(row.duration_seconds),
     status: row.status,
     errorMessage: row.error_message,
-    resultJson,
+    resultJson: undefined,
     resultUrl: imageUrls[0] ?? null,
     resultUrls: imageUrls,
     thumbnailUrl: thumbnailUrls[0] ?? null,
     thumbnailUrls,
+    displayEnabled: Boolean(row.display_enabled),
+    displayNote: row.display_note ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   }
 }
 
 export class TaskRepository {
-  async findAll() {
+  async findAll(input?: { page?: number; pageSize?: number }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 20))
+    const offset = (page - 1) * pageSize
+
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
+       FROM generation_tasks`,
+    )
     const [rows] = await db.query<GenerationTaskRow[]>(
-      `SELECT generation_tasks.*,
-        users.email AS user_email,
-        ai_models.model_name,
-        api_providers.name AS provider_name
+      `SELECT ${taskListSelect}
        FROM generation_tasks
-       LEFT JOIN users ON users.id = generation_tasks.user_id
-       LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
-       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       ${taskListJoins}
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize OFFSET :offset`,
+      { pageSize, offset },
+    )
+    return {
+      items: rows.map(toTask),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
+  }
+
+  async findAllForExport() {
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
        ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC`,
     )
     return rows.map(toTask)
   }
 
-  async findByUserId(userId: string) {
-    const [rows] = await db.query<GenerationTaskRow[]>(
-      `SELECT generation_tasks.*,
-        users.email AS user_email,
-        ai_models.model_name,
-        api_providers.name AS provider_name
+  async getStats() {
+    const [rows] = await db.query<Array<RowDataPacket & {
+      status: GenerationTaskStatus
+      total: string | number
+      total_images: string | number | null
+      total_credits: string | number | null
+    }>>(
+      `SELECT
+        status,
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END) AS total_images,
+        SUM(CASE WHEN status = 'success' THEN cost_credits ELSE 0 END) AS total_credits
+       FROM generation_tasks
+       GROUP BY status`,
+    )
+
+    const stats = {
+      total: 0,
+      queued: 0,
+      pending: 0,
+      processing: 0,
+      success: 0,
+      failed: 0,
+      canceled: 0,
+      totalImages: 0,
+      totalCredits: 0,
+    }
+
+    for (const row of rows) {
+      const count = Number(row.total ?? 0)
+      stats.total += count
+      stats[row.status] = count
+      stats.totalImages += Number(row.total_images ?? 0)
+      stats.totalCredits += Number(row.total_credits ?? 0)
+    }
+
+    return stats
+  }
+
+  async findImages(input?: { page?: number; pageSize?: number; keyword?: string; display?: 'all' | 'public' | 'private' }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 24))
+    const offset = (page - 1) * pageSize
+    const where = [
+      "generation_tasks.status = 'success'",
+    ]
+    const params: Record<string, string | number> = { pageSize, offset }
+
+    if (input?.display === 'public') {
+      where.push('generation_tasks.display_enabled = 1')
+    }
+    if (input?.display === 'private') {
+      where.push('generation_tasks.display_enabled = 0')
+    }
+    if (input?.keyword?.trim()) {
+      where.push('(generation_tasks.prompt LIKE :keyword OR generation_tasks.display_note LIKE :keyword OR users.email LIKE :keyword OR ai_models.model_name LIKE :keyword OR ai_models.display_name LIKE :keyword)')
+      params.keyword = `%${input.keyword.trim()}%`
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
        FROM generation_tasks
        LEFT JOIN users ON users.id = generation_tasks.user_id
        LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
-       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       ${whereSql}`,
+      params,
+    )
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
+       ${whereSql}
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize OFFSET :offset`,
+      params,
+    )
+
+    return {
+      items: rows.map(toTask),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
+  }
+
+  async findPublicDisplay() {
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
+       WHERE generation_tasks.display_enabled = 1
+         AND generation_tasks.status = 'success'
+       ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
+       LIMIT 60`,
+    )
+    return rows.map(toTask)
+  }
+
+  async findByUserId(userId: string, limit = 20) {
+    const pageSize = Math.min(100, Math.max(1, limit))
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
        WHERE generation_tasks.user_id = :userId
-       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC`,
-      { userId },
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize`,
+      { userId, pageSize },
     )
     return rows.map(toTask)
   }
@@ -158,10 +416,10 @@ export class TaskRepository {
   async create(task: GenerationTask) {
     await db.query(
       `INSERT INTO generation_tasks
-        (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, quantity, user_ip,
+        (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, transparent_background, quantity, user_ip,
          cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
        VALUES
-        (:id, :userId, :modelId, :providerId, :capability, :prompt, :referenceImageUrl, :sizeTier, :size, :quantity, :userIp,
+        (:id, :userId, :modelId, :providerId, :capability, :prompt, :referenceImageUrl, :sizeTier, :size, :transparentBackground, :quantity, :userIp,
          :costCredits, :remainingCredits, :durationSeconds, :status, :errorMessage, :resultJson)`,
       {
         ...task,
@@ -182,6 +440,8 @@ export class TaskRepository {
         | 'status'
         | 'errorMessage'
         | 'resultJson'
+        | 'displayEnabled'
+        | 'displayNote'
       >
     >,
   ) {
@@ -194,13 +454,21 @@ export class TaskRepository {
       status: 'status',
       errorMessage: 'error_message',
       resultJson: 'result_json',
+      displayEnabled: 'display_enabled',
+      displayNote: 'display_note',
     } as const
 
     Object.entries(fieldMap).forEach(([key, column]) => {
       const value = input[key as keyof typeof input]
       if (value !== undefined) {
         fields.push(`${column} = ?`)
-        values.push(key === 'resultJson' && value ? JSON.stringify(value) : value)
+        values.push(
+          key === 'resultJson' && value
+            ? JSON.stringify(value)
+            : key === 'displayEnabled'
+              ? Boolean(value)
+              : value,
+        )
       }
     })
 
@@ -226,16 +494,48 @@ export class TaskRepository {
     return this.findById(id)
   }
 
+  async cancelTimedOutRunningTasks(timeoutMinutes: number) {
+    const normalizedTimeout = Math.max(1, Math.floor(timeoutMinutes))
+    const [rows] = await db.query<Array<RowDataPacket & { id: string }>>(
+      `SELECT id
+       FROM generation_tasks
+       WHERE status IN ('queued', 'pending', 'processing')
+         AND created_at <= DATE_SUB(NOW(), INTERVAL :timeoutMinutes MINUTE)`,
+      { timeoutMinutes: normalizedTimeout },
+    )
+
+    if (rows.length === 0) {
+      return []
+    }
+
+    const ids = rows.map((row) => row.id)
+    await db.query(
+      `UPDATE generation_tasks
+       SET status = 'canceled',
+           error_message = :errorMessage
+       WHERE id IN (:ids)
+         AND status IN ('queued', 'pending', 'processing')`,
+      {
+        ids,
+        errorMessage: `任务超过 ${normalizedTimeout} 分钟未完成，已自动关闭`,
+      },
+    )
+
+    const tasks = await Promise.all(ids.map((id) => this.findById(id)))
+    return tasks.filter((task): task is GenerationTask => Boolean(task))
+  }
+
   async findById(id: string) {
     const [rows] = await db.query<GenerationTaskRow[]>(
       `SELECT generation_tasks.*,
         users.email AS user_email,
         ai_models.model_name,
-        api_providers.name AS provider_name
+        ai_models.display_name AS model_display_name,
+        api_providers.name AS provider_name,
+        subscription_plans.name AS user_subscription_plan_name,
+        user_subscriptions.expires_at AS user_subscription_expires_at
        FROM generation_tasks
-       LEFT JOIN users ON users.id = generation_tasks.user_id
-       LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
-       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       ${taskListJoins}
        WHERE generation_tasks.id = :id
        LIMIT 1`,
       { id },
@@ -252,7 +552,7 @@ export class TaskRepository {
       { id },
     )
     const resultJson = parseJson(rows[0]?.result_json)
-    return getResultUrls(resultJson)[index] ?? null
+    return getDisplayResultUrls(resultJson)[index] ?? null
   }
 
   async estimateDuration(input: {

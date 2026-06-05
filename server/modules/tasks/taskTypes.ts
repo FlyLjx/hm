@@ -7,8 +7,11 @@ export type GenerationTask = {
   id: string
   userId: string
   userEmail?: string
+  userSubscriptionPlanName?: string | null
+  userSubscriptionExpiresAt?: string | null
   modelId: string
   modelName?: string
+  modelDisplayName?: string
   providerId: string
   providerName?: string
   capability: AiModelCapability
@@ -16,6 +19,7 @@ export type GenerationTask = {
   referenceImageUrl?: string | null
   sizeTier: GenerationSizeTier
   size?: string | null
+  transparentBackground?: boolean
   quantity: number
   userIp: string
   costCredits: number
@@ -28,6 +32,8 @@ export type GenerationTask = {
   resultUrls?: string[]
   thumbnailUrl?: string | null
   thumbnailUrls?: string[]
+  displayEnabled: boolean
+  displayNote?: string | null
   createdAt: string
   updatedAt: string
 }

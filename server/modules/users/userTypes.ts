@@ -13,4 +13,15 @@ export type User = {
   updatedAt: string
 }
 
-export type PublicUser = Omit<User, 'passwordHash'>
+export type PublicUser = Omit<User, 'passwordHash'> & {
+  subscription?: {
+    id: string
+    planId: string
+    planName?: string | null
+    status: string
+    expiresAt: string
+    discountPercent?: number
+    allowedProviderIds?: string[]
+    allowedModelIds?: string[]
+  } | null
+}
