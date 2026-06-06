@@ -43,6 +43,8 @@ export const RootApp = {
     const subscriptionPlans = ref([])
     const announcementSigning = ref(false)
     const userRefreshing = ref(false)
+    const accountMenuOpen = ref(false)
+    const mobileMenuOpen = ref(false)
 
     const authForm = reactive({ email: '', password: '', newPassword: '', token: '' })
     const rechargeState = reactive({ products: [], selectedProductId: '', mode: 'product', customAmount: '', order: null, qrImage: '', qrLoading: false, loading: false, syncing: false })
@@ -123,6 +125,7 @@ export const RootApp = {
     function setPage(page) {
       activePage.value = page
       window.location.hash = `/${page}`
+      mobileMenuOpen.value = false
     }
 
     function requireLogin(callback) {
@@ -137,9 +140,21 @@ export const RootApp = {
     function logout() {
       clearCurrentUser()
       currentUser.value = null
+      accountMenuOpen.value = false
+      mobileMenuOpen.value = false
       disconnectGenerationTaskSocket()
       disconnectCurrentUserSocket()
       notifySuccess('已退出登录')
+    }
+
+    function closeNavMenus() {
+      accountMenuOpen.value = false
+      mobileMenuOpen.value = false
+    }
+
+    function runNavAction(action) {
+      closeNavMenus()
+      action?.()
     }
 
     async function refreshUser() {
@@ -172,6 +187,7 @@ export const RootApp = {
 
     function handleHashChange() {
       activePage.value = pageFromHash()
+      closeNavMenus()
     }
 
     function updateCurrentUser(user) {
@@ -636,12 +652,16 @@ export const RootApp = {
       shortSiteName,
       announcementSigning,
       userRefreshing,
+      accountMenuOpen,
+      mobileMenuOpen,
       promotions,
       subscriptionPlans,
       navItems,
       setPage,
       requireLogin,
       logout,
+      closeNavMenus,
+      runNavAction,
       openRecharge,
       openSubscription,
       createRechargeOrder,
@@ -677,55 +697,96 @@ export const RootApp = {
           </button>
         </div>
         <header class="web-topbar">
-          <div class="web-breadcrumb-block">
+          <div class="web-nav-left">
             <button class="web-mobile-brand plain-btn" type="button" @click="setPage('home')">
               <img src="/favicon.svg" alt="" />
-              <strong>{{ shortSiteName }}</strong>
+              <span>
+                <strong>{{ shortSiteName }}</strong>
+                <small>创作工作台</small>
+              </span>
             </button>
-            <nav class="web-mobile-tabs">
+            <nav class="web-primary-nav" aria-label="用户端导航">
               <button v-for="item in navItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
                 <i :class="['ti', item.icon]"></i>
-                {{ item.label }}
+                <span>{{ item.label }}</span>
               </button>
             </nav>
           </div>
           <div class="web-top-actions">
             <template v-if="currentUser">
               <span class="user-chip">
-                <span class="user-email">{{ currentUser.email }}</span>
+                <span class="user-chip-label">余额</span>
                 <span class="user-balance">{{ formatAmount(currentUser.credits) }} {{ creditName }}</span>
                 <button class="balance-refresh" type="button" title="刷新余额" :disabled="userRefreshing" @click="manualRefreshUser">
                   <i :class="['ti', 'ti-refresh', { 'is-spinning': userRefreshing }]"></i>
                 </button>
               </span>
-              <div class="user-action-group">
-                <el-button class="user-action primary-action" type="primary" @click="openRecharge">
-                  <i class="ti ti-wallet"></i>
-                  <span>充值</span>
-                </el-button>
-                <el-button class="user-action vip-action" @click="openSubscription">
-                  <i class="ti ti-crown"></i>
-                  <span>订阅</span>
-                </el-button>
-                <el-button class="user-action" @click="redeemOpen = true">
-                  <i class="ti ti-ticket"></i>
-                  <span>兑换</span>
-                </el-button>
-                <el-button class="user-action" @click="openCheckin">
-                  <i class="ti ti-calendar-check"></i>
-                  <span>签到</span>
-                </el-button>
-                <el-button class="user-action" @click="openInvite">
-                  <i class="ti ti-user-plus"></i>
-                  <span>邀请</span>
-                </el-button>
-                <el-button class="user-action logout-action" @click="logout">
-                  <i class="ti ti-logout"></i>
-                  <span>退出</span>
-                </el-button>
+              <el-button class="user-action primary-action nav-recharge-action" type="primary" @click="openRecharge">
+                <i class="ti ti-wallet"></i>
+                <span>充值</span>
+              </el-button>
+              <div class="account-menu-wrap">
+                <button :class="['account-trigger', { active: accountMenuOpen }]" type="button" @click="accountMenuOpen = !accountMenuOpen; mobileMenuOpen = false">
+                  <span class="account-avatar">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
+                  <span class="account-trigger-copy">
+                    <strong>{{ currentUser.email }}</strong>
+                    <small>{{ currentUser.subscription?.status === 'active' ? '会员已开通' : '普通用户' }}</small>
+                  </span>
+                  <i class="ti ti-chevron-down"></i>
+                </button>
+                <div v-if="accountMenuOpen" class="account-menu">
+                  <div class="account-menu-head">
+                    <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
+                    <div>
+                      <strong>{{ currentUser.email }}</strong>
+                      <small>{{ formatAmount(currentUser.credits) }} {{ creditName }}</small>
+                    </div>
+                  </div>
+                  <button type="button" @click="runNavAction(openSubscription)">
+                    <i class="ti ti-crown"></i>
+                    <span>订阅会员</span>
+                    <em>权益</em>
+                  </button>
+                  <button type="button" @click="runNavAction(() => redeemOpen = true)">
+                    <i class="ti ti-ticket"></i>
+                    <span>兑换码</span>
+                  </button>
+                  <button type="button" @click="runNavAction(openCheckin)">
+                    <i class="ti ti-calendar-check"></i>
+                    <span>每日签到</span>
+                  </button>
+                  <button type="button" @click="runNavAction(openInvite)">
+                    <i class="ti ti-user-plus"></i>
+                    <span>邀请好友</span>
+                  </button>
+                  <button class="danger" type="button" @click="logout">
+                    <i class="ti ti-logout"></i>
+                    <span>退出登录</span>
+                  </button>
+                </div>
               </div>
+              <button :class="['mobile-menu-trigger', { active: mobileMenuOpen }]" type="button" @click="mobileMenuOpen = !mobileMenuOpen; accountMenuOpen = false">
+                <i class="ti ti-menu-2"></i>
+              </button>
             </template>
             <el-button v-else type="primary" class="login-button" aria-label="登录 / 注册" @click="loginOpen = true"></el-button>
+          </div>
+          <div v-if="mobileMenuOpen && currentUser" class="mobile-account-panel">
+            <div class="mobile-account-summary">
+              <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
+              <div>
+                <strong>{{ currentUser.email }}</strong>
+                <small>{{ formatAmount(currentUser.credits) }} {{ creditName }}</small>
+              </div>
+            </div>
+            <div class="mobile-account-actions">
+              <button type="button" @click="runNavAction(openRecharge)"><i class="ti ti-wallet"></i><span>充值</span></button>
+              <button type="button" @click="runNavAction(openSubscription)"><i class="ti ti-crown"></i><span>订阅</span></button>
+              <button type="button" @click="runNavAction(() => redeemOpen = true)"><i class="ti ti-ticket"></i><span>兑换</span></button>
+              <button type="button" @click="runNavAction(openCheckin)"><i class="ti ti-calendar-check"></i><span>签到</span></button>
+              <button type="button" @click="runNavAction(openInvite)"><i class="ti ti-user-plus"></i><span>邀请</span></button>
+              <button type="button" @click="logout"><i class="ti ti-logout"></i><span>退出</span></button>
+            </div>
           </div>
         </header>
 
@@ -735,6 +796,12 @@ export const RootApp = {
           <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
         </main>
+        <nav class="web-bottom-nav" aria-label="移动端主导航">
+          <button v-for="item in navItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
+            <i :class="['ti', item.icon]"></i>
+            <span>{{ item.label.replace('提示词', '') }}</span>
+          </button>
+        </nav>
       </section>
 
       <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' }]" type="button" @click="supportOpen = true">
