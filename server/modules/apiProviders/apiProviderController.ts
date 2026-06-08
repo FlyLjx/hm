@@ -33,6 +33,11 @@ export class ApiProviderController {
     res.json({ data: models })
   }
 
+  async test(req: Request, res: Response) {
+    const result = await apiProviderService.testProvider(getStringParam(req.params.id, 'id'))
+    res.json({ data: result })
+  }
+
   async update(req: Request, res: Response) {
     const input = updateApiProviderSchema.parse(req.body)
     const provider = await apiProviderService.updateProvider(getStringParam(req.params.id, 'id'), input)

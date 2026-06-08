@@ -3,6 +3,7 @@ import { getRequestOrigin } from '../../shared/origin.js'
 import { getRequestIp } from '../../shared/requestIp.js'
 import { getStringParam } from '../../shared/requestParams.js'
 import {
+  changePasswordSchema,
   createUserSchema,
   forgotPasswordSchema,
   loginSchema,
@@ -46,6 +47,27 @@ export class UserController {
 
   async profile(req: Request, res: Response) {
     const user = await userService.getPublicUser(getStringParam(req.params.id, 'id'))
+    res.json({ data: user })
+  }
+
+  async publicDetails(req: Request, res: Response) {
+    const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined
+    const details = await userService.getPublicUserDetails(
+      getStringParam(req.params.id, 'id'),
+      getStringParam(userId, 'userId'),
+      {
+        creditPage: Number(req.query.creditPage) || 1,
+        creditPageSize: Number(req.query.creditPageSize) || 10,
+        taskPage: Number(req.query.taskPage) || 1,
+        taskPageSize: Number(req.query.taskPageSize) || 10,
+      },
+    )
+    res.json({ data: details })
+  }
+
+  async changePassword(req: Request, res: Response) {
+    const input = changePasswordSchema.parse(req.body)
+    const user = await userService.changePassword(getStringParam(req.params.id, 'id'), input)
     res.json({ data: user })
   }
 

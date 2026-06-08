@@ -771,6 +771,37 @@
   background: rgba(239, 253, 244, 0.76);
 }
 
+.recharge-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(151, 219, 174, 0.68);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.recharge-mode-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.recharge-mode-tabs button.active {
+  background: #111827;
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
 .recharge-tabs button {
   display: inline-flex;
   align-items: center;
@@ -959,6 +990,25 @@
   font-size: 15px;
   font-weight: 950;
   box-shadow: 0 16px 34px rgba(22, 163, 91, 0.22);
+}
+
+.recharge-subscription-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.recharge-subscription-plans {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.recharge-subscription-plans .subscription-plan {
+  min-height: 196px;
+  padding: 15px;
+}
+
+.recharge-subscription-plans .subscription-price {
+  font-size: 28px;
 }
 
 .recharge-order {
@@ -2989,7 +3039,7 @@
 
   .web-content,
   .web-content.chat-content {
-    padding: 10px;
+    padding: 10px 10px calc(90px + env(safe-area-inset-bottom));
   }
 
   .support-float {
@@ -3416,15 +3466,45 @@
   }
 
   .user-chip {
-    min-height: 32px;
+    height: 34px;
+    min-height: 34px;
     padding-inline: 8px;
   }
 
   .user-chip-label,
   .balance-refresh,
-  .account-menu-wrap,
-  .nav-recharge-action.el-button {
+  .account-menu-wrap {
     display: none;
+  }
+
+  .nav-recharge-action.el-button,
+  .nav-recharge-action.ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 64px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .nav-recharge-action.el-button > span,
+  .nav-recharge-action.ant-btn > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 100%;
+    line-height: 1;
+  }
+
+  .nav-recharge-action.el-button i,
+  .nav-recharge-action.ant-btn i {
+    margin-right: 3px;
+    font-size: 15px;
   }
 
   .mobile-menu-trigger {
@@ -3496,7 +3576,7 @@
 
   .web-content,
   .web-content.chat-content {
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 
   .web-bottom-nav {
@@ -3506,8 +3586,8 @@
     left: 10px;
     z-index: 70;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 3px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px;
     padding: 5px;
     border: 1px solid #e5e7eb;
     border-radius: 12px;
@@ -3521,12 +3601,12 @@
     min-width: 0;
     height: 48px;
     place-items: center;
-    gap: 3px;
+    gap: 2px;
     border: 0;
     border-radius: 9px;
     background: transparent;
     color: #6b7280;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 800;
   }
 
@@ -3536,7 +3616,7 @@
   }
 
   .web-bottom-nav i {
-    font-size: 19px;
+    font-size: 18px;
   }
 }
 
@@ -3557,12 +3637,19 @@
 
   .user-chip {
     max-width: 108px;
-    min-height: 32px;
+    height: 34px;
+    min-height: 34px;
     font-size: 12px;
   }
 
   .user-balance {
     max-width: 92px;
+  }
+
+  .nav-recharge-action.el-button,
+  .nav-recharge-action.ant-btn {
+    min-width: 58px;
+    padding: 0 8px;
   }
 
   .login-button {
@@ -3572,5 +3659,26 @@
 
   .mobile-account-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .web-mobile-brand strong {
+    max-width: 76px;
+  }
+
+  .user-chip {
+    max-width: 92px;
+    padding-inline: 7px;
+  }
+
+  .user-balance {
+    max-width: 78px;
+  }
+
+  .nav-recharge-action.el-button,
+  .nav-recharge-action.ant-btn {
+    min-width: 52px;
+    padding: 0 7px;
   }
 }

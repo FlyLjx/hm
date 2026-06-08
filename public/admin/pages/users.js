@@ -284,6 +284,15 @@ export const UsersPage = {
               </table>
             </div>
           </section>
+          <section class="page-panel" style="margin-bottom:16px">
+            <div class="page-hero"><div><div class="page-title" style="font-size:16px">API Key</div></div></div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead><tr><th>名称</th><th>完整 Key</th><th>状态</th><th>最近使用</th><th>创建时间</th></tr></thead>
+                <tbody><tr v-for="row in (detailData?.apiKeys || [])" :key="row.id"><td>{{ row.name }}</td><td><code>{{ row.keyPlain || (row.keyPrefix + '********') }}</code></td><td><a-tag :color="row.status === 'active' ? 'green' : 'red'">{{ row.status === 'active' ? '启用' : '停用' }}</a-tag></td><td>{{ row.lastUsedAt ? formatDate(row.lastUsedAt) : '-' }}</td><td>{{ formatDate(row.createdAt) }}</td></tr></tbody>
+              </table>
+            </div>
+          </section>
           <section class="page-panel">
             <div class="page-hero"><div><div class="page-title" style="font-size:16px">最近任务</div></div></div>
             <div class="data-table-wrap">

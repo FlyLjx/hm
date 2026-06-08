@@ -3,6 +3,7 @@ import { taskEvents } from './taskEvents.js'
 import type { AiModelCapability } from '../models/modelTypes.js'
 import type { GenerationSizeTier, GenerationTask } from './taskTypes.js'
 import { AppError } from '../../shared/AppError.js'
+import { toMysqlDateTime } from '../../shared/mysqlDate.js'
 import sharp from 'sharp'
 
 function parseDataImage(value: string) {
@@ -130,12 +131,20 @@ export class TaskService {
     return this.taskRepository.getStats()
   }
 
-  async listImages(input?: { page?: number; pageSize?: number; keyword?: string; display?: 'all' | 'public' | 'private' }) {
+  async listImages(input?: { page?: number; pageSize?: number; keyword?: string; display?: 'all' | 'public' | 'private' | 'pending' | 'rejected' }) {
     return this.taskRepository.findImages(input)
   }
 
   async listPublicDisplayTasks() {
     return this.taskRepository.findPublicDisplay()
+  }
+
+  async listFavoriteTasks(input: { userId: string; page?: number; pageSize?: number; keyword?: string }) {
+    return this.taskRepository.findFavoritesByUserId(input.userId, input)
+  }
+
+  async listHistoryTasks(input: { userId: string; page?: number; pageSize?: number; keyword?: string }) {
+    return this.taskRepository.findHistoryByUserId(input.userId, input)
   }
 
   async exportTasks() {
@@ -152,7 +161,18 @@ export class TaskService {
   }
 
   async cancelTask(id: string) {
+    const currentTask = await this.taskRepository.findById(id)
+    if (!currentTask) {
+      throw new AppError(404, '任务不存在')
+    }
+    if (!['queued', 'pending', 'processing'].includes(currentTask.status)) {
+      throw new AppError(400, '只有等待中或创作中的任务可以取消')
+    }
+
     const task = await this.taskRepository.cancel(id)
+    if (!task) {
+      throw new AppError(404, '任务不存在')
+    }
     taskEvents.emitUpdated(task)
     return task
   }
@@ -183,7 +203,80 @@ export class TaskService {
       : input.displayNote?.trim() || null
     const updatedTask = await this.taskRepository.update(id, {
       displayEnabled: input.displayEnabled,
+      publicStatus: input.displayEnabled ? 'approved' : 'private',
+      publicReviewedAt: toMysqlDateTime(new Date()),
       displayNote,
+    })
+    taskEvents.emitUpdated(updatedTask)
+    return updatedTask
+  }
+
+  async updateTaskFavorite(
+    id: string,
+    input: { userId: string; favoriteEnabled: boolean },
+  ) {
+    const task = await this.taskRepository.findById(id)
+    if (!task) {
+      throw new AppError(404, '任务不存在')
+    }
+    if (task.userId !== input.userId) {
+      throw new AppError(403, '不能收藏其他用户的任务')
+    }
+    if (task.status !== 'success' || !task.resultUrl) {
+      throw new AppError(400, '只有成功生成的图片可以收藏')
+    }
+
+    const updatedTask = await this.taskRepository.update(id, {
+      favoriteEnabled: input.favoriteEnabled,
+    })
+    taskEvents.emitUpdated(updatedTask)
+    return updatedTask
+  }
+
+  async requestTaskPublic(
+    id: string,
+    input: { userId: string; displayNote?: string | null },
+  ) {
+    const task = await this.taskRepository.findById(id)
+    if (!task) {
+      throw new AppError(404, '任务不存在')
+    }
+    if (task.userId !== input.userId) {
+      throw new AppError(403, '不能提交其他用户的作品')
+    }
+    if (task.status !== 'success' || !task.resultUrl) {
+      throw new AppError(400, '只有成功生成的图片可以申请公开')
+    }
+
+    const updatedTask = await this.taskRepository.update(id, {
+      publicStatus: 'pending',
+      publicRequestedAt: toMysqlDateTime(new Date()),
+      publicReviewedAt: null,
+      displayEnabled: false,
+      displayNote: input.displayNote?.trim() || task.displayNote || task.prompt,
+    })
+    taskEvents.emitUpdated(updatedTask)
+    return updatedTask
+  }
+
+  async reviewTaskPublic(
+    id: string,
+    input: { status: 'approved' | 'rejected'; displayNote?: string | null },
+  ) {
+    const task = await this.taskRepository.findById(id)
+    if (!task) {
+      throw new AppError(404, '任务不存在')
+    }
+    if (task.status !== 'success' || !task.resultUrl) {
+      throw new AppError(400, '只有成功生成的图片可以审核')
+    }
+
+    const approved = input.status === 'approved'
+    const updatedTask = await this.taskRepository.update(id, {
+      publicStatus: input.status,
+      publicReviewedAt: toMysqlDateTime(new Date()),
+      displayEnabled: approved,
+      displayNote: input.displayNote?.trim() || task.displayNote || task.prompt,
     })
     taskEvents.emitUpdated(updatedTask)
     return updatedTask

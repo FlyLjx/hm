@@ -9,9 +9,13 @@ import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
 import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/user.js'
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 import { ChatPage } from '../pages/chat.js'
+import { ApiDocsPage } from '../pages/apiDocs.js'
+import { HistoryPage } from '../pages/history.js'
 import { HomePage } from '../pages/home.js'
 import { PlazaPage } from '../pages/plaza.js'
+import { ProfilePage } from '../pages/profile.js'
 import { ReversePromptPage } from '../pages/reversePrompt.js'
+import { StatusPage } from '../pages/status.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
 
@@ -20,7 +24,11 @@ export const RootApp = {
     HomePage,
     PlazaPage,
     ChatPage,
+    ApiDocsPage,
+    HistoryPage,
+    ProfilePage,
     ReversePromptPage,
+    StatusPage,
   },
   setup() {
     const activePage = ref(pageFromHash())
@@ -32,6 +40,7 @@ export const RootApp = {
     const loginOpen = ref(false)
     const authMode = ref('login')
     const rechargeOpen = ref(false)
+    const rechargePanelMode = ref('credits')
     const subscriptionOpen = ref(false)
     const redeemOpen = ref(false)
     const checkinOpen = ref(false)
@@ -60,6 +69,10 @@ export const RootApp = {
       { id: 'chat', label: '对话生图', icon: 'ti-message-2' },
       { id: 'reverse', label: '提示词反推', icon: 'ti-scan-eye' },
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
+      { id: 'history', label: '作品库', icon: 'ti-photo-heart' },
+      { id: 'docs', label: '对接文档', icon: 'ti-book-2' },
+      { id: 'status', label: '服务状态', icon: 'ti-activity-heartbeat' },
+      { id: 'profile', label: '用户中心', icon: 'ti-user-circle' },
     ]
 
     const popupAnnouncements = computed(() => announcements.value.filter((item) => (item.displayMode || 'popup') === 'popup'))
@@ -68,6 +81,7 @@ export const RootApp = {
     const activeAnnouncement = computed(() => popupAnnouncements.value[0] || null)
     const activeTopbarAnnouncement = computed(() => topbarAnnouncements.value[0] || null)
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
+    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'reverse', 'plaza', 'history'].includes(item.id)))
     const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
     const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
@@ -366,6 +380,8 @@ export const RootApp = {
     async function openRecharge() {
       if (!requireLogin()) return
       rechargeOpen.value = true
+      subscriptionOpen.value = false
+      rechargePanelMode.value = 'credits'
       rechargeState.order = null
       rechargeState.qrImage = ''
       stopRechargePolling()
@@ -381,13 +397,8 @@ export const RootApp = {
       }
     }
 
-    async function openSubscription() {
-      if (!requireLogin()) return
-      subscriptionOpen.value = true
-      rechargeState.order = null
-      rechargeState.qrImage = ''
-      stopRechargePolling()
-      paidRechargeNoticeOrderId = ''
+    async function loadSubscriptionData() {
+      if (!currentUser.value?.id) return
       try {
         subscriptionState.loading = true
         const [plansResponse, currentResponse] = await Promise.all([
@@ -404,10 +415,31 @@ export const RootApp = {
       }
     }
 
+    async function switchRechargePanel(mode) {
+      if (rechargePanelMode.value === mode) return
+      rechargePanelMode.value = mode
+      rechargeState.order = null
+      rechargeState.qrImage = ''
+      stopRechargePolling()
+      paidRechargeNoticeOrderId = ''
+      if (mode === 'subscription') await loadSubscriptionData()
+    }
+
+    async function openSubscription() {
+      if (!requireLogin()) return
+      subscriptionOpen.value = true
+      rechargeOpen.value = false
+      rechargeState.order = null
+      rechargeState.qrImage = ''
+      stopRechargePolling()
+      paidRechargeNoticeOrderId = ''
+      await loadSubscriptionData()
+    }
+
     async function createRechargeOrder() {
       if (!currentUser.value) return
       const isCustom = rechargeState.mode === 'custom'
-      const isSubscription = subscriptionOpen.value
+      const isSubscription = subscriptionOpen.value || (rechargeOpen.value && rechargePanelMode.value === 'subscription')
       if (isCustom && customRechargeAmount.value <= 0) {
         ElementPlus.ElMessage.warning('请输入自定义充值金额')
         return
@@ -630,6 +662,7 @@ export const RootApp = {
       authMode,
       authForm,
       rechargeOpen,
+      rechargePanelMode,
       subscriptionOpen,
       rechargeState,
       subscriptionState,
@@ -657,6 +690,7 @@ export const RootApp = {
       promotions,
       subscriptionPlans,
       navItems,
+      bottomNavItems,
       setPage,
       requireLogin,
       logout,
@@ -664,6 +698,7 @@ export const RootApp = {
       runNavAction,
       openRecharge,
       openSubscription,
+      switchRechargePanel,
       createRechargeOrder,
       syncRechargeOrder,
       redeemCode,
@@ -747,6 +782,14 @@ export const RootApp = {
                     <span>订阅会员</span>
                     <em>权益</em>
                   </button>
+                  <button type="button" @click="runNavAction(() => setPage('profile'))">
+                    <i class="ti ti-user-circle"></i>
+                    <span>用户中心</span>
+                  </button>
+                  <button type="button" @click="runNavAction(() => setPage('history'))">
+                    <i class="ti ti-photo-heart"></i>
+                    <span>作品库</span>
+                  </button>
                   <button type="button" @click="runNavAction(() => redeemOpen = true)">
                     <i class="ti ti-ticket"></i>
                     <span>兑换码</span>
@@ -781,6 +824,10 @@ export const RootApp = {
             </div>
             <div class="mobile-account-actions">
               <button type="button" @click="runNavAction(openRecharge)"><i class="ti ti-wallet"></i><span>充值</span></button>
+              <button type="button" @click="runNavAction(() => setPage('profile'))"><i class="ti ti-user-circle"></i><span>用户中心</span></button>
+              <button type="button" @click="runNavAction(() => setPage('history'))"><i class="ti ti-photo-heart"></i><span>作品库</span></button>
+              <button type="button" @click="runNavAction(() => setPage('status'))"><i class="ti ti-activity-heartbeat"></i><span>状态</span></button>
+              <button type="button" @click="runNavAction(() => setPage('docs'))"><i class="ti ti-book-2"></i><span>文档</span></button>
               <button type="button" @click="runNavAction(openSubscription)"><i class="ti ti-crown"></i><span>订阅</span></button>
               <button type="button" @click="runNavAction(() => redeemOpen = true)"><i class="ti ti-ticket"></i><span>兑换</span></button>
               <button type="button" @click="runNavAction(openCheckin)"><i class="ti ti-calendar-check"></i><span>签到</span></button>
@@ -792,12 +839,16 @@ export const RootApp = {
 
         <main :class="['web-content', { 'chat-content': activePage === 'chat' }]">
           <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
-          <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
+          <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
           <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
+          <history-page v-if="activePage === 'history'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
+          <api-docs-page v-if="activePage === 'docs'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" />
+          <status-page v-if="activePage === 'status'" />
+          <profile-page v-if="activePage === 'profile'" :credit-name="creditName" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @user-updated="updateCurrentUser" />
         </main>
         <nav class="web-bottom-nav" aria-label="移动端主导航">
-          <button v-for="item in navItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
+          <button v-for="item in bottomNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
             <i :class="['ti', item.icon]"></i>
             <span>{{ item.label.replace('提示词', '') }}</span>
           </button>
@@ -941,15 +992,26 @@ export const RootApp = {
         <template #header>
           <div class="recharge-head">
             <div>
-              <span>Recharge</span>
-              <strong>在线充值</strong>
-              <p>选择套餐后创建订单，支付完成会自动到账。</p>
+              <span>{{ rechargePanelMode === 'subscription' ? 'Membership' : 'Recharge' }}</span>
+              <strong>{{ rechargePanelMode === 'subscription' ? '会员订阅' : '在线充值' }}</strong>
+              <p>{{ rechargePanelMode === 'subscription' ? '选择会员套餐后创建订单，支付成功会自动开通权益。' : '选择套餐后创建订单，支付完成会自动到账。' }}</p>
             </div>
-            <i class="ti ti-wallet"></i>
+            <i :class="['ti', rechargePanelMode === 'subscription' ? 'ti-crown' : 'ti-wallet']"></i>
           </div>
         </template>
         <div class="recharge-body">
           <div class="recharge-left">
+            <div class="recharge-mode-tabs">
+              <button :class="{ active: rechargePanelMode === 'credits' }" type="button" @click="switchRechargePanel('credits')">
+                <i class="ti ti-coins"></i>
+                积分充值
+              </button>
+              <button :class="{ active: rechargePanelMode === 'subscription' }" type="button" @click="switchRechargePanel('subscription')">
+                <i class="ti ti-crown"></i>
+                会员订阅
+              </button>
+            </div>
+            <template v-if="rechargePanelMode === 'credits'">
             <div class="recharge-tabs">
               <button :class="{ active: rechargeState.mode === 'product' }" type="button" @click="rechargeState.mode = 'product'; rechargeState.selectedProductId = rechargeState.products[0]?.id || ''">
                 <i class="ti ti-packages"></i>
@@ -988,14 +1050,45 @@ export const RootApp = {
             <el-button class="recharge-submit" type="primary" :loading="rechargeState.loading" :disabled="(rechargeState.mode === 'product' && !rechargeState.selectedProductId) || (rechargeState.mode === 'custom' && customRechargeAmount <= 0)" @click="createRechargeOrder">
               创建充值订单
             </el-button>
+            </template>
+            <template v-else>
+              <div v-loading="subscriptionState.loading" class="recharge-subscription-panel">
+                <div class="subscription-status">
+                  <div>
+                    <span>当前订阅</span>
+                    <strong>{{ subscriptionState.current?.planName || '暂未开通' }}</strong>
+                    <p v-if="subscriptionState.current">有效期至 {{ formatDate(subscriptionState.current.expiresAt) }}</p>
+                    <p v-else>选择一个套餐后即可开通会员权益。</p>
+                  </div>
+                  <i :class="['ti', subscriptionState.current ? 'ti-shield-check' : 'ti-shield-plus']"></i>
+                </div>
+                <div class="subscription-plans recharge-subscription-plans">
+                  <button v-for="plan in subscriptionState.plans" :key="plan.id" :class="{ active: subscriptionState.selectedPlanId === plan.id }" class="subscription-plan" type="button" @click="subscriptionState.selectedPlanId = plan.id">
+                    <span v-if="plan.badge" class="subscription-badge">{{ plan.badge }}</span>
+                    <strong>{{ plan.name }}</strong>
+                    <p>{{ plan.description || '会员专属生成权益' }}</p>
+                    <div class="subscription-price">¥{{ formatCurrency(plan.amount) }}</div>
+                    <div class="subscription-benefits">
+                      <span><i class="ti ti-calendar"></i>{{ plan.durationDays }} 天有效期</span>
+                      <span><i class="ti ti-coins"></i>赠送 {{ formatAmount(plan.bonusCredits) }} {{ creditName }}</span>
+                      <span><i class="ti ti-discount"></i>模型 {{ plan.discountPercent }}% 折扣</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+              <el-button class="recharge-submit" type="primary" :loading="rechargeState.loading" :disabled="!selectedSubscriptionPlan" @click="createRechargeOrder">
+                {{ rechargeState.order ? '重新创建订阅订单' : '开通订阅' }}
+              </el-button>
+            </template>
           </div>
           <div :class="{ empty: !rechargeState.order }" class="recharge-order">
             <template v-if="rechargeState.order">
               <div class="recharge-order-info">
-                <span>订单状态</span>
+                <span>{{ rechargePanelMode === 'subscription' ? '订阅订单' : '订单状态' }}</span>
                 <strong>{{ rechargeStatusText(rechargeState.order.status) }}</strong>
                 <p>支付 ¥{{ formatCurrency(rechargeState.order.amount) }}</p>
-                <p>到账 {{ formatAmount(rechargeState.order.credits) }} {{ creditName }}</p>
+                <p v-if="rechargePanelMode === 'credits'">到账 {{ formatAmount(rechargeState.order.credits) }} {{ creditName }}</p>
+                <p v-else>支付完成后自动开通会员权益</p>
               </div>
               <div class="recharge-qr-wrap">
                 <div v-if="rechargeState.qrLoading" class="recharge-qr-loading"><i class="ti ti-loader-2"></i></div>
@@ -1008,7 +1101,7 @@ export const RootApp = {
               <div class="recharge-order-empty">
                 <i class="ti ti-qrcode"></i>
                 <strong>二维码将在这里显示</strong>
-                <p>选择套餐并创建订单后，右侧会显示支付宝支付二维码。</p>
+                <p>{{ rechargePanelMode === 'subscription' ? '选择会员套餐并创建订单后，右侧会显示支付宝支付二维码。' : '选择套餐并创建订单后，右侧会显示支付宝支付二维码。' }}</p>
               </div>
             </template>
           </div>

@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   status ENUM('queued', 'processing', 'pending', 'success', 'failed', 'canceled') NOT NULL DEFAULT 'queued',
   error_message TEXT NULL,
   result_json JSON NULL,
+  favorite_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  public_status ENUM('private', 'pending', 'approved', 'rejected') NOT NULL DEFAULT 'private',
+  public_requested_at DATETIME NULL,
+  public_reviewed_at DATETIME NULL,
   display_enabled TINYINT(1) NOT NULL DEFAULT 0,
   display_note VARCHAR(500) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,6 +83,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   INDEX idx_generation_tasks_created_at (created_at),
   INDEX idx_generation_tasks_user_id (user_id),
   INDEX idx_generation_tasks_user_created_id (user_id, created_at, id),
+  INDEX idx_generation_tasks_user_favorite (user_id, favorite_enabled, updated_at),
+  INDEX idx_generation_tasks_public_status (public_status, updated_at),
   INDEX idx_generation_tasks_capability (capability)
 );
 
@@ -113,6 +119,22 @@ CREATE TABLE IF NOT EXISTS ai_models (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_ai_models_provider_model_capability (provider_id, model_name, capability),
   INDEX idx_ai_models_status_capability (status, capability)
+);
+
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  key_prefix VARCHAR(32) NOT NULL,
+  key_hash CHAR(64) NOT NULL UNIQUE,
+  key_plain VARCHAR(255) NULL,
+  status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
+  last_used_at DATETIME NULL,
+  deleted_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_api_keys_user_id (user_id),
+  INDEX idx_user_api_keys_prefix_status (key_prefix, status)
 );
 
 CREATE TABLE IF NOT EXISTS system_settings (
@@ -233,6 +255,34 @@ CREATE TABLE IF NOT EXISTS credit_logs (
   INDEX idx_credit_logs_created_at (created_at)
 );
 
+CREATE TABLE IF NOT EXISTS api_call_logs (
+  id VARCHAR(36) PRIMARY KEY,
+  direction ENUM('upstream', 'downstream') NOT NULL DEFAULT 'upstream',
+  task_id VARCHAR(36) NULL,
+  user_id VARCHAR(36) NULL,
+  api_key_id VARCHAR(36) NULL,
+  api_key_name VARCHAR(120) NULL,
+  provider_id VARCHAR(36) NULL,
+  provider_type VARCHAR(40) NULL,
+  endpoint VARCHAR(500) NOT NULL,
+  phase VARCHAR(80) NOT NULL,
+  method VARCHAR(12) NOT NULL DEFAULT 'POST',
+  status ENUM('success', 'failed') NOT NULL,
+  status_code INT NULL,
+  duration_ms INT NOT NULL DEFAULT 0,
+  request_summary JSON NULL,
+  response_summary JSON NULL,
+  error_message TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_api_call_logs_created_at (created_at),
+  INDEX idx_api_call_logs_direction_created (direction, created_at),
+  INDEX idx_api_call_logs_user_created (user_id, created_at),
+  INDEX idx_api_call_logs_api_key_created (api_key_id, created_at),
+  INDEX idx_api_call_logs_provider_created (provider_id, created_at),
+  INDEX idx_api_call_logs_status_created (status, created_at),
+  INDEX idx_api_call_logs_task_id (task_id)
+);
+
 INSERT IGNORE INTO system_settings (setting_key, setting_value)
 VALUES
   ('supportEnabled', 'true'),
@@ -242,4 +292,34 @@ VALUES
   ('supportQq', ''),
   ('supportEmail', ''),
   ('supportUrl', ''),
-  ('supportQrCodeUrl', '');
+  ('supportQrCodeUrl', ''),
+  ('streamGenerationEnabled', 'false'),
+  ('promptModerationEnabled', 'true'),
+  ('promptModerationAdultKeywords', '裸体
+裸露
+色情
+黄图
+成人
+性爱
+性交
+做爱
+露点
+私处
+乳头
+生殖器
+强奸
+未成年色情'),
+  ('promptModerationPoliticalKeywords', '习近平
+毛泽东
+共产党
+中共
+台湾独立
+台独
+港独
+藏独
+疆独
+六四
+法轮功
+政治宣传
+推翻政府'),
+  ('promptModerationRejectMessage', '提示词包含不支持生成的敏感内容，请修改后再试。');

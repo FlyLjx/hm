@@ -6,22 +6,44 @@ import { fileURLToPath } from 'node:url'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const releaseDir = resolve(rootDir, 'release', 'web')
+const archivePath = resolve(rootDir, 'release', 'web.zip')
 
 function isInside(parent, target) {
   const path = relative(parent, target)
   return path && !path.startsWith('..') && !resolve(path).startsWith(resolve(path).root)
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
-      cwd: rootDir,
+      cwd: options.cwd ?? rootDir,
       stdio: 'inherit',
     })
     child.on('error', reject)
     child.on('exit', (code) => {
       if (code === 0) resolveRun()
       else reject(new Error(`${command} ${args.join(' ')} failed with exit code ${code}`))
+    })
+  })
+}
+
+function runQuiet(command, args) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, {
+      cwd: rootDir,
+      stdio: 'pipe',
+    })
+    let output = ''
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString()
+    })
+    child.stderr.on('data', (chunk) => {
+      output += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('exit', (code) => {
+      if (code === 0) resolveRun(output)
+      else reject(new Error(`${command} ${args.join(' ')} failed with exit code ${code}\n${output}`))
     })
   })
 }
@@ -74,9 +96,36 @@ async function main() {
   await writeFile(resolve(releaseDir, 'start-web.sh'), startShell(), 'utf8')
   await writeFile(resolve(releaseDir, 'start-web.bat'), startBat(), 'utf8')
 
+  console.log('> Creating release/web.zip')
+  await createArchive()
+
   console.log('')
   console.log(`Release ready: ${releaseDir}`)
+  console.log(`Archive ready: ${archivePath}`)
   console.log('Upload the contents of release/web to your server, then follow README_DEPLOY.md.')
+}
+
+async function createArchive() {
+  await rm(archivePath, { force: true })
+
+  if (process.platform === 'win32') {
+    await run('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Compress-Archive -Path "${releaseDir}\\*" -DestinationPath "${archivePath}" -Force`,
+    ])
+    return
+  }
+
+  try {
+    await runQuiet('zip', ['-v'])
+    await run('zip', ['-r', archivePath, '.'], { cwd: releaseDir })
+    return
+  } catch {
+    await run('tar', ['-a', '-cf', archivePath, '-C', releaseDir, '.'])
+  }
 }
 
 function envExample() {

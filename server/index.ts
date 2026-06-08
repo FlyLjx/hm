@@ -5,6 +5,7 @@ import { initializeDatabase } from './config/migrate.js'
 import { attachTaskSocket } from './modules/tasks/taskSocket.js'
 import { startTaskTimeoutScheduler } from './modules/tasks/taskTimeoutScheduler.js'
 import { attachUserSocket } from './modules/users/userSocket.js'
+import { startApiProviderMonitor } from './modules/apiProviders/apiProviderMonitor.js'
 
 async function bootstrap() {
   await initializeDatabase()
@@ -13,6 +14,7 @@ async function bootstrap() {
   attachTaskSocket(server)
   attachUserSocket(server)
   startTaskTimeoutScheduler()
+  startApiProviderMonitor()
 
   server.listen(env.port, () => {
     console.log(`API server running at http://localhost:${env.port}`)

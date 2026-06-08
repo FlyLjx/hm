@@ -33,6 +33,40 @@ const defaultSettings: SystemSettings = {
   inviteEnabled: true,
   inviteRewardCredits: 1,
   taskTimeoutMinutes: 3,
+  streamGenerationEnabled: false,
+  promptModerationEnabled: true,
+  promptModerationAdultKeywords: [
+    '裸体',
+    '裸露',
+    '色情',
+    '黄图',
+    '成人',
+    '性爱',
+    '性交',
+    '做爱',
+    '露点',
+    '私处',
+    '乳头',
+    '生殖器',
+    '强奸',
+    '未成年色情',
+  ].join('\n'),
+  promptModerationPoliticalKeywords: [
+    '习近平',
+    '毛泽东',
+    '共产党',
+    '中共',
+    '台湾独立',
+    '台独',
+    '港独',
+    '藏独',
+    '疆独',
+    '六四',
+    '法轮功',
+    '政治宣传',
+    '推翻政府',
+  ].join('\n'),
+  promptModerationRejectMessage: '提示词包含不支持生成的敏感内容，请修改后再试。',
   alipayAppId: '',
   alipayPrivateKey: '',
   alipayPublicKey: '',
@@ -65,7 +99,9 @@ function parseSettingValue<Key extends keyof SystemSettings>(
     key === 'supportEnabled' ||
     key === 'rechargeEnabled' ||
     key === 'checkinEnabled' ||
-    key === 'inviteEnabled'
+    key === 'inviteEnabled' ||
+    key === 'streamGenerationEnabled' ||
+    key === 'promptModerationEnabled'
   ) {
     return (value === 'true' || value === '1') as SystemSettings[Key]
   }

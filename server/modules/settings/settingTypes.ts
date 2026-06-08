@@ -24,6 +24,11 @@ export type SystemSettings = {
   inviteEnabled: boolean
   inviteRewardCredits: number
   taskTimeoutMinutes: number
+  streamGenerationEnabled: boolean
+  promptModerationEnabled: boolean
+  promptModerationAdultKeywords: string
+  promptModerationPoliticalKeywords: string
+  promptModerationRejectMessage: string
   alipayAppId: string
   alipayPrivateKey: string
   alipayPublicKey: string

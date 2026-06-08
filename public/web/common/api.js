@@ -42,6 +42,9 @@ export async function request(path, options = {}) {
   if (!response.ok) {
     throw new Error(await readErrorMessage(response))
   }
+  if (response.status === 204) {
+    return undefined
+  }
   const contentType = response.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
     throw new Error(await readErrorMessage(response))
@@ -67,6 +70,12 @@ export const clientApi = {
   forgotPassword: (email) => request('/api/users/password/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
   resetPassword: (input) => request('/api/users/password/reset', { method: 'POST', body: JSON.stringify(input) }),
   getCurrentUser: (id) => request(`/api/users/${encodeURIComponent(id)}/profile`),
+  getUserDetails: (id, input) => request(`/api/users/${encodeURIComponent(id)}/public-details${query({ userId: id, ...input })}`),
+  changePassword: (id, input) => request(`/api/users/${encodeURIComponent(id)}/password`, { method: 'PATCH', body: JSON.stringify({ ...input, userId: id }) }),
+  listApiKeys: (id) => request(`/api/users/${encodeURIComponent(id)}/api-keys`),
+  createApiKey: (id, input) => request(`/api/users/${encodeURIComponent(id)}/api-keys`, { method: 'POST', body: JSON.stringify(input) }),
+  updateApiKeyStatus: (id, keyId, input) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteApiKey: (id, keyId) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
 
   getSettings: () => request('/api/settings/public'),
   listAnnouncements: (userId) => request(`/api/announcements/public${query({ userId })}`),
@@ -74,6 +83,7 @@ export const clientApi = {
   listPromotions: () => request('/api/promotions/public'),
 
   listModels: () => request('/api/models?dedupe=display'),
+  getServiceStatus: () => request('/api/service-status'),
   reversePrompt: (input) => request('/api/prompt-reverse', { method: 'POST', body: JSON.stringify(input) }),
   generateImage: (input) => request('/api/generate/image', { method: 'POST', body: JSON.stringify(input) }),
   generateImageStream: async (input) => {
@@ -89,7 +99,11 @@ export const clientApi = {
   },
   getTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`),
   listPublicDisplayTasks: () => request('/api/tasks/public-display'),
+  listFavoriteTasks: (input) => request(`/api/tasks/favorites${query(input)}`),
+  listHistoryTasks: (input) => request(`/api/tasks/history${query(input)}`),
   updateTaskDisplay: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/display`, { method: 'PATCH', body: JSON.stringify(input) }),
+  updateTaskFavorite: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/favorite`, { method: 'PATCH', body: JSON.stringify(input) }),
+  requestTaskPublic: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/public-request`, { method: 'POST', body: JSON.stringify(input) }),
   estimateTaskDuration: (input) => request(`/api/tasks/estimate${query(input)}`),
 
   listRechargeProducts: () => request('/api/shop/public/recharge-products'),

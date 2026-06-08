@@ -2,6 +2,7 @@ import type { AiModelCapability } from '../models/modelTypes.js'
 
 export type GenerationTaskStatus = 'queued' | 'processing' | 'pending' | 'success' | 'failed' | 'canceled'
 export type GenerationSizeTier = '1k' | '2k' | '4k'
+export type GenerationPublicStatus = 'private' | 'pending' | 'approved' | 'rejected'
 
 export type GenerationTask = {
   id: string
@@ -32,6 +33,10 @@ export type GenerationTask = {
   resultUrls?: string[]
   thumbnailUrl?: string | null
   thumbnailUrls?: string[]
+  favoriteEnabled: boolean
+  publicStatus: GenerationPublicStatus
+  publicRequestedAt?: string | null
+  publicReviewedAt?: string | null
   displayEnabled: boolean
   displayNote?: string | null
   createdAt: string

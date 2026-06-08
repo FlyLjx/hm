@@ -27,6 +27,11 @@ const defaultSettings = {
   inviteEnabled: true,
   inviteRewardCredits: 1,
   taskTimeoutMinutes: 3,
+  streamGenerationEnabled: false,
+  promptModerationEnabled: true,
+  promptModerationAdultKeywords: '裸体\n裸露\n色情\n黄图\n成人\n性爱\n性交\n做爱\n露点\n私处\n乳头\n生殖器\n强奸\n未成年色情',
+  promptModerationPoliticalKeywords: '习近平\n毛泽东\n共产党\n中共\n台湾独立\n台独\n港独\n藏独\n疆独\n六四\n法轮功\n政治宣传\n推翻政府',
+  promptModerationRejectMessage: '提示词包含不支持生成的敏感内容，请修改后再试。',
   alipayAppId: '',
   alipayPrivateKey: '',
   alipayPublicKey: '',
@@ -64,6 +69,15 @@ export const SettingsPage = {
         { key: 'rechargeEnabled', label: '开启充值', type: 'boolean' }, { key: 'rechargeRate', label: '充值比例', type: 'number' }, { key: 'rechargeMinAmount', label: '最低充值金额', type: 'number' }, { key: 'rechargePresets', label: '充值预设' },
         { key: 'checkinEnabled', label: '开启签到', type: 'boolean' }, { key: 'checkinRewards', label: '签到奖励池' }, { key: 'inviteEnabled', label: '开启邀请', type: 'boolean' }, { key: 'inviteRewardCredits', label: '邀请奖励额度', type: 'number' }, { key: 'taskTimeoutMinutes', label: '任务超时分钟', type: 'number' },
       ] },
+      { title: '生成策略', fields: [
+        { key: 'streamGenerationEnabled', label: '启用流式生图', type: 'boolean' },
+      ] },
+      { title: '提示词审核', fields: [
+        { key: 'promptModerationEnabled', label: '开启提示词审核', type: 'boolean' },
+        { key: 'promptModerationRejectMessage', label: '拦截提示文案' },
+        { key: 'promptModerationAdultKeywords', label: '黄图关键词', type: 'textarea' },
+        { key: 'promptModerationPoliticalKeywords', label: '涉政关键词', type: 'textarea' },
+      ] },
       { title: '支付与邮件', fields: [
         { key: 'alipayAppId', label: '支付宝 App ID' }, { key: 'alipayGateway', label: '支付宝网关', type: 'url' }, { key: 'alipayPrivateKey', label: '应用私钥', type: 'textarea' }, { key: 'alipayPublicKey', label: '支付宝公钥', type: 'textarea' },
         { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host' }, { key: 'emailPort', label: 'SMTP Port', type: 'number' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean' }, { key: 'emailUser', label: '邮箱账号' }, { key: 'emailPassword', label: '邮箱密码', type: 'password' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址' },
@@ -73,6 +87,7 @@ export const SettingsPage = {
       ['当前站点', form.siteName || 'AIπ'],
       ['注册状态', form.registerMode === 'closed' ? '关闭注册' : '开放注册'],
       ['充值功能', form.rechargeEnabled ? '已开启' : '已关闭'],
+      ['生图模式', form.streamGenerationEnabled ? '流式' : '普通'],
       ['任务超时', `${toNumber(form.taskTimeoutMinutes, 3)} 分钟`],
     ])
     watch(() => props.settings, (next) => Object.assign(form, defaultSettings, next || {}), { deep: true })
@@ -80,7 +95,7 @@ export const SettingsPage = {
     function normalizeInput() {
       const input = { ...form }
       input.announcementEnabled = true
-      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
+      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
       ;['rechargeRate', 'rechargeMinAmount', 'inviteRewardCredits', 'taskTimeoutMinutes', 'emailPort', 'registerRewardCredits'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
       input.frontendUrl = input.frontendUrl || window.location.origin
       input.backendUrl = input.backendUrl || window.location.origin

@@ -19,6 +19,8 @@ const generatingStatuses = ['waiting', 'queued', 'pending', 'running', 'processi
 const orphanWaitingExpireMs = 3 * 60 * 1000
 const maxReferenceImages = 5
 const maxReferenceImageBytes = 5 * 1024 * 1024
+const maskBrushColor = 'rgba(22, 163, 91, 0.64)'
+const maskPreviewColor = '#16a35b'
 const downloadTokenChars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
 const generatingStages = [
   {
@@ -89,7 +91,7 @@ function imageExtensionFromUrl(value) {
 }
 
 export const ChatPage = {
-  props: ['creditName', 'currentUser', 'siteName'],
+  props: ['creditName', 'currentUser', 'settings', 'siteName'],
   emits: ['login', 'preview', 'user-updated'],
   setup(props, { emit }) {
     const models = ref([])
@@ -97,6 +99,7 @@ export const ChatPage = {
     const ratio = ref('1:1')
     const sizeTier = ref('2k')
     const quantity = ref(1)
+    const transparentBackground = ref(false)
     const prompt = ref('')
     const messages = ref([])
     const sessions = ref([createSession(1)])
@@ -104,6 +107,10 @@ export const ChatPage = {
     const referenceImages = ref([])
     const fileInput = ref(null)
     const chatThread = ref(null)
+    const maskEditorOpen = ref(false)
+    const maskEditor = ref({ sourceUrl: '', prompt: '', brushSize: 42, drawing: false, loading: false, lastPoint: null })
+    const maskCanvas = ref(null)
+    const maskImageCanvas = ref(null)
     const unsubscribers = new Map()
     const storageKey = computed(() => props.currentUser?.id ? `${chatStoragePrefix}:${props.currentUser.id}` : '')
     const chatModels = computed(() => getActiveModelsByCapability(models.value))
@@ -118,6 +125,10 @@ export const ChatPage = {
     const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || sessions.value[0])
     const orderedSessions = computed(() => [...sessions.value].sort((a, b) => (a.no || 0) - (b.no || 0)))
     const activeSessionLoading = computed(() => messages.value.some((message) => isGeneratingStatus(message.status)))
+    const streamGenerationEnabled = computed(() => {
+      const value = props.settings?.streamGenerationEnabled
+      return value === true || value === 'true' || value === 1 || value === '1'
+    })
 
     function autoSessionTitle(no) {
       return `当前会话 #${no}`
@@ -462,6 +473,8 @@ export const ChatPage = {
       const isSuccess = task.status === 'success'
       const images = isSuccess ? taskImages(task) : []
       const previous = sourceMessages.find((item) => item.taskId === task.id || item.id === `task-${task.id}`)
+      const hiddenImageIndexes = (previous?.hiddenImageIndexes || []).filter((index) => index >= 0 && index < images.length)
+      const activeImageIndex = Math.min(previous?.activeImageIndex || 0, Math.max(0, images.length - 1))
       const effectiveStatus = task.status
       const statusText = effectiveStatus === 'success'
         ? '生成完毕！'
@@ -483,7 +496,12 @@ export const ChatPage = {
         errorMessage: task.errorMessage,
         images,
         thumbnails: task.thumbnailUrls?.length ? task.thumbnailUrls : task.thumbnailUrl ? [task.thumbnailUrl] : images,
+        activeImageIndex,
+        hiddenImageIndexes,
         downloadTokens: createDownloadTokens(images.length, previous?.downloadTokens),
+        favoriteEnabled: task.favoriteEnabled,
+        publicStatus: task.publicStatus,
+        displayNote: task.displayNote,
         size: task.size,
         createdAt: previous?.createdAt || task.createdAt || Date.now(),
         stageKey: resolveTaskStageKey(task, previous),
@@ -526,6 +544,44 @@ export const ChatPage = {
         return `/api/tasks/${encodeURIComponent(message.taskId)}/images/${index}/download?filename=${encodeURIComponent(filename)}`
       }
       return resolveOriginalImageUrl(image)
+    }
+
+    function visibleResultIndexes(message) {
+      const hiddenIndexes = new Set(message.hiddenImageIndexes || [])
+      return (message.images || [])
+        .map((image, index) => ({ image, index }))
+        .filter((item) => String(item.image || '').trim() && !hiddenIndexes.has(item.index))
+        .map((item) => item.index)
+    }
+
+    function activeResultIndex(message) {
+      const visibleIndexes = visibleResultIndexes(message)
+      if (!visibleIndexes.length) return 0
+      const index = Number(message.activeImageIndex || 0)
+      return visibleIndexes.includes(index) ? index : visibleIndexes[0]
+    }
+
+    function activeResultImage(message) {
+      return message.images?.[activeResultIndex(message)]
+    }
+
+    function activeResultThumbnail(message) {
+      const index = activeResultIndex(message)
+      return message.thumbnails?.[index] || message.images?.[index]
+    }
+
+    function selectResultImage(message, index) {
+      message.activeImageIndex = index
+    }
+
+    function hideBrokenImage(event, message, index) {
+      event.target?.closest?.('.result-thumb')?.classList.add('image-load-failed')
+      if (!message || !Number.isInteger(index)) return
+      const hiddenIndexes = new Set(message.hiddenImageIndexes || [])
+      hiddenIndexes.add(index)
+      message.hiddenImageIndexes = [...hiddenIndexes]
+      const nextVisibleIndex = (message.images || []).findIndex((image, itemIndex) => String(image || '').trim() && !hiddenIndexes.has(itemIndex))
+      message.activeImageIndex = nextVisibleIndex >= 0 ? nextVisibleIndex : 0
     }
 
     function findSessionIdByTaskId(taskId) {
@@ -677,6 +733,14 @@ export const ChatPage = {
     }
 
     async function createGenerationTask(payload, waitingId, sessionId = activeSessionId.value) {
+      if (!streamGenerationEnabled.value) {
+        const response = await clientApi.generateImage(payload)
+        bindWaitingMessageToTask(waitingId, response.data, sessionId)
+        applyTask(response.data, sessionId)
+        if (!isTerminalTaskStatus(response.data.status)) subscribeTask(response.data.id, sessionId)
+        return response.data
+      }
+
       let firstTask = null
       try {
         const response = await clientApi.generateImageStream(payload)
@@ -701,7 +765,7 @@ export const ChatPage = {
       }
     }
 
-    async function handleGenerate(text = prompt.value) {
+    async function handleGenerate(text = prompt.value, extraPayload = {}, options = {}) {
       if (!props.currentUser) {
         emit('login')
         return
@@ -716,16 +780,24 @@ export const ChatPage = {
       }
       const sessionId = activeSessionId.value
       const submittedReferenceImages = normalizeReferenceImages(referenceImages.value)
+      const displayReferenceImages = normalizeReferenceImages(options.displayReferenceImages ?? submittedReferenceImages)
       const userMessage = {
         id: createClientId('message'),
         role: 'user',
         text: text.trim(),
-        referenceImage: submittedReferenceImages[0] || null,
-        referenceImages: submittedReferenceImages,
+        referenceImage: displayReferenceImages[0] || null,
+        referenceImages: displayReferenceImages,
         createdAt: Date.now(),
       }
       const waitingId = `waiting-${userMessage.id}`
-      const waitingMessage = { id: waitingId, role: 'assistant', text: '正在连接流式生成通道...', status: 'waiting', streamStage: 'connecting', createdAt: Date.now() }
+      const waitingMessage = {
+        id: waitingId,
+        role: 'assistant',
+        text: streamGenerationEnabled.value ? '正在连接流式生成通道...' : '正在提交生成任务...',
+        status: 'waiting',
+        streamStage: 'connecting',
+        createdAt: Date.now(),
+      }
       syncSessionMessages(sessionId, [...readSessionMessages(sessionId), userMessage, waitingMessage])
       prompt.value = ''
       referenceImages.value = []
@@ -737,9 +809,12 @@ export const ChatPage = {
           prompt: userMessage.text,
           sizeTier: sizeTier.value,
           size: outputSize.value,
+          outputFormat: 'png',
+          transparentBackground: transparentBackground.value,
           quantity: quantity.value,
           referenceImageUrl: submittedReferenceImages[0]?.url,
           referenceImageUrls: submittedReferenceImages.map((image) => image.url).filter(Boolean),
+          ...extraPayload,
         }, waitingId, sessionId)
       } catch (error) {
         const sessionMessages = readSessionMessages(sessionId).filter((item) => item.id !== waitingId)
@@ -755,7 +830,219 @@ export const ChatPage = {
       ElementPlus.ElMessage.success('已设为参考图')
     }
 
+    function patchTaskMessage(taskId, patch) {
+      if (!taskId) return
+      const sessionId = findSessionIdByTaskId(taskId)
+      const sessionMessages = [...readSessionMessages(sessionId)]
+      const index = sessionMessages.findIndex((item) => item.taskId === taskId || item.id === `task-${taskId}`)
+      if (index < 0) return
+      sessionMessages.splice(index, 1, { ...sessionMessages[index], ...patch })
+      syncSessionMessages(sessionId, sessionMessages)
+    }
+
+    async function toggleFavorite(message) {
+      if (!props.currentUser) {
+        emit('login')
+        return
+      }
+      if (!message.taskId) return
+      try {
+        const nextValue = !message.favoriteEnabled
+        const response = await clientApi.updateTaskFavorite(message.taskId, { userId: props.currentUser.id, favoriteEnabled: nextValue })
+        patchTaskMessage(message.taskId, {
+          favoriteEnabled: response.data?.favoriteEnabled ?? nextValue,
+          publicStatus: response.data?.publicStatus ?? message.publicStatus,
+        })
+        ElementPlus.ElMessage.success(nextValue ? '已收藏' : '已取消收藏')
+      } catch (error) {
+        ElementPlus.ElMessage.error(error.message || '收藏失败')
+      }
+    }
+
+    async function requestPublic(message) {
+      if (!props.currentUser) {
+        emit('login')
+        return
+      }
+      if (!message.taskId || message.publicStatus === 'pending' || message.publicStatus === 'approved') return
+      try {
+        const response = await clientApi.requestTaskPublic(message.taskId, { userId: props.currentUser.id, displayNote: message.displayNote || prompt.value || '公开作品' })
+        patchTaskMessage(message.taskId, {
+          publicStatus: response.data?.publicStatus ?? 'pending',
+          displayNote: response.data?.displayNote ?? message.displayNote,
+        })
+        ElementPlus.ElMessage.success('已提交公开审核')
+      } catch (error) {
+        ElementPlus.ElMessage.error(error.message || '提交失败')
+      }
+    }
+
+    function publicActionLabel(message) {
+      if (message.publicStatus === 'approved') return '已公开'
+      if (message.publicStatus === 'pending') return '审核中'
+      if (message.publicStatus === 'rejected') return '重新公开'
+      return '公开'
+    }
+
+    async function openMaskEditor(url) {
+      const sourceUrl = resolveOriginalImageUrl(url)
+      maskEditor.value = { sourceUrl, prompt: prompt.value || '', brushSize: 42, drawing: false, loading: false, lastPoint: null }
+      maskEditorOpen.value = true
+      await nextTick()
+      await setupMaskCanvas(sourceUrl)
+    }
+
+    async function setupMaskCanvas(sourceUrl) {
+      const image = await loadImageElement(sourceUrl)
+      const maxWidth = 860
+      const scale = Math.min(1, maxWidth / (image.naturalWidth || image.width || maxWidth))
+      const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale))
+      const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale))
+      const sourceCanvas = maskImageCanvas.value
+      const drawCanvas = maskCanvas.value
+      if (!sourceCanvas || !drawCanvas) return
+      ;[sourceCanvas, drawCanvas].forEach((canvas) => {
+        canvas.width = width
+        canvas.height = height
+      })
+      const sourceContext = sourceCanvas.getContext('2d')
+      sourceContext.clearRect(0, 0, width, height)
+      sourceContext.drawImage(image, 0, 0, width, height)
+      clearMask()
+    }
+
+    function clearMask() {
+      const canvas = maskCanvas.value
+      if (!canvas) return
+      const context = canvas.getContext('2d')
+      context.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    function maskPoint(event) {
+      const canvas = maskCanvas.value
+      const rect = canvas.getBoundingClientRect()
+      const source = event.touches?.[0] || event
+      return {
+        x: ((source.clientX - rect.left) / rect.width) * canvas.width,
+        y: ((source.clientY - rect.top) / rect.height) * canvas.height,
+      }
+    }
+
+    function drawMaskStroke(point) {
+      const canvas = maskCanvas.value
+      if (!canvas) return
+      const context = canvas.getContext('2d')
+      const brushSize = Number(maskEditor.value.brushSize || 42)
+      const lastPoint = maskEditor.value.lastPoint
+      context.globalCompositeOperation = 'source-over'
+      context.strokeStyle = maskBrushColor
+      context.fillStyle = maskBrushColor
+      context.lineWidth = brushSize
+      context.lineCap = 'round'
+      context.lineJoin = 'round'
+      context.beginPath()
+      if (lastPoint) {
+        context.moveTo(lastPoint.x, lastPoint.y)
+        context.lineTo(point.x, point.y)
+        context.stroke()
+      } else {
+        context.arc(point.x, point.y, brushSize / 2, 0, Math.PI * 2)
+        context.fill()
+      }
+      maskEditor.value.lastPoint = point
+    }
+
+    function startMaskDraw(event) {
+      event.preventDefault()
+      maskEditor.value.drawing = true
+      maskEditor.value.lastPoint = null
+      drawMaskStroke(maskPoint(event))
+    }
+
+    function moveMaskDraw(event) {
+      if (!maskEditor.value.drawing) return
+      event.preventDefault()
+      drawMaskStroke(maskPoint(event))
+    }
+
+    function stopMaskDraw() {
+      maskEditor.value.drawing = false
+      maskEditor.value.lastPoint = null
+    }
+
+    function exportEditMaskDataUrl() {
+      const canvas = maskCanvas.value
+      if (!canvas) return ''
+      const output = document.createElement('canvas')
+      output.width = canvas.width
+      output.height = canvas.height
+      const context = output.getContext('2d')
+      context.fillStyle = '#000'
+      context.fillRect(0, 0, output.width, output.height)
+      context.globalCompositeOperation = 'destination-out'
+      context.drawImage(canvas, 0, 0)
+      return output.toDataURL('image/png')
+    }
+
+    function exportMaskPreviewDataUrl() {
+      const sourceCanvas = maskImageCanvas.value
+      const drawCanvas = maskCanvas.value
+      if (!sourceCanvas || !drawCanvas) return ''
+      const output = document.createElement('canvas')
+      output.width = sourceCanvas.width
+      output.height = sourceCanvas.height
+      const context = output.getContext('2d')
+      context.drawImage(sourceCanvas, 0, 0)
+      const overlay = document.createElement('canvas')
+      overlay.width = output.width
+      overlay.height = output.height
+      const overlayContext = overlay.getContext('2d')
+      context.globalAlpha = 0.72
+      context.fillStyle = maskPreviewColor
+      context.globalCompositeOperation = 'source-over'
+      context.fillRect(0, 0, output.width, output.height)
+      context.globalCompositeOperation = 'destination-in'
+      context.drawImage(drawCanvas, 0, 0)
+      overlayContext.drawImage(sourceCanvas, 0, 0)
+      overlayContext.drawImage(output, 0, 0)
+      return overlay.toDataURL('image/png')
+    }
+
+    async function submitMaskEdit() {
+      if (!props.currentUser) {
+        emit('login')
+        return
+      }
+      const text = maskEditor.value.prompt.trim()
+      if (!text) {
+        ElementPlus.ElMessage.warning('请输入蒙版编辑提示词')
+        return
+      }
+      const canvas = maskCanvas.value
+      if (!canvas) return
+      const maskImageUrl = exportEditMaskDataUrl()
+      const maskPreviewUrl = exportMaskPreviewDataUrl()
+      maskEditor.value.loading = true
+      try {
+        maskEditorOpen.value = false
+        await handleGenerate(text, {
+          referenceImageUrl: maskEditor.value.sourceUrl,
+          referenceImageUrls: [maskEditor.value.sourceUrl],
+          maskImageUrl,
+        }, {
+          displayReferenceImages: [{
+            url: maskPreviewUrl || maskEditor.value.sourceUrl,
+            name: '蒙版编辑预览',
+            source: 'mask',
+          }],
+        })
+      } finally {
+        maskEditor.value.loading = false
+      }
+    }
+
     function referenceSourceLabel(image) {
+      if (image?.source === 'mask') return '蒙版编辑'
       return image?.source === 'upload' ? '本地上传' : '生成结果'
     }
 
@@ -918,6 +1205,7 @@ export const ChatPage = {
       ratio,
       sizeTier,
       quantity,
+      transparentBackground,
       prompt,
       messages,
       sessions,
@@ -926,6 +1214,10 @@ export const ChatPage = {
       referenceImages,
       maxReferenceImages,
       fileInput,
+      maskEditorOpen,
+      maskEditor,
+      maskCanvas,
+      maskImageCanvas,
       loading: activeSessionLoading,
       chatThread,
       chatModels,
@@ -947,6 +1239,12 @@ export const ChatPage = {
       normalizeReferenceImages,
       downloadImageName,
       downloadImageUrl,
+      visibleResultIndexes,
+      activeResultIndex,
+      activeResultImage,
+      activeResultThumbnail,
+      selectResultImage,
+      hideBrokenImage,
       switchSession,
       newSession,
       deleteSession,
@@ -957,6 +1255,15 @@ export const ChatPage = {
       ratioIconStyle,
       handleGenerate,
       useAsReference,
+      toggleFavorite,
+      requestPublic,
+      publicActionLabel,
+      openMaskEditor,
+      clearMask,
+      startMaskDraw,
+      moveMaskDraw,
+      stopMaskDraw,
+      submitMaskEdit,
       referenceSourceLabel,
       removeReferenceImage,
       generatingStage,
@@ -1047,6 +1354,10 @@ export const ChatPage = {
               </template>
               <p v-else>{{ message.text }}</p>
               <p v-if="message.errorMessage" style="color:var(--red)">{{ message.errorMessage }}</p>
+              <div v-if="message.status === 'failed' && !message.images?.length" class="lost-image-card">
+                <i class="ti ti-photo-off"></i>
+                <strong>图片走丢咯...</strong>
+              </div>
               <div v-if="normalizeReferenceImages(message.referenceImages || message.referenceImage).length" class="reference-preview-list">
                 <div v-for="(image, index) in normalizeReferenceImages(message.referenceImages || message.referenceImage)" :key="image.url || image.name || index" :class="['reference-preview', { 'is-omitted': image.omitted }]">
                   <img v-if="image.url" :src="image.url" alt="参考图" />
@@ -1056,23 +1367,41 @@ export const ChatPage = {
                   </span>
                 </div>
               </div>
-              <div v-if="message.images?.length" class="result-grid">
-                <div v-for="(image, index) in message.images" :key="image" class="result-item">
-                  <img :src="message.thumbnails?.[index] || image" alt="生成结果" @click="$emit('preview', { url: resolveOriginalImageUrl(image), title: '生成结果' })" />
+              <div v-if="visibleResultIndexes(message).length" class="result-stack">
+                <div class="result-item result-active">
+                  <img :src="activeResultThumbnail(message)" alt="生成结果" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" @click="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果' })" />
                   <div class="card-actions">
-                    <button class="result-action" type="button" @click="$emit('preview', { url: resolveOriginalImageUrl(image), title: '生成结果' })">
+                    <button class="result-action" type="button" @click="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果' })">
                       <i class="ti ti-maximize"></i>
                       放大
                     </button>
-                    <button class="result-action primary" type="button" @click="useAsReference(image)">
+                    <button class="result-action primary" type="button" @click="useAsReference(activeResultImage(message))">
                       <i class="ti ti-wand"></i>
                       改图
                     </button>
-                    <a class="result-action" :href="downloadImageUrl(message, image, index)" :download="downloadImageName(message, index)">
+                    <button class="result-action" type="button" @click="openMaskEditor(activeResultImage(message))">
+                      <i class="ti ti-brush"></i>
+                      蒙版
+                    </button>
+                    <button class="result-action" type="button" @click="toggleFavorite(message)">
+                      <i :class="['ti', message.favoriteEnabled ? 'ti-heart-filled' : 'ti-heart']"></i>
+                      {{ message.favoriteEnabled ? '已收藏' : '收藏' }}
+                    </button>
+                    <button class="result-action" type="button" :disabled="message.publicStatus === 'pending' || message.publicStatus === 'approved'" @click="requestPublic(message)">
+                      <i class="ti ti-world-upload"></i>
+                      {{ publicActionLabel(message) }}
+                    </button>
+                    <a class="result-action" :href="downloadImageUrl(message, activeResultImage(message), activeResultIndex(message))" :download="downloadImageName(message, activeResultIndex(message))">
                       <i class="ti ti-download"></i>
                       下载
                     </a>
                   </div>
+                </div>
+                <div v-if="visibleResultIndexes(message).length > 1" class="result-filmstrip">
+                  <button v-for="index in visibleResultIndexes(message)" :key="message.images[index] || index" :class="['result-thumb', { active: activeResultIndex(message) === index }]" type="button" @click="selectResultImage(message, index)">
+                    <img :src="message.thumbnails?.[index] || message.images?.[index]" :alt="'生成结果 ' + (index + 1)" @error="(event) => hideBrokenImage(event, message, index)" />
+                    <span>{{ index + 1 }}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1156,6 +1485,14 @@ export const ChatPage = {
                 </el-option>
               </el-select>
             </div>
+            <div class="composer-field composer-transparent">
+              <span>透明</span>
+              <label class="transparent-toggle">
+                <i class="ti ti-layers-intersect"></i>
+                <strong>底图</strong>
+                <el-switch v-model="transparentBackground" active-text="开" inactive-text="关" />
+              </label>
+            </div>
             <span class="cost-chip">
               <i class="ti ti-coins"></i>
               <template v-if="hasSubscriptionDiscount">
@@ -1211,6 +1548,40 @@ export const ChatPage = {
           </div>
         </footer>
       </section>
+      <el-dialog v-model="maskEditorOpen" width="min(96vw, 1120px)" class="mask-editor-dialog" custom-class="mask-editor-panel">
+        <template #header>
+          <div class="mask-editor-head">
+            <div>
+              <span>Mask Edit</span>
+              <strong>蒙版编辑</strong>
+            </div>
+            <i class="ti ti-brush"></i>
+          </div>
+        </template>
+        <div class="mask-editor-body">
+          <div class="mask-canvas-wrap">
+            <div class="mask-canvas-stage" @mousedown="startMaskDraw" @mousemove="moveMaskDraw" @mouseup="stopMaskDraw" @mouseleave="stopMaskDraw" @touchstart="startMaskDraw" @touchmove="moveMaskDraw" @touchend="stopMaskDraw">
+              <canvas ref="maskImageCanvas" class="mask-source-canvas"></canvas>
+              <canvas ref="maskCanvas" class="mask-draw-canvas"></canvas>
+            </div>
+          </div>
+          <div class="mask-editor-tools">
+            <div class="mask-editor-hint">
+              <i class="ti ti-info-circle"></i>
+              <span>涂抹需要修改的区域，透明底图会以棋盘格显示。</span>
+            </div>
+            <label>
+              <span>画笔</span>
+              <el-slider v-model="maskEditor.brushSize" :min="12" :max="120" />
+            </label>
+            <el-input v-model="maskEditor.prompt" type="textarea" placeholder="请根据蒙版区域修改图片" />
+            <div class="mask-editor-actions">
+              <button class="result-action" type="button" @click="clearMask"><i class="ti ti-eraser"></i>清空</button>
+              <button class="result-action primary" type="button" :disabled="maskEditor.loading" @click="submitMaskEdit"><i class="ti ti-sparkles"></i>提交编辑</button>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
     </section>
   `,
 }

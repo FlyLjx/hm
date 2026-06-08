@@ -1,8 +1,15 @@
 import 'dotenv/config'
 
+function parseCorsOrigins(value?: string) {
+  return (value ?? 'http://localhost:5173')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3001),
-  corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  corsOrigins: parseCorsOrigins(process.env.CORS_ORIGIN),
   requestBodyLimit: process.env.REQUEST_BODY_LIMIT ?? '80mb',
   serveStatic: process.env.SERVE_STATIC !== 'false',
   promptReverse: {

@@ -1,7 +1,17 @@
 import type { Request, Response } from 'express'
 import { getStringParam } from '../../shared/requestParams.js'
 import { TaskService } from './taskService.js'
-import { taskDisplaySchema, taskEstimateSchema, taskImageListSchema, taskListSchema } from './taskSchemas.js'
+import {
+  taskDisplaySchema,
+  taskEstimateSchema,
+  taskFavoriteListSchema,
+  taskFavoriteSchema,
+  taskHistoryListSchema,
+  taskImageListSchema,
+  taskListSchema,
+  taskPublicRequestSchema,
+  taskPublicReviewSchema,
+} from './taskSchemas.js'
 
 const taskService = new TaskService()
 
@@ -48,6 +58,26 @@ export class TaskController {
   async listImages(req: Request, res: Response) {
     const input = taskImageListSchema.parse(req.query)
     const tasks = await taskService.listImages(input)
+    res.json({ data: tasks.items, pagination: {
+      page: tasks.page,
+      pageSize: tasks.pageSize,
+      total: tasks.total,
+    } })
+  }
+
+  async listFavorites(req: Request, res: Response) {
+    const input = taskFavoriteListSchema.parse(req.query)
+    const tasks = await taskService.listFavoriteTasks(input)
+    res.json({ data: tasks.items, pagination: {
+      page: tasks.page,
+      pageSize: tasks.pageSize,
+      total: tasks.total,
+    } })
+  }
+
+  async listHistory(req: Request, res: Response) {
+    const input = taskHistoryListSchema.parse(req.query)
+    const tasks = await taskService.listHistoryTasks(input)
     res.json({ data: tasks.items, pagination: {
       page: tasks.page,
       pageSize: tasks.pageSize,
@@ -113,6 +143,24 @@ export class TaskController {
   async updateDisplay(req: Request, res: Response) {
     const input = taskDisplaySchema.parse(req.body)
     const task = await taskService.updateTaskDisplay(getStringParam(req.params.id, 'id'), input)
+    res.json({ data: task })
+  }
+
+  async updateFavorite(req: Request, res: Response) {
+    const input = taskFavoriteSchema.parse(req.body)
+    const task = await taskService.updateTaskFavorite(getStringParam(req.params.id, 'id'), input)
+    res.json({ data: task })
+  }
+
+  async requestPublic(req: Request, res: Response) {
+    const input = taskPublicRequestSchema.parse(req.body)
+    const task = await taskService.requestTaskPublic(getStringParam(req.params.id, 'id'), input)
+    res.json({ data: task })
+  }
+
+  async reviewPublic(req: Request, res: Response) {
+    const input = taskPublicReviewSchema.parse(req.body)
+    const task = await taskService.reviewTaskPublic(getStringParam(req.params.id, 'id'), input)
     res.json({ data: task })
   }
 

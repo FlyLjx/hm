@@ -4,6 +4,7 @@ import { getActiveModelsByCapability, getModelLabel } from '../common/options.js
 
 const { computed, onMounted, ref } = Vue
 const maxImageBytes = 5 * 1024 * 1024
+const reverseProviderName = 'AI-PAI'
 
 function dataUrlBytes(dataUrl) {
   const base64 = String(dataUrl || '').split(',')[1] || ''
@@ -83,7 +84,7 @@ export const ReversePromptPage = {
         model?.displayName,
         model?.providerName,
       ].join(' ').toLowerCase()
-      return !text.includes('nano')
+      return model?.providerName === reverseProviderName && !text.includes('nano')
     }
 
     const chatModels = computed(() => getActiveModelsByCapability(models.value).filter(isReverseModel))
@@ -141,7 +142,7 @@ export const ReversePromptPage = {
         return
       }
       if (!modelId.value) {
-        ElementPlus.ElMessage.warning('请选择反推接口')
+        ElementPlus.ElMessage.warning(`请选择 ${reverseProviderName} 反推接口`)
         return
       }
       loading.value = true
@@ -261,13 +262,13 @@ export const ReversePromptPage = {
             <div>
               <span>Reverse Settings</span>
               <h2>反推设置</h2>
-              <p>选择一个可用接口，系统会使用后台配置的视觉模型进行反推。</p>
+              <p>提示词反推仅支持后台接口名称为 AI-PAI 的视觉模型。</p>
             </div>
           </div>
           <div class="reverse-form">
             <label>
               <span>反推接口</span>
-              <el-select v-model="modelId" :loading="loadingModels" placeholder="请选择反推接口">
+              <el-select v-model="modelId" :loading="loadingModels" placeholder="请选择 AI-PAI 反推接口">
                 <template #label>
                   <span class="reverse-model-selected">
                     <i class="ti ti-robot"></i>

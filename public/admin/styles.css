@@ -246,6 +246,10 @@ a {
   gap: 18px;
 }
 
+.admin-card-hero.compact {
+  margin-bottom: 12px;
+}
+
 .page-hero {
   display: flex;
   align-items: center;
@@ -286,6 +290,104 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   padding: 16px;
+}
+
+.api-log-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.api-key-admin-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.api-key-admin-summary.compact {
+  padding: 12px 0;
+}
+
+.admin-api-key-table {
+  min-width: 1180px;
+}
+
+.admin-api-key-code {
+  display: block;
+  max-width: 330px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 6px 8px;
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-api-key-code.wide {
+  max-width: min(720px, 100%);
+  margin-top: 8px;
+}
+
+.table-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-key-log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--admin-border);
+}
+
+.api-key-log-drawer {
+  min-width: 0;
+}
+
+.api-log-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.api-log-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--admin-border);
+}
+
+.api-log-detail-section {
+  display: grid;
+  gap: 8px;
+}
+
+.api-log-detail-title {
+  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.api-log-detail pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  padding: 12px;
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .summary-card {
@@ -577,6 +679,11 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cell-mono {
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 12px;
 }
 
 .cell-long-text {
@@ -1026,11 +1133,65 @@ a {
   background: #fff;
 }
 
-.image-card img {
+.image-card-cover,
+.image-card-missing {
+  display: grid;
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
+  min-width: 0;
+  place-items: center;
+  border: 0;
   background: #f2f4f7;
+}
+
+.image-card-cover {
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.image-card-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #f2f4f7;
+}
+
+.image-card-missing {
+  align-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: #8a9099;
+  text-align: center;
+}
+
+.image-card-missing i {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  background: #fff1f0;
+  color: #d92d20;
+  font-size: 23px;
+}
+
+.image-card-missing strong {
+  color: #b42318;
+  font-size: 14px;
+}
+
+.image-card-missing span {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  color: #8a9099;
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .image-card-body {
@@ -1051,9 +1212,20 @@ a {
   -webkit-line-clamp: 2;
 }
 
+.image-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .image-card-body .ant-btn {
   align-self: end;
   width: 100%;
+}
+
+.image-card-actions .ant-btn {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 @media (max-width: 900px) {
@@ -1218,6 +1390,10 @@ a {
     padding: 12px;
   }
 
+  .api-log-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .summary-card {
     padding: 12px;
   }
@@ -1363,6 +1539,10 @@ a {
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .api-log-summary {
+    grid-template-columns: 1fr;
   }
 
   .today-metric-row {

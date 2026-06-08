@@ -118,6 +118,22 @@ export class ModelRepository {
     return rows[0] ? toAiModel(rows[0]) : null
   }
 
+  async findActiveByNameOrDisplayName(modelName: string, capability: AiModelCapability) {
+    const [rows] = await db.query<AiModelRow[]>(
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+       FROM ai_models
+       LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
+       WHERE ai_models.capability = :capability
+         AND ai_models.status = 'active'
+         AND api_providers.status = 'active'
+         AND (ai_models.model_name = :modelName OR ai_models.display_name = :modelName)
+       ORDER BY ai_models.created_at DESC, ai_models.id ASC
+       LIMIT 1`,
+      { modelName, capability },
+    )
+    return rows[0] ? toAiModel(rows[0]) : null
+  }
+
   async findByProviderDisplayNameAndCapability(
     providerId: string,
     displayName: string,

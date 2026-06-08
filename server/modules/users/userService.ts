@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppError } from '../../shared/AppError.js'
+import { ApiKeyRepository, toPublicApiKey } from '../apiKeys/apiKeyRepository.js'
 import { CreditLogRepository } from '../creditLogs/creditLogRepository.js'
 import { EmailService } from '../email/emailService.js'
 import { EmailTokenService } from '../emailTokens/emailTokenService.js'
@@ -39,6 +40,7 @@ export class UserService {
     private readonly emailService = new EmailService(),
     private readonly inviteService = new InviteService(),
     private readonly subscriptionService = new SubscriptionService(),
+    private readonly apiKeyRepository = new ApiKeyRepository(),
   ) {}
 
   async withSubscription(user: PublicUser) {
@@ -165,6 +167,62 @@ export class UserService {
     return this.withSubscription(toPublicUser(user))
   }
 
+  async getPublicUserDetails(
+    id: string,
+    userId: string,
+    input?: { creditPage?: number; creditPageSize?: number; taskPage?: number; taskPageSize?: number },
+  ) {
+    if (id !== userId) {
+      throw new AppError(403, '只能查看自己的账户明细')
+    }
+    const user = await this.userRepository.findById(id)
+    if (!user || user.status !== 'active') {
+      throw new AppError(404, '用户不存在或已被禁用')
+    }
+    const [creditLogs, tasks] = await Promise.all([
+      this.creditLogRepository.findPageByUserId(id, {
+        page: input?.creditPage,
+        pageSize: input?.creditPageSize,
+      }),
+      this.taskRepository.findPageByUserId(id, {
+        page: input?.taskPage,
+        pageSize: input?.taskPageSize,
+      }),
+    ])
+    return {
+      user: await this.withSubscription(toPublicUser(user)),
+      creditLogs: creditLogs.items,
+      creditLogsPagination: {
+        total: creditLogs.total,
+        page: creditLogs.page,
+        pageSize: creditLogs.pageSize,
+      },
+      tasks: tasks.items,
+      tasksPagination: {
+        total: tasks.total,
+        page: tasks.page,
+        pageSize: tasks.pageSize,
+      },
+    }
+  }
+
+  async changePassword(id: string, input: { userId: string; oldPassword: string; password: string }) {
+    if (id !== input.userId) {
+      throw new AppError(403, '只能修改自己的密码')
+    }
+    const user = await this.userRepository.findById(id)
+    if (!user || user.status !== 'active') {
+      throw new AppError(404, '用户不存在或已被禁用')
+    }
+    if (!verifyPassword(input.oldPassword, user.passwordHash)) {
+      throw new AppError(400, '当前密码不正确')
+    }
+    await this.userRepository.update(id, {
+      passwordHash: hashPassword(input.password),
+    })
+    return this.withSubscription(toPublicUser(await this.userRepository.findById(id)))
+  }
+
   async updateStatus(id: string, status: 'active' | 'disabled') {
     const user = await this.userRepository.updateStatus(id, status)
     return toPublicUser(user)
@@ -229,15 +287,20 @@ export class UserService {
       throw new AppError(404, '用户不存在')
     }
 
-    const [creditLogs, tasks] = await Promise.all([
+    const [creditLogs, tasks, apiKeys] = await Promise.all([
       this.creditLogRepository.findByUserId(id),
       this.taskRepository.findByUserId(id),
+      this.apiKeyRepository.findByUserId(id),
     ])
 
     return {
       user: await this.withSubscription(toPublicUser(user)),
       creditLogs,
       tasks,
+      apiKeys: apiKeys.map((key) => ({
+        ...toPublicApiKey(key),
+        keyPlain: key.keyPlain,
+      })),
     }
   }
 

@@ -15,6 +15,7 @@ export const ProvidersPage = {
     const pageSize = 12
     const dialogVisible = ref(false)
     const editing = ref(null)
+    const testingId = ref('')
     const form = reactive({ name: '', type: 'sub2api', capability: 'chat_image', status: 'active', baseUrl: '', apiKey: '' })
 
     const summary = computed(() => ({
@@ -87,6 +88,31 @@ export const ProvidersPage = {
       })
     }
 
+    async function testProvider(row) {
+      testingId.value = row.id
+      try {
+        const response = await adminApi.testApiProvider(row.id)
+        const result = response.data
+        const content = [
+          `状态：${result.status === 'success' ? '成功' : '失败'}`,
+          `HTTP：${result.statusCode || '-'}`,
+          `耗时：${result.durationMs}ms`,
+          `模型：${result.modelCount}`,
+          `地址：${result.endpoint}`,
+          `消息：${result.message}`,
+        ].join('\n')
+        Modal[result.ok ? 'success' : 'error']({
+          title: `接口测试${result.ok ? '成功' : '失败'}`,
+          content: Vue.h('pre', { style: 'white-space:pre-wrap;margin:0;font-family:Consolas,monospace;font-size:12px;line-height:1.7' }, content),
+          okText: '关闭',
+        })
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '接口测试失败')
+      } finally {
+        testingId.value = ''
+      }
+    }
+
     function resetFilters() {
       keyword.value = ''
       typeFilter.value = 'all'
@@ -112,7 +138,7 @@ export const ProvidersPage = {
     onBeforeUnmount(() => {
       window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
-    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, form, summary, filteredRows, visibleRows, load, openCreate, openEdit, saveProvider, removeProvider, resetFilters, maskKey, statusItem, text, formatDate }
+    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
   },
   template: `
     <div class="page-stack">
@@ -150,7 +176,7 @@ export const ProvidersPage = {
                   <td>{{ maskKey(row.apiKey) }}</td>
                   <td><a-tag :color="statusItem('common', row.status).color">{{ statusItem('common', row.status).label }}</a-tag></td>
                   <td>{{ formatDate(row.updatedAt) }}</td>
-                  <td><div class="table-actions"><a-button type="link" size="small" @click="openEdit(row)">编辑</a-button><a-button type="link" size="small" danger @click="removeProvider(row)">删除</a-button></div></td>
+                  <td><div class="table-actions"><a-button type="link" size="small" :loading="testingId === row.id" @click="testProvider(row)">测试</a-button><a-button type="link" size="small" @click="openEdit(row)">编辑</a-button><a-button type="link" size="small" danger @click="removeProvider(row)">删除</a-button></div></td>
                 </tr>
               </tbody>
             </table>

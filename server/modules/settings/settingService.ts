@@ -37,6 +37,7 @@ export class SettingService {
       checkinRewards: settings.checkinRewards,
       inviteEnabled: settings.inviteEnabled,
       inviteRewardCredits: settings.inviteRewardCredits,
+      streamGenerationEnabled: settings.streamGenerationEnabled,
       registerMode: settings.registerMode,
       registerRewardCredits: settings.registerRewardCredits,
       registerEmailVerification: settings.registerEmailVerification,

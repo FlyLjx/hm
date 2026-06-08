@@ -1,5 +1,6 @@
 ﻿import { randomUUID } from 'node:crypto'
 import { AppError } from '../../shared/AppError.js'
+import { ApiLogRepository } from '../apiLogs/apiLogRepository.js'
 import { ApiProviderRepository } from '../apiProviders/apiProviderRepository.js'
 import type { ApiProvider } from '../apiProviders/apiProviderTypes.js'
 import { CreditLogRepository } from '../creditLogs/creditLogRepository.js'
@@ -7,6 +8,7 @@ import { ModelRepository } from '../models/modelRepository.js'
 import type { AiModel } from '../models/modelTypes.js'
 import { SubscriptionService } from '../subscriptions/subscriptionService.js'
 import { UserRepository } from '../users/userRepository.js'
+import { PromptModerationService } from '../promptModeration/promptModerationService.js'
 import { taskEvents } from '../tasks/taskEvents.js'
 import { userEvents } from '../users/userEvents.js'
 import { TaskRepository } from '../tasks/taskRepository.js'
@@ -18,10 +20,13 @@ type GenerateImageInput = {
   prompt: string
   referenceImageUrl?: string
   referenceImageUrls?: string[]
+  maskImageUrl?: string
   sizeTier: GenerationSizeTier
   size?: string
   transparentBackground?: boolean
+  outputFormat?: 'png' | 'jpeg' | 'webp'
   openaiParams?: Record<string, unknown>
+  streamGenerationEnabled?: boolean
   quantity: number
   userIp: string
 }
@@ -31,6 +36,8 @@ const allowedImageSizes: Record<GenerationSizeTier, string[]> = {
   '2k': ['2048x2048', '2048x1152', '1152x2048', '2048x1536', '1536x2048', '2048x1360', '1360x2048'],
   '4k': ['3072x3072', '3072x1728', '1728x3072', '3072x2304', '2304x3072', '3072x2048', '2048x3072'],
 }
+
+const apiLogRepository = new ApiLogRepository()
 
 function getModelPrice(model: Awaited<ReturnType<ModelRepository['findById']>>, sizeTier: GenerationSizeTier) {
   if (!model) {
@@ -72,29 +79,56 @@ function validateImageSize(sizeTier: GenerationSizeTier, size?: string) {
   return normalizedSize
 }
 
+function getEffectiveOutputFormat(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat'>) {
+  return input.transparentBackground ? 'png' : input.outputFormat
+}
+
+function buildImageOutputParams(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat' | 'openaiParams'>) {
+  const outputFormat = getEffectiveOutputFormat(input)
+  return {
+    ...(input.openaiParams ?? {}),
+    ...(input.transparentBackground ? { background: 'transparent' } : {}),
+    ...(outputFormat ? { output_format: outputFormat } : {}),
+  }
+}
+
 function buildOpenAiImageRequestBody(input: GenerateImageInput, model: AiModel, quantity: number, provider: ApiProvider) {
   const prompt = buildUpstreamPrompt(input, model)
   return {
-    ...(input.openaiParams ?? {}),
+    ...buildImageOutputParams(input),
     model: model.modelName,
     prompt,
-    ...(provider.type === 'sub2api'
-      ? { size: input.size ?? getDefaultSize(input.sizeTier) }
-      : {}),
+    size: input.size ?? getDefaultSize(input.sizeTier),
     n: quantity,
   }
 }
 
+function getOpenAiBaseUrl(provider: ApiProvider) {
+  const normalizedBaseUrl = provider.baseUrl.replace(/\/+$/, '')
+  return normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`
+}
+
 function getImageEndpoint(provider: ApiProvider) {
+  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/images/generations`
   return `${provider.baseUrl.replace(/\/+$/, '')}/images/generations`
 }
 
 function getImageEditEndpoint(provider: ApiProvider) {
+  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/images/edits`
   return `${provider.baseUrl.replace(/\/+$/, '')}/images/edits`
 }
 
 function getChatCompletionsEndpoint(provider: ApiProvider) {
+  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/chat/completions`
   return `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
+}
+
+function getResponsesEndpoint(provider: ApiProvider) {
+  return `${getOpenAiBaseUrl(provider)}/responses`
+}
+
+function customImageFallbackLabel(error: unknown) {
+  return error instanceof AppError ? `${error.statusCode} ${error.message}` : error instanceof Error ? error.message : String(error)
 }
 
 function getSizeRatio(size?: string | null) {
@@ -106,15 +140,19 @@ function getSizeRatio(size?: string | null) {
   return `${width / divisor}:${height / divisor}`
 }
 
-function buildUpstreamPrompt(input: Pick<GenerateImageInput, 'prompt' | 'size' | 'sizeTier'>, model: Pick<AiModel, 'appendSizeToPrompt'>) {
-  if (!model.appendSizeToPrompt) return input.prompt
+function buildUpstreamPrompt(input: Pick<GenerateImageInput, 'prompt' | 'size' | 'sizeTier' | 'transparentBackground'>, model: Pick<AiModel, 'appendSizeToPrompt'>) {
+  const transparentInstruction = input.transparentBackground
+    ? '背景要求：输出透明背景 PNG，保留主体 Alpha 通道，不要铺白底、灰底或纯色背景。'
+    : ''
+  if (!model.appendSizeToPrompt) return [input.prompt, transparentInstruction].filter(Boolean).join('\n\n')
   const size = input.size ?? getDefaultSize(input.sizeTier)
   const ratio = getSizeRatio(size)
   return [
     input.prompt,
+    transparentInstruction,
     '',
     `画面尺寸要求：比例 ${ratio ?? '按所选尺寸'}，输出尺寸 ${size}，清晰度 ${input.sizeTier.toUpperCase()}。请严格按照该比例和尺寸构图，不要生成其他画幅。`,
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 function getSizeTierFromModelName(modelName: string): GenerationSizeTier | null {
@@ -179,6 +217,10 @@ function normalizeReferenceImageUrls(input: Pick<GenerateImageInput, 'referenceI
 function summarizeReferenceImages(values?: string[]) {
   const urls = values ?? []
   return urls.map(summarizeReferenceImage)
+}
+
+function summarizeMaskImage(value?: string) {
+  return value ? summarizeReferenceImage(value) : null
 }
 
 function detectImageContentType(buffer: Buffer, fallback = 'image/png') {
@@ -247,6 +289,13 @@ function normalizeImageUrl(value: string) {
   return null
 }
 
+function imageContentTypeFromFormat(format?: string | null) {
+  const normalized = String(format || '').toLowerCase()
+  if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg'
+  if (normalized === 'webp') return 'image/webp'
+  return 'image/png'
+}
+
 function resolveProviderUrl(provider: ApiProvider, value: string) {
   const trimmed = value.trim()
   if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:image/')) return trimmed
@@ -277,7 +326,7 @@ function extractImageUrlsFromText(value: string, provider?: ApiProvider) {
     })
 }
 
-function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
+function extractImagesFromResult(value: unknown, depth = 0, outputFormat?: string): ExtractedImage[] {
   if (!value || depth > 8) return []
 
   if (typeof value === 'string') {
@@ -285,7 +334,7 @@ function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((item) => extractImagesFromResult(item, depth + 1))
+    return value.flatMap((item) => extractImagesFromResult(item, depth + 1, outputFormat))
   }
 
   if (typeof value !== 'object') return []
@@ -301,6 +350,19 @@ function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
     payload.fileUrl,
   ].find((item): item is string => typeof item === 'string')
   const normalizedUrl = directUrl ? normalizeImageUrl(directUrl) : null
+  const directUrls = [
+    payload.urls,
+    payload.image_urls,
+    payload.imageUrls,
+    payload.output_urls,
+    payload.outputUrls,
+    payload.file_urls,
+    payload.fileUrls,
+  ]
+    .filter(Array.isArray)
+    .flatMap((items) => items.filter((item): item is string => typeof item === 'string'))
+    .map((item) => normalizeImageUrl(item))
+    .filter((item): item is string => Boolean(item))
   const directBase64 = [
     payload.b64_json,
     payload.b64,
@@ -313,12 +375,13 @@ function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
 
   const directImages: ExtractedImage[] = []
   if (normalizedUrl) directImages.push({ url: normalizedUrl })
+  directImages.push(...directUrls.map((url) => ({ url })))
   if (directBase64) {
     const normalizedBase64 = normalizeImageUrl(directBase64)
     directImages.push(
       normalizedBase64?.startsWith('data:image/')
         ? { url: normalizedBase64 }
-        : { b64_json: directBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, '') },
+        : { url: `data:${imageContentTypeFromFormat(outputFormat)};base64,${directBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, '')}` },
     )
   }
 
@@ -330,6 +393,13 @@ function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
     'outputs',
     'images',
     'image',
+    'urls',
+    'image_urls',
+    'imageUrls',
+    'output_urls',
+    'outputUrls',
+    'file_urls',
+    'fileUrls',
     'final',
     'partial',
     'choices',
@@ -338,21 +408,21 @@ function extractImagesFromResult(value: unknown, depth = 0): ExtractedImage[] {
   ]
   return [
     ...directImages,
-    ...nestedKeys.flatMap((key) => extractImagesFromResult(payload[key], depth + 1)),
+    ...nestedKeys.flatMap((key) => extractImagesFromResult(payload[key], depth + 1, outputFormat)),
   ]
 }
 
-function extractFinalImagesFromResult(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return extractImagesFromResult(value)
+function extractFinalImagesFromResult(value: unknown, outputFormat?: string) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return extractImagesFromResult(value, 0, outputFormat)
   const payload = value as Record<string, unknown>
-  const finalImages = extractImagesFromResult(payload.final)
+  const finalImages = extractImagesFromResult(payload.final, 0, outputFormat)
   if (finalImages.length) return finalImages
-  const dataImages = extractImagesFromResult(payload.data)
+  const dataImages = extractImagesFromResult(payload.data, 0, outputFormat)
   if (dataImages.length) return dataImages
   if (payload.stream === true) return []
-  const resultImages = extractImagesFromResult(payload.result ?? payload.results ?? payload.output ?? payload.outputs ?? payload.images)
+  const resultImages = extractImagesFromResult(payload.result ?? payload.results ?? payload.output ?? payload.outputs ?? payload.images, 0, outputFormat)
   if (resultImages.length) return resultImages
-  return extractImagesFromResult(value)
+  return extractImagesFromResult(value, 0, outputFormat)
 }
 
 function summarizeValue(value: unknown, depth = 0): unknown {
@@ -371,8 +441,80 @@ function summarizeValue(value: unknown, depth = 0): unknown {
   return value
 }
 
-function normalizeImageResult(resultJson: unknown) {
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson))
+function sanitizeLogValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[depth-limit]'
+  if (typeof value === 'string') {
+    if (value.startsWith('data:image/')) return `data:image/*;length=${value.length}`
+    if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 200) return `base64:length=${value.length}`
+    return value.length > 3000 ? `${value.slice(0, 3000)}... length=${value.length}` : value
+  }
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeLogValue(item, depth + 1))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+        const normalizedKey = key.toLowerCase()
+        if (normalizedKey.includes('authorization') || normalizedKey.includes('api_key') || normalizedKey === 'apikey') {
+          return [key, '[redacted]']
+        }
+        return [key, sanitizeLogValue(item, depth + 1)]
+      }),
+    )
+  }
+  return value
+}
+
+function summarizeHeaders(headers?: HeadersInit) {
+  const entries = (() => {
+    if (!headers) return []
+    if (headers instanceof Headers) return Array.from(headers.entries())
+    if (Array.isArray(headers)) return headers
+    return Object.entries(headers)
+  })()
+
+  return Object.fromEntries(entries.map(([key, value]) => {
+    const normalizedKey = String(key).toLowerCase()
+    if (normalizedKey === 'authorization' || normalizedKey === 'x-api-key') {
+      return [key, '[redacted]']
+    }
+    return [key, String(value)]
+  }))
+}
+
+function summarizeRequestBody(body: unknown) {
+  if (typeof body === 'string') {
+    try {
+      return sanitizeLogValue(JSON.parse(body) as unknown)
+    } catch {
+      return sanitizeLogValue(body)
+    }
+  }
+  if (body instanceof FormData) {
+    const values: Record<string, unknown[]> = {}
+    body.forEach((value, key) => {
+      values[key] = values[key] ?? []
+      if (value instanceof Blob) {
+        values[key].push({ type: 'file', contentType: value.type, bytes: value.size })
+      } else {
+        values[key].push(sanitizeLogValue(value))
+      }
+    })
+    return values
+  }
+  return sanitizeLogValue(body)
+}
+
+function summarizeResponsePayload(resultJson: unknown, responseText: string, outputFormat?: string) {
+  const imageSummary = summarizeImageResult(resultJson, outputFormat)
+  return {
+    imageCount: imageSummary.imageCount,
+    images: imageSummary.images,
+    json: sanitizeLogValue(resultJson),
+    text: resultJson === null ? summarizeText(responseText) : undefined,
+  }
+}
+
+function normalizeImageResult(resultJson: unknown, outputFormat?: string) {
+  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
   if (images.length === 0) return resultJson
   return {
     ...(resultJson && typeof resultJson === 'object' && !Array.isArray(resultJson) ? resultJson as Record<string, unknown> : {}),
@@ -380,11 +522,11 @@ function normalizeImageResult(resultJson: unknown) {
   }
 }
 
-function summarizeImageResult(resultJson: unknown) {
+function summarizeImageResult(resultJson: unknown, outputFormat?: string) {
   if (!resultJson || typeof resultJson !== 'object') {
     return { imageCount: 0 }
   }
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson))
+  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
 
   return {
     imageCount: images.length,
@@ -396,8 +538,8 @@ function summarizeImageResult(resultJson: unknown) {
   }
 }
 
-async function materializeImageResult(resultJson: unknown) {
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson))
+async function materializeImageResult(resultJson: unknown, outputFormat?: string) {
+  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
   if (images.length === 0) return resultJson
 
   const materializedImages = await Promise.all(images.map(async (image) => {
@@ -426,24 +568,24 @@ async function materializeImageResult(resultJson: unknown) {
   }
 }
 
-function combineImageResults(results: unknown[]) {
+function combineImageResults(results: unknown[], outputFormat?: string) {
   return {
-    data: uniqueImages(results.flatMap((result) => extractImagesFromResult(result))),
+    data: uniqueImages(results.flatMap((result) => extractFinalImagesFromResult(result, outputFormat))),
     stream: results.some((result) => Boolean(result && typeof result === 'object' && (result as { stream?: unknown }).stream)),
   }
 }
 
-function hasFinalImageResult(resultJson: unknown) {
+function hasFinalImageResult(resultJson: unknown, outputFormat?: string) {
   if (!resultJson || typeof resultJson !== 'object' || Array.isArray(resultJson)) {
-    return summarizeImageResult(resultJson).imageCount > 0
+    return summarizeImageResult(resultJson, outputFormat).imageCount > 0
   }
 
   const payload = resultJson as Record<string, unknown>
   if (payload.stream === true) {
-    return summarizeImageResult(payload.final ?? payload.data).imageCount > 0
+    return summarizeImageResult(payload.final ?? payload.data, outputFormat).imageCount > 0
   }
 
-  return summarizeImageResult(resultJson).imageCount > 0
+  return summarizeImageResult(resultJson, outputFormat).imageCount > 0
 }
 
 function summarizeText(value: string | null) {
@@ -518,9 +660,89 @@ function summarizeError(error: unknown): Record<string, unknown> {
   }
 }
 
-async function fetchUpstream(url: string, init: RequestInit, context: Record<string, unknown>) {
+function textFromContext(context: Record<string, unknown>, key: string) {
+  const value = context[key]
+  return typeof value === 'string' ? value : value === undefined || value === null ? null : String(value)
+}
+
+async function recordApiCallLog(input: {
+  context: Record<string, unknown>
+  url: string
+  method: string
+  status: 'success' | 'failed'
+  statusCode?: number | null
+  durationMs: number
+  requestSummary?: unknown
+  responseSummary?: unknown
+  errorMessage?: string | null
+}) {
+  return apiLogRepository.create({
+    direction: 'upstream',
+    taskId: textFromContext(input.context, 'taskId'),
+    userId: textFromContext(input.context, 'userId'),
+    apiKeyId: textFromContext(input.context, 'apiKeyId'),
+    apiKeyName: textFromContext(input.context, 'apiKeyName'),
+    providerId: textFromContext(input.context, 'providerId'),
+    providerType: textFromContext(input.context, 'providerType'),
+    endpoint: textFromContext(input.context, 'endpoint') || input.url,
+    phase: textFromContext(input.context, 'phase') || 'upstream',
+    method: input.method,
+    status: input.status,
+    statusCode: input.statusCode ?? null,
+    durationMs: input.durationMs,
+    requestSummary: input.requestSummary,
+    responseSummary: input.responseSummary,
+    errorMessage: input.errorMessage ?? null,
+  }).catch((error) => {
+    console.warn('[api-log:create-failed]', error instanceof Error ? error.message : String(error))
+    return null
+  })
+}
+
+type LoggedResponse = Response & {
+  apiLogId?: string | null
+  apiLogStartedAt?: number
+}
+
+async function updateApiCallLogDetails(response: LoggedResponse, input: {
+  status?: 'success' | 'failed'
+  responseSummary?: unknown
+  errorMessage?: string | null
+}) {
+  if (!response.apiLogId) return
+  await apiLogRepository.updateDetails(response.apiLogId, {
+    status: input.status ?? (response.ok ? 'success' : 'failed'),
+    statusCode: response.status,
+    durationMs: response.apiLogStartedAt ? Date.now() - response.apiLogStartedAt : 0,
+    responseSummary: input.responseSummary,
+    errorMessage: input.errorMessage ?? (response.ok ? null : response.statusText),
+  }).catch((error) => {
+    console.warn('[api-log:update-failed]', error instanceof Error ? error.message : String(error))
+  })
+}
+
+async function fetchUpstream(url: string, init: RequestInit, context: Record<string, unknown>): Promise<LoggedResponse> {
+  const startedAt = Date.now()
+  const method = init.method || 'GET'
+  const requestSummary = {
+    context: sanitizeLogValue(context),
+    headers: summarizeHeaders(init.headers),
+    body: summarizeRequestBody(init.body),
+  }
   try {
-    return await fetch(url, init)
+    const response = await fetch(url, init) as LoggedResponse
+    response.apiLogStartedAt = startedAt
+    response.apiLogId = await recordApiCallLog({
+      context,
+      url,
+      method,
+      status: response.ok ? 'success' : 'failed',
+      statusCode: response.status,
+      durationMs: Date.now() - startedAt,
+      requestSummary,
+      errorMessage: response.ok ? null : response.statusText,
+    })
+    return response
   } catch (error) {
     logGeneration('upstream-fetch-error', {
       ...context,
@@ -530,6 +752,17 @@ async function fetchUpstream(url: string, init: RequestInit, context: Record<str
     const cause = error instanceof Error ? (error as Error & { cause?: { code?: unknown; message?: unknown } }).cause : null
     const causeCode = typeof cause?.code === 'string' ? cause.code : ''
     const causeMessage = typeof cause?.message === 'string' ? cause.message : ''
+    await recordApiCallLog({
+      context,
+      url,
+      method,
+      status: 'failed',
+      statusCode: null,
+      durationMs: Date.now() - startedAt,
+      requestSummary,
+      responseSummary: { error: summarizeError(error) },
+      errorMessage: [message, causeCode, causeMessage].filter(Boolean).join(' / '),
+    })
     throw new AppError(502, `上游接口连接失败：${[message, causeCode, causeMessage].filter(Boolean).join(' / ')}`)
   }
 }
@@ -546,30 +779,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-function extractEventImage(value: unknown): { b64_json?: string; url?: string } | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const image = value as { b64_json?: string; url?: string; partial_image_b64?: string }
-  if (image.url || image.b64_json) {
-    return { url: image.url, b64_json: image.b64_json }
-  }
-  if (image.partial_image_b64) {
-    return { b64_json: image.partial_image_b64 }
-  }
-
-  const output = (value as { output?: unknown[] }).output
-  if (Array.isArray(output)) {
-    for (const item of output) {
-      const nestedImage = extractEventImage(item)
-      if (nestedImage) return nestedImage
-    }
-  }
-
-  return null
 }
 
 function extractChatDeltaContent(value: unknown) {
@@ -601,6 +810,65 @@ function uniqueImages(images: ExtractedImage[]) {
   })
 }
 
+function hasPartialImagePayload(value: unknown, depth = 0): boolean {
+  if (!value || depth > 8) return false
+  if (Array.isArray(value)) return value.some((item) => hasPartialImagePayload(item, depth + 1))
+  if (typeof value !== 'object') return false
+
+  const payload = value as Record<string, unknown>
+  if (typeof payload.partial_image_b64 === 'string') return true
+
+  return Object.values(payload).some((item) => hasPartialImagePayload(item, depth + 1))
+}
+
+function hasFinalImagePayload(value: unknown, depth = 0): boolean {
+  if (!value || depth > 8) return false
+  if (Array.isArray(value)) return value.some((item) => hasFinalImagePayload(item, depth + 1))
+  if (typeof value !== 'object') return false
+
+  const payload = value as Record<string, unknown>
+  const finalStringKeys = [
+    'url',
+    'b64_json',
+    'image_url',
+    'imageUrl',
+    'output_url',
+    'outputUrl',
+    'file_url',
+    'fileUrl',
+  ]
+  if (finalStringKeys.some((key) => typeof payload[key] === 'string')) return true
+
+  const finalArrayKeys = [
+    'urls',
+    'image_urls',
+    'imageUrls',
+    'output_urls',
+    'outputUrls',
+    'file_urls',
+    'fileUrls',
+  ]
+  if (finalArrayKeys.some((key) => Array.isArray(payload[key]) && (payload[key] as unknown[]).some((item) => typeof item === 'string'))) {
+    return true
+  }
+
+  return Object.entries(payload)
+    .filter(([key]) => key !== 'partial_image_b64')
+    .some(([, item]) => hasFinalImagePayload(item, depth + 1))
+}
+
+function omitPartialImagePayload(value: unknown, depth = 0): unknown {
+  if (!value || depth > 8) return value
+  if (Array.isArray(value)) return value.map((item) => omitPartialImagePayload(item, depth + 1))
+  if (typeof value !== 'object') return value
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== 'partial' && key !== 'partial_image_b64')
+      .map(([key, item]) => [key, omitPartialImagePayload(item, depth + 1)]),
+  )
+}
+
 export class GenerationService {
   constructor(
     private readonly userRepository = new UserRepository(),
@@ -609,6 +877,7 @@ export class GenerationService {
     private readonly taskRepository = new TaskRepository(),
     private readonly creditLogRepository = new CreditLogRepository(),
     private readonly subscriptionService = new SubscriptionService(),
+    private readonly promptModerationService = new PromptModerationService(),
   ) {}
 
   async generateImage(input: GenerateImageInput) {
@@ -621,6 +890,7 @@ export class GenerationService {
     if (user.status !== 'active') {
       throw new AppError(403, '用户已被禁用')
     }
+    await this.promptModerationService.assertAllowed(input.prompt)
 
     let model = await this.modelRepository.findById(input.modelId)
     if (!model) {
@@ -650,6 +920,7 @@ export class GenerationService {
     const normalizedInput = {
       ...input,
       size: normalizedSize,
+      outputFormat: getEffectiveOutputFormat(input),
       referenceImageUrl: referenceImageUrls[0],
       referenceImageUrls,
     }
@@ -705,6 +976,10 @@ export class GenerationService {
       status: 'queued',
       errorMessage: null,
       resultJson: null,
+      favoriteEnabled: false,
+      publicStatus: 'private',
+      publicRequestedAt: null,
+      publicReviewedAt: null,
       displayEnabled: false,
       displayNote: null,
       createdAt: now,
@@ -742,6 +1017,8 @@ export class GenerationService {
         size: task.size,
         ratio: getSizeRatio(task.size),
         quantity,
+        transparentBackground: normalizedInput.transparentBackground,
+        outputFormat: normalizedInput.outputFormat,
         referenceImages: summarizeReferenceImages(normalizedInput.referenceImageUrls),
       },
       costCredits,
@@ -798,23 +1075,23 @@ export class GenerationService {
       })
       logGeneration('processing', { taskId })
       try {
-        if (provider.type === 'custom') {
-          resultJson = await this.callCustomChatImageCompletion({
-            taskId,
-            provider,
-            model,
-            input,
-            quantity,
-          })
-        } else if (input.referenceImageUrls?.length) {
+        if (input.referenceImageUrls?.length) {
           resultJson = await this.callOpenAiImageEdit({
             provider,
             model,
             input,
             quantity,
           })
+        } else if (provider.type === 'custom') {
+          resultJson = await this.callOpenAiImageGeneration({
+            taskId,
+            provider,
+            model,
+            input,
+            quantity,
+          })
         } else {
-          resultJson = await this.callSub2ApiImageGeneration({
+          resultJson = await this.callOpenAiImageGeneration({
             taskId,
             provider,
             model,
@@ -822,11 +1099,11 @@ export class GenerationService {
             quantity,
           })
         }
-        resultJson = normalizeImageResult(resultJson)
-        resultJson = await materializeImageResult(resultJson)
+        resultJson = normalizeImageResult(resultJson, input.outputFormat)
+        resultJson = await materializeImageResult(resultJson, input.outputFormat)
       } catch (error) {
         if (
-          provider.type === 'sub2api' &&
+          (provider.type === 'sub2api' || provider.type === 'custom') &&
           error instanceof AppError &&
           error.statusCode &&
           isStreamFallbackStatus(error.statusCode)
@@ -836,20 +1113,34 @@ export class GenerationService {
             providerId: provider.id,
             providerType: provider.type,
             statusCode: error.statusCode,
-            fallback: input.referenceImageUrls?.length ? 'image_edit' : 'image_json',
+            fallback: provider.type === 'custom' ? 'chat_completion' : input.referenceImageUrls?.length ? 'image_edit' : 'image_json',
             reason: error.message,
           })
-          resultJson = input.referenceImageUrls?.length
-            ? await this.callOpenAiImageEdit({ provider, model, input, quantity })
-            : await this.callOpenAiImageJsonWithRetry({ taskId, provider, model, input, quantity })
-          resultJson = normalizeImageResult(resultJson)
-          resultJson = await materializeImageResult(resultJson)
+          if (provider.type === 'custom') {
+            try {
+              resultJson = await this.callCustomChatImageCompletion({ taskId, provider, model, input, quantity })
+            } catch (chatError) {
+              logGeneration('upstream-custom-chat-fallback-to-responses', {
+                taskId,
+                providerId: provider.id,
+                providerType: provider.type,
+                reason: customImageFallbackLabel(chatError),
+              })
+              resultJson = await this.callCustomResponsesImageCompletion({ taskId, provider, model, input, quantity })
+            }
+          } else {
+            resultJson = input.referenceImageUrls?.length
+              ? await this.callOpenAiImageEdit({ provider, model, input, quantity })
+              : await this.callOpenAiImageJsonWithRetry({ taskId, provider, model, input, quantity })
+          }
+          resultJson = normalizeImageResult(resultJson, input.outputFormat)
+          resultJson = await materializeImageResult(resultJson, input.outputFormat)
         } else {
           throw error
         }
       }
 
-      if (hasFinalImageResult(resultJson)) {
+      if (hasFinalImageResult(resultJson, input.outputFormat)) {
         const updatedUser = await this.userRepository.deductCredits(user.id, costCredits)
         remainingCredits = updatedUser?.credits ?? user.credits - costCredits
         if (updatedUser) {
@@ -921,6 +1212,7 @@ export class GenerationService {
       endpoint: getImageEndpoint(provider),
       body: {
         ...requestBody,
+        streamGenerationEnabled: false,
         referenceImages: summarizeReferenceImages(input.referenceImageUrls),
       },
     })
@@ -940,6 +1232,10 @@ export class GenerationService {
     })
 
     const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
+    await updateApiCallLogDetails(response, {
+      responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
+      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游接口调用失败', response.status, resultJson, responseText),
+    })
     logGeneration('upstream-json-response', {
       providerId: provider.id,
       attempt,
@@ -1021,7 +1317,7 @@ export class GenerationService {
     throw lastError instanceof Error ? lastError : new AppError(502, '上游接口调用失败')
   }
 
-  private async callSub2ApiImageGeneration({
+  private async callOpenAiImageGeneration({
     taskId,
     provider,
     model,
@@ -1034,6 +1330,16 @@ export class GenerationService {
     input: GenerateImageInput
     quantity: number
   }) {
+    if (input.streamGenerationEnabled === false) {
+      return this.callOpenAiImageJsonWithRetry({
+        taskId,
+        provider,
+        model,
+        input,
+        quantity,
+      })
+    }
+
     if (quantity <= 1) {
       return this.callOpenAiImageStream({
         taskId,
@@ -1098,7 +1404,7 @@ export class GenerationService {
       }),
     )
 
-    const combinedResult = combineImageResults(results)
+    const combinedResult = combineImageResults(results, input.outputFormat)
     logGeneration('upstream-parallel-complete', {
       taskId,
       quantity,
@@ -1145,7 +1451,7 @@ export class GenerationService {
     content.push({ type: 'text', text: prompt })
 
     const requestBody = {
-      ...(input.openaiParams ?? {}),
+      ...buildImageOutputParams(input),
       model: model.modelName,
       messages: [{ role: 'user', content }],
       stream: true,
@@ -1213,6 +1519,11 @@ export class GenerationService {
           return null
         }
       })()
+      await updateApiCallLogDetails(response, {
+        status: 'failed',
+        responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
+        errorMessage: buildUpstreamErrorMessage('上游对话生图接口调用失败', response.status, resultJson, responseText),
+      })
       logGeneration('upstream-chat-response-error', {
         taskId,
         providerId: provider.id,
@@ -1230,6 +1541,10 @@ export class GenerationService {
     if (contentType.includes('application/json')) {
       const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
       const normalizedResult = normalizeImageResult(resultJson)
+      await updateApiCallLogDetails(response, {
+        responseSummary: summarizeResponsePayload(normalizedResult, responseText, input.outputFormat),
+        errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游对话生图接口调用失败', response.status, resultJson, responseText),
+      })
       logGeneration('upstream-chat-json-response', {
         taskId,
         providerId: provider.id,
@@ -1323,11 +1638,19 @@ export class GenerationService {
       ...(lastImage ? [lastImage] : []),
     ])
     const streamResult = {
-      data: images.at(-1) ? [images.at(-1)] : [],
+      data: images,
       final: images.at(-1) ?? null,
       content: collectedContent,
       stream: true,
     }
+    await updateApiCallLogDetails(response, {
+      responseSummary: {
+        stream: true,
+        content: summarizeText(collectedContent),
+        ...summarizeImageResult(streamResult, input.outputFormat),
+      },
+      errorMessage: null,
+    })
     taskEvents.emitProgress({
       taskId,
       stage: 'finalizing',
@@ -1342,6 +1665,114 @@ export class GenerationService {
       result: summarizeImageResult(streamResult),
     })
     return streamResult
+  }
+
+  private async callCustomResponsesImageCompletion({
+    taskId,
+    provider,
+    model,
+    input,
+    quantity,
+  }: {
+    taskId: string
+    provider: ApiProvider
+    model: AiModel
+    input: GenerateImageInput
+    quantity: number
+  }) {
+    const requestStartedAt = Date.now()
+    const content: Array<Record<string, unknown>> = []
+    const referenceImageSummaries: Array<Record<string, unknown> | null> = []
+
+    for (const referenceImageUrl of normalizeReferenceImageUrls(input)) {
+      const referenceImage = await readReferenceImage(referenceImageUrl, this.taskRepository)
+      const imageUrl = `data:${referenceImage.contentType};base64,${referenceImage.buffer.toString('base64')}`
+      content.push({
+        type: 'input_image',
+        image_url: imageUrl,
+      })
+      referenceImageSummaries.push({
+        ...summarizeReferenceImage(referenceImageUrl),
+        contentType: referenceImage.contentType,
+        bytes: referenceImage.buffer.length,
+      })
+    }
+
+    const prompt = buildUpstreamPrompt(input, model)
+    content.push({ type: 'input_text', text: prompt })
+    const requestBody = {
+      ...buildImageOutputParams(input),
+      model: model.modelName,
+      input: [{
+        role: 'user',
+        content,
+      }],
+      stream: false,
+      aspect_ratio: getSizeRatio(input.size),
+      n: quantity,
+    }
+
+    logGeneration('upstream-responses-request', {
+      taskId,
+      providerId: provider.id,
+      providerType: provider.type,
+      endpoint: getResponsesEndpoint(provider),
+      body: {
+        ...requestBody,
+        input: [{
+          role: 'user',
+          content: content.map((item) => item.type === 'input_image'
+            ? { type: 'input_image', image_url: summarizeReferenceImage(String(item.image_url ?? '')) }
+            : item),
+        }],
+        referenceImages: referenceImageSummaries,
+        prompt,
+      },
+    })
+
+    const response = await fetchUpstream(getResponsesEndpoint(provider), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    }, {
+      taskId,
+      providerId: provider.id,
+      providerType: provider.type,
+      endpoint: getResponsesEndpoint(provider),
+      phase: 'responses-image',
+    })
+
+    const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
+    const normalizedResult = normalizeImageResult(resultJson)
+    await updateApiCallLogDetails(response, {
+      responseSummary: summarizeResponsePayload(normalizedResult, responseText, input.outputFormat),
+      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游 Responses 生图接口调用失败', response.status, resultJson, responseText),
+    })
+    logGeneration('upstream-responses-response', {
+      taskId,
+      providerId: provider.id,
+      status: response.status,
+      ok: response.ok,
+      durationMs: Date.now() - requestStartedAt,
+      responseText: response.ok && summarizeImageResult(normalizedResult).imageCount === 0
+        ? summarizeText(responseText)
+        : response.ok
+          ? undefined
+          : summarizeText(responseText),
+      result: summarizeImageResult(normalizedResult),
+    })
+
+    if (!response.ok) {
+      throw new AppError(
+        response.status,
+        buildUpstreamErrorMessage('上游 Responses 生图接口调用失败', response.status, resultJson, responseText),
+      )
+    }
+
+    return normalizedResult
   }
 
   private async callOpenAiImageEdit({
@@ -1365,13 +1796,19 @@ export class GenerationService {
       url: referenceImageUrl,
       image: await readReferenceImage(referenceImageUrl, this.taskRepository),
     })))
+    const maskImage = input.maskImageUrl
+      ? {
+          url: input.maskImageUrl,
+          image: await readReferenceImage(input.maskImageUrl, this.taskRepository),
+        }
+      : null
     const prompt = buildUpstreamPrompt(input, model)
     const formData = new FormData()
     formData.append('model', model.modelName)
     formData.append('prompt', prompt)
     formData.append('size', input.size ?? getDefaultSize(input.sizeTier))
     formData.append('n', String(quantity))
-    for (const [key, value] of Object.entries(input.openaiParams ?? {})) {
+    for (const [key, value] of Object.entries(buildImageOutputParams(input))) {
       if (value !== undefined && value !== null && !['model', 'prompt', 'size', 'n', 'image'].includes(key)) {
         formData.append(key, String(value))
       }
@@ -1383,6 +1820,13 @@ export class GenerationService {
         `reference-${index + 1}.${getImageExtension(image.contentType)}`,
       )
     })
+    if (maskImage) {
+      formData.append(
+        'mask',
+        new Blob([maskImage.image.buffer], { type: maskImage.image.contentType }),
+        `mask.${getImageExtension(maskImage.image.contentType)}`,
+      )
+    }
 
     logGeneration('upstream-edit-request', {
       providerId: provider.id,
@@ -1393,11 +1837,20 @@ export class GenerationService {
         prompt,
         size: input.size ?? getDefaultSize(input.sizeTier),
         n: quantity,
+        background: input.transparentBackground ? 'transparent' : undefined,
+        outputFormat: getEffectiveOutputFormat(input),
         referenceImages: referenceImages.map(({ url, image }) => ({
           ...summarizeReferenceImage(url),
           contentType: image.contentType,
           bytes: image.buffer.length,
         })),
+        maskImage: maskImage
+          ? {
+              ...summarizeReferenceImage(maskImage.url),
+              contentType: maskImage.image.contentType,
+              bytes: maskImage.image.buffer.length,
+            }
+          : null,
       },
     })
 
@@ -1413,10 +1866,14 @@ export class GenerationService {
       endpoint: getImageEditEndpoint(provider),
       phase: 'image-edit',
       referenceImageCount: referenceImages.length,
-      referenceImageBytes: referenceImages.reduce((total, item) => total + item.image.buffer.length, 0),
+      referenceImageBytes: referenceImages.reduce((total, item) => total + item.image.buffer.length, 0) + (maskImage?.image.buffer.length ?? 0),
     })
 
     const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
+    await updateApiCallLogDetails(response, {
+      responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
+      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游图片编辑接口调用失败', response.status, resultJson, responseText),
+    })
     logGeneration('upstream-edit-response', {
       providerId: provider.id,
       status: response.status,
@@ -1515,6 +1972,11 @@ export class GenerationService {
           return null
         }
       })()
+      await updateApiCallLogDetails(response, {
+        status: 'failed',
+        responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
+        errorMessage: buildUpstreamErrorMessage('上游流式接口调用失败', response.status, resultJson, responseText),
+      })
       throw new AppError(
         response.status,
         buildUpstreamErrorMessage('上游流式接口调用失败', response.status, resultJson, responseText),
@@ -1524,64 +1986,119 @@ export class GenerationService {
     const decoder = new TextDecoder()
     let buffer = ''
     let partialImage: { b64_json?: string; url?: string } | null = null
-    let finalImage: { b64_json?: string; url?: string } | null = null
+    let finalImages: ExtractedImage[] = []
     let lastPersistAt = 0
+
+    const handleEventData = (eventData: string) => {
+      if (!eventData || eventData === '[DONE]') return
+
+      let eventJson: unknown
+      try {
+        eventJson = JSON.parse(eventData) as unknown
+      } catch {
+        logGeneration('upstream-stream-event-parse-error', {
+          taskId,
+          eventData: summarizeText(eventData),
+        })
+        return
+      }
+
+      const eventType = (eventJson as { type?: string }).type ?? ''
+      const isFinalEvent = /completed|final|done/i.test(eventType) || hasFinalImagePayload(eventJson)
+      const isPartialEvent = hasPartialImagePayload(eventJson)
+      const finalEventImages = isFinalEvent
+        ? uniqueImages(extractImagesFromResult(omitPartialImagePayload(eventJson), 0, input.outputFormat))
+        : []
+      const partialEventImages = isPartialEvent
+        ? uniqueImages(extractImagesFromResult({ partial: (eventJson as Record<string, unknown>).partial ?? eventJson }, 0, input.outputFormat))
+        : uniqueImages(extractImagesFromResult(eventJson, 0, input.outputFormat))
+
+      if (finalEventImages.length === 0 && partialEventImages.length === 0) return
+
+      if (isFinalEvent && !isPartialEvent) {
+        finalImages = uniqueImages([...finalImages, ...finalEventImages])
+        logGeneration('upstream-stream-final', {
+          taskId,
+          eventType,
+          result: summarizeImageResult({ final: finalImages, data: finalImages }, input.outputFormat),
+        })
+        return
+      }
+
+      if (isFinalEvent) {
+        finalImages = uniqueImages([...finalImages, ...finalEventImages])
+        logGeneration('upstream-stream-final', {
+          taskId,
+          eventType,
+          result: summarizeImageResult({ final: finalImages, data: finalImages }, input.outputFormat),
+        })
+      } else {
+        partialImage = partialEventImages.at(-1) ?? partialImage
+        const now = Date.now()
+        if (partialImage && now - lastPersistAt > 1000) {
+          lastPersistAt = now
+          logGeneration('upstream-stream-partial', {
+            taskId,
+            eventType,
+            result: summarizeImageResult({ partial: partialImage }, input.outputFormat),
+          })
+          taskEvents.emitProgress({
+            taskId,
+            stage: 'partial',
+            message: '正在渲染高清图...',
+            detail: '已收到预览结果，正在同步高清图像',
+            tags: ['预览', '高清', '同步'],
+          })
+        }
+      }
+    }
 
     for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
       buffer += decoder.decode(chunk, { stream: true })
-      const parts = buffer.split('\n\n')
+      const parts = buffer.split(/\r?\n\r?\n/)
       buffer = parts.pop() ?? ''
 
       for (const part of parts) {
         const eventData = part
-          .split('\n')
+          .split(/\r?\n/)
           .filter((line) => line.startsWith('data:'))
           .map((line) => line.replace(/^data:\s?/, ''))
           .join('\n')
           .trim()
 
-        if (!eventData || eventData === '[DONE]') continue
-
-        const eventJson = JSON.parse(eventData) as unknown
-        const eventImage = extractEventImage(eventJson)
-        if (!eventImage) continue
-
-        const eventType = (eventJson as { type?: string }).type ?? ''
-        if (eventType.includes('completed')) {
-          finalImage = eventImage
-          logGeneration('upstream-stream-final', {
-            taskId,
-            eventType,
-            result: summarizeImageResult({ final: finalImage }),
-          })
-        } else {
-          partialImage = eventImage
-          const now = Date.now()
-          if (now - lastPersistAt > 1000) {
-            lastPersistAt = now
-            logGeneration('upstream-stream-partial', {
-              taskId,
-              eventType,
-              result: summarizeImageResult({ partial: partialImage }),
-            })
-            taskEvents.emitProgress({
-              taskId,
-              stage: 'partial',
-              message: '正在渲染高清图...',
-              detail: '已收到预览结果，正在同步高清图像',
-              tags: ['预览', '高清', '同步'],
-            })
-          }
-        }
+        handleEventData(eventData)
       }
     }
 
+    const tail = buffer.trim()
+    if (tail) {
+      const eventData = tail.startsWith('data:')
+        ? tail
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s?/, ''))
+            .join('\n')
+            .trim()
+        : tail
+      handleEventData(eventData)
+    }
+
+    finalImages = uniqueImages(finalImages)
+
     const streamResult = {
-      data: finalImage ? [finalImage] : [],
-      final: finalImage,
+      data: finalImages,
+      final: finalImages.at(-1) ?? null,
       partial: partialImage,
       stream: true,
     }
+    await updateApiCallLogDetails(response, {
+      responseSummary: {
+        stream: true,
+        partial: partialImage ? summarizeImageResult({ partial: partialImage }, input.outputFormat) : null,
+        ...summarizeImageResult(streamResult, input.outputFormat),
+      },
+      errorMessage: null,
+    })
     taskEvents.emitProgress({
       taskId,
       stage: 'finalizing',
@@ -1592,7 +2109,7 @@ export class GenerationService {
     logGeneration('upstream-stream-complete', {
       taskId,
       durationMs: Date.now() - requestStartedAt,
-      result: summarizeImageResult(streamResult),
+      result: summarizeImageResult(streamResult, input.outputFormat),
     })
     return streamResult
   }

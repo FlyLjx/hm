@@ -12,6 +12,8 @@ type ReversePromptInput = {
   language: 'zh' | 'en'
 }
 
+const promptReverseProviderName = 'AI-PAI'
+
 function getChatCompletionsEndpoint(provider: ApiProvider) {
   return `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
 }
@@ -216,6 +218,9 @@ export class PromptReverseService {
     if (!provider) throw new AppError(404, '接口配置不存在')
     if (provider.status !== 'active') throw new AppError(400, '接口已禁用')
     if (provider.capability !== 'chat_image') throw new AppError(400, '请选择支持视觉理解的模型')
+    if (provider.name !== promptReverseProviderName) {
+      throw new AppError(400, `提示词反推仅支持 ${promptReverseProviderName} 接口`)
+    }
 
     const imageUrl = await readImageAsDataUrl(input.imageUrl)
     const prompt = await this.callVisionModel(provider, imageUrl, input.language)

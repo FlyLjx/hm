@@ -51,3 +51,9 @@ export const resetPasswordSchema = z.object({
   token: z.string().min(20).max(200),
   password: z.string().min(6, '密码至少需要 6 个字符').max(100, '密码不能超过 100 个字符'),
 })
+
+export const changePasswordSchema = z.object({
+  userId: z.string().min(1, '缺少用户信息').max(80, '用户信息不正确'),
+  oldPassword: z.string().min(1, '请输入当前密码').max(100, '当前密码不能超过 100 个字符'),
+  password: z.string().min(6, '密码至少需要 6 个字符').max(100, '密码不能超过 100 个字符'),
+})

@@ -1,4 +1,5 @@
 export function pageFromHash() {
   const page = window.location.hash.replace(/^#\/?/, '')
-  return ['home', 'chat', 'reverse', 'plaza'].includes(page) ? page : 'home'
+  if (page === 'favorites') return 'history'
+  return ['home', 'chat', 'reverse', 'plaza', 'history', 'docs', 'status', 'profile'].includes(page) ? page : 'home'
 }

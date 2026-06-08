@@ -75,6 +75,16 @@ export type RemoteModel = RemoteModelPrice & {
   name: string
 }
 
+export type ApiProviderTestResult = {
+  ok: boolean
+  status: 'success' | 'failed'
+  statusCode: number | null
+  durationMs: number
+  endpoint: string
+  modelCount: number
+  message: string
+}
+
 function readNumber(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim() !== '') {
@@ -205,6 +215,62 @@ export class ApiProviderService {
     const deleted = await this.apiProviderRepository.delete(id)
     if (!deleted) {
       throw new AppError(404, '接口配置不存在')
+    }
+  }
+
+  async testProvider(id: string): Promise<ApiProviderTestResult> {
+    const provider = await this.apiProviderRepository.findById(id)
+    if (!provider) {
+      throw new AppError(404, '接口配置不存在')
+    }
+
+    const endpoint = this.createModelsEndpoint(provider.baseUrl)
+    const startedAt = Date.now()
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+
+    try {
+      const response = await fetch(endpoint, {
+        headers: {
+          Authorization: `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      })
+      const durationMs = Date.now() - startedAt
+      const payload = await response.json().catch(() => null) as { data?: unknown; models?: unknown; error?: { message?: unknown }; message?: unknown } | null
+      const modelList = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : []
+      const upstreamMessage = typeof payload?.error?.message === 'string'
+        ? payload.error.message
+        : typeof payload?.message === 'string'
+          ? payload.message
+          : ''
+
+      return {
+        ok: response.ok,
+        status: response.ok ? 'success' : 'failed',
+        statusCode: response.status,
+        durationMs,
+        endpoint,
+        modelCount: modelList.length,
+        message: response.ok
+          ? `连接成功，模型 ${modelList.length} 个`
+          : upstreamMessage || `连接失败：HTTP ${response.status}`,
+      }
+    } catch (error) {
+      const durationMs = Date.now() - startedAt
+      const isAbort = error instanceof Error && error.name === 'AbortError'
+      return {
+        ok: false,
+        status: 'failed',
+        statusCode: null,
+        durationMs,
+        endpoint,
+        modelCount: 0,
+        message: isAbort ? '连接超时：超过 15000ms' : error instanceof Error ? error.message : '连接失败',
+      }
+    } finally {
+      clearTimeout(timeout)
     }
   }
 

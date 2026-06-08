@@ -4,6 +4,8 @@ import { UsersPage } from './pages/users.js'
 import { ProvidersPage } from './pages/providers.js'
 import { ModelsPage } from './pages/models.js'
 import { TasksPage } from './pages/tasks.js'
+import { ApiKeysPage } from './pages/api-keys.js'
+import { ApiLogsPage } from './pages/api-logs.js'
 import { FinancePage } from './pages/finance.js'
 import { OperationsPage } from './pages/operations.js'
 import { SettingsPage } from './pages/settings.js'
@@ -25,6 +27,8 @@ const menuGroups = [
   ] },
   { title: '创作内容', items: [
     { id: 'tasks', label: '任务列表', desc: '生成记录', icon: 'ti-list-check', component: TasksPage },
+    { id: 'api-keys', label: 'Key 管理', desc: '用户接口 Key', icon: 'ti-key', component: ApiKeysPage },
+    { id: 'api-logs', label: 'API 日志', desc: '上游耗时', icon: 'ti-activity-heartbeat', component: ApiLogsPage },
     { id: 'images', label: '图片管理', desc: '公开展示', icon: 'ti-photo', component: TasksPage, props: { mode: 'images' } },
     { id: 'announcements', label: '公告管理', desc: '弹层签收', icon: 'ti-speakerphone', component: OperationsPage, props: { mode: 'announcements' } },
     { id: 'promotions', label: '促销管理', desc: '活动广告', icon: 'ti-discount-2', component: OperationsPage, props: { mode: 'promotions' } },

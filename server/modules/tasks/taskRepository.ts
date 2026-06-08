@@ -1,6 +1,6 @@
 import type { RowDataPacket } from 'mysql2'
 import { db } from '../../config/db.js'
-import type { GenerationTask, GenerationTaskStatus, GenerationSizeTier } from './taskTypes.js'
+import type { GenerationTask, GenerationTaskStatus, GenerationSizeTier, GenerationPublicStatus } from './taskTypes.js'
 import type { AiModelCapability } from '../models/modelTypes.js'
 
 type GenerationTaskRow = RowDataPacket & {
@@ -29,6 +29,10 @@ type GenerationTaskRow = RowDataPacket & {
   error_message?: string | null
   result_json?: unknown
   has_result?: number | string | boolean | null
+  favorite_enabled?: number | string | null
+  public_status?: GenerationPublicStatus | null
+  public_requested_at?: Date | null
+  public_reviewed_at?: Date | null
   display_enabled?: number | string | null
   display_note?: string | null
   created_at: Date
@@ -110,8 +114,10 @@ function getResultUrls(resultJson: unknown): string[] {
 }
 
 function getDisplayResultUrls(resultJson: unknown): string[] {
+  const displayUrls = (urls: string[]) => filterUnreachableLocalUrls(uniqueUrls(urls))
+
   if (!resultJson || typeof resultJson !== 'object' || Array.isArray(resultJson)) {
-    return getResultUrls(resultJson)
+    return displayUrls(getResultUrls(resultJson))
   }
 
   const payload = resultJson as Record<string, unknown>
@@ -120,21 +126,35 @@ function getDisplayResultUrls(resultJson: unknown): string[] {
   }
 
   const finalUrls = getResultUrls(payload.final)
-  if (finalUrls.length) return uniqueUrls(finalUrls)
+  if (finalUrls.length) return displayUrls(finalUrls)
 
   const dataUrls = getResultUrls(payload.data)
-  if (dataUrls.length) return uniqueUrls(dataUrls)
+  if (dataUrls.length) return displayUrls(dataUrls)
 
   const resultUrls = getResultUrls(payload.result ?? payload.results ?? payload.output ?? payload.outputs ?? payload.images)
-  if (resultUrls.length) return uniqueUrls(resultUrls)
+  if (resultUrls.length) return displayUrls(resultUrls)
 
   const withoutPartial = { ...payload }
   delete withoutPartial.partial
   delete withoutPartial.partial_image_b64
   const nonPartialUrls = getResultUrls(withoutPartial)
-  if (nonPartialUrls.length) return uniqueUrls(nonPartialUrls)
+  if (nonPartialUrls.length) return displayUrls(nonPartialUrls)
 
   return []
+}
+
+function filterUnreachableLocalUrls(urls: string[]) {
+  const hasEmbeddedImage = urls.some((url) => url.startsWith('data:image/'))
+  if (!hasEmbeddedImage) return urls
+  return urls.filter((url) => {
+    if (url.startsWith('data:image/')) return true
+    try {
+      const parsed = new URL(url)
+      return !['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname)
+    } catch {
+      return true
+    }
+  })
 }
 
 function extractUrlsFromString(value: string) {
@@ -196,6 +216,11 @@ const taskListSelect = `
   generation_tasks.duration_seconds,
   generation_tasks.status,
   generation_tasks.error_message,
+  generation_tasks.result_json,
+  generation_tasks.favorite_enabled,
+  generation_tasks.public_status,
+  generation_tasks.public_requested_at,
+  generation_tasks.public_reviewed_at,
   generation_tasks.display_enabled,
   generation_tasks.display_note,
   generation_tasks.created_at,
@@ -223,8 +248,7 @@ const taskListJoins = `
 function toTask(row: GenerationTaskRow): GenerationTask {
   const resultJson = parseJson(row.result_json)
   const resultUrls = uniqueUrls(getDisplayResultUrls(resultJson))
-  const hasResult = row.has_result === undefined ? resultUrls.length > 0 : isTruthyDbValue(row.has_result)
-  const imageCount = resultUrls.length || (hasResult ? Math.max(1, Number(row.quantity) || 1) : 0)
+  const imageCount = resultUrls.length
   const imageUrls = Array.from({ length: imageCount }, (_, index) => getTaskImageUrl(row.id, index))
   const thumbnailUrls = Array.from({ length: imageCount }, (_, index) => getTaskThumbnailUrl(row.id, index))
 
@@ -257,6 +281,10 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     resultUrls: imageUrls,
     thumbnailUrl: thumbnailUrls[0] ?? null,
     thumbnailUrls,
+    favoriteEnabled: Boolean(row.favorite_enabled),
+    publicStatus: row.public_status ?? (isTruthyDbValue(row.display_enabled) ? 'approved' : 'private'),
+    publicRequestedAt: row.public_requested_at?.toISOString() ?? null,
+    publicReviewedAt: row.public_reviewed_at?.toISOString() ?? null,
     displayEnabled: Boolean(row.display_enabled),
     displayNote: row.display_note ?? null,
     createdAt: row.created_at.toISOString(),
@@ -339,7 +367,7 @@ export class TaskRepository {
     return stats
   }
 
-  async findImages(input?: { page?: number; pageSize?: number; keyword?: string; display?: 'all' | 'public' | 'private' }) {
+  async findImages(input?: { page?: number; pageSize?: number; keyword?: string; display?: 'all' | 'public' | 'private' | 'pending' | 'rejected' }) {
     const page = Math.max(1, input?.page ?? 1)
     const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 24))
     const offset = (page - 1) * pageSize
@@ -349,10 +377,16 @@ export class TaskRepository {
     const params: Record<string, string | number> = { pageSize, offset }
 
     if (input?.display === 'public') {
-      where.push('generation_tasks.display_enabled = 1')
+      where.push("generation_tasks.public_status = 'approved'")
     }
     if (input?.display === 'private') {
-      where.push('generation_tasks.display_enabled = 0')
+      where.push("generation_tasks.public_status = 'private'")
+    }
+    if (input?.display === 'pending') {
+      where.push("generation_tasks.public_status = 'pending'")
+    }
+    if (input?.display === 'rejected') {
+      where.push("generation_tasks.public_status = 'rejected'")
     }
     if (input?.keyword?.trim()) {
       where.push('(generation_tasks.prompt LIKE :keyword OR generation_tasks.display_note LIKE :keyword OR users.email LIKE :keyword OR ai_models.model_name LIKE :keyword OR ai_models.display_name LIKE :keyword)')
@@ -391,7 +425,8 @@ export class TaskRepository {
       `SELECT ${taskListSelect}
        FROM generation_tasks
        ${taskListJoins}
-       WHERE generation_tasks.display_enabled = 1
+       WHERE generation_tasks.public_status = 'approved'
+         AND generation_tasks.display_enabled = 1
          AND generation_tasks.status = 'success'
        ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
        LIMIT 60`,
@@ -411,6 +446,110 @@ export class TaskRepository {
       { userId, pageSize },
     )
     return rows.map(toTask)
+  }
+
+  async findPageByUserId(userId: string, input?: { page?: number; pageSize?: number }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 10))
+    const offset = (page - 1) * pageSize
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
+       FROM generation_tasks
+       WHERE user_id = :userId`,
+      { userId },
+    )
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
+       WHERE generation_tasks.user_id = :userId
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize OFFSET :offset`,
+      { userId, pageSize, offset },
+    )
+    return {
+      items: rows.map(toTask),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
+  }
+
+  async findFavoritesByUserId(userId: string, input?: { page?: number; pageSize?: number; keyword?: string }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 24))
+    const offset = (page - 1) * pageSize
+    const where = [
+      'generation_tasks.user_id = :userId',
+      'generation_tasks.favorite_enabled = 1',
+      "generation_tasks.status = 'success'",
+    ]
+    const params: Record<string, string | number> = { userId, pageSize, offset }
+    if (input?.keyword?.trim()) {
+      where.push('(generation_tasks.prompt LIKE :keyword OR generation_tasks.display_note LIKE :keyword OR ai_models.model_name LIKE :keyword OR ai_models.display_name LIKE :keyword)')
+      params.keyword = `%${input.keyword.trim()}%`
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
+       FROM generation_tasks
+       LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+       ${whereSql}`,
+      params,
+    )
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
+       ${whereSql}
+       ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
+       LIMIT :pageSize OFFSET :offset`,
+      params,
+    )
+    return {
+      items: rows.map(toTask),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
+  }
+
+  async findHistoryByUserId(userId: string, input?: { page?: number; pageSize?: number; keyword?: string }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 24))
+    const offset = (page - 1) * pageSize
+    const where = [
+      'generation_tasks.user_id = :userId',
+      "generation_tasks.status = 'success'",
+    ]
+    const params: Record<string, string | number> = { userId, pageSize, offset }
+    if (input?.keyword?.trim()) {
+      where.push('(generation_tasks.prompt LIKE :keyword OR generation_tasks.display_note LIKE :keyword OR ai_models.model_name LIKE :keyword OR ai_models.display_name LIKE :keyword)')
+      params.keyword = `%${input.keyword.trim()}%`
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
+       FROM generation_tasks
+       LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+       ${whereSql}`,
+      params,
+    )
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT ${taskListSelect}
+       FROM generation_tasks
+       ${taskListJoins}
+       ${whereSql}
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize OFFSET :offset`,
+      params,
+    )
+    return {
+      items: rows.map(toTask),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
   }
 
   async create(task: GenerationTask) {
@@ -440,6 +579,10 @@ export class TaskRepository {
         | 'status'
         | 'errorMessage'
         | 'resultJson'
+        | 'favoriteEnabled'
+        | 'publicStatus'
+        | 'publicRequestedAt'
+        | 'publicReviewedAt'
         | 'displayEnabled'
         | 'displayNote'
       >
@@ -454,6 +597,10 @@ export class TaskRepository {
       status: 'status',
       errorMessage: 'error_message',
       resultJson: 'result_json',
+      favoriteEnabled: 'favorite_enabled',
+      publicStatus: 'public_status',
+      publicRequestedAt: 'public_requested_at',
+      publicReviewedAt: 'public_reviewed_at',
       displayEnabled: 'display_enabled',
       displayNote: 'display_note',
     } as const
@@ -465,7 +612,7 @@ export class TaskRepository {
         values.push(
           key === 'resultJson' && value
             ? JSON.stringify(value)
-            : key === 'displayEnabled'
+            : key === 'displayEnabled' || key === 'favoriteEnabled'
               ? Boolean(value)
               : value,
         )

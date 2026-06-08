@@ -61,4 +61,31 @@ export class CreditLogRepository {
     )
     return rows.map(toCreditLog)
   }
+
+  async findPageByUserId(userId: string, input?: { page?: number; pageSize?: number }) {
+    const page = Math.max(1, input?.page ?? 1)
+    const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 10))
+    const offset = (page - 1) * pageSize
+    const [countRows] = await db.query<Array<RowDataPacket & { total: string | number }>>(
+      `SELECT COUNT(*) AS total
+       FROM credit_logs
+       WHERE user_id = :userId`,
+      { userId },
+    )
+    const [rows] = await db.query<CreditLogRow[]>(
+      `SELECT credit_logs.*, users.email AS user_email
+       FROM credit_logs
+       LEFT JOIN users ON users.id = credit_logs.user_id
+       WHERE credit_logs.user_id = :userId
+       ORDER BY credit_logs.created_at DESC, credit_logs.id DESC
+       LIMIT :pageSize OFFSET :offset`,
+      { userId, pageSize, offset },
+    )
+    return {
+      items: rows.map(toCreditLog),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    }
+  }
 }
