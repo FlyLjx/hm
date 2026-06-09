@@ -13,6 +13,7 @@ import { OperationsPage } from './pages/operations.js'
 import { SettingsPage } from './pages/settings.js'
 import { MailBroadcastPage } from './pages/mail-broadcast.js'
 import { AccountPoolPage } from './pages/account-pool.js'
+import { SystemLogsPage } from './pages/system-logs.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
 const { message } = antd
@@ -48,6 +49,7 @@ const menuGroups = [
   { title: '系统管理', items: [
     { id: 'account-pool', label: '号池管理', desc: '账号额度', icon: 'ti-address-book', component: AccountPoolPage },
     { id: 'mail-broadcast', label: '邮件群发', desc: '用户通知', icon: 'ti-mail', component: MailBroadcastPage },
+    { id: 'system-logs', label: '系统日志', desc: '运行日志', icon: 'ti-file-text', component: SystemLogsPage },
     { id: 'settings', label: '系统设置', desc: '站点配置', icon: 'ti-settings', component: SettingsPage },
   ] },
 ]

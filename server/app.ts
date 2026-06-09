@@ -28,6 +28,7 @@ import { settingRoutes } from './modules/settings/settingRoutes.js'
 import { shopRoutes } from './modules/shop/shopRoutes.js'
 import { siteChatRoutes } from './modules/siteChat/siteChatRoutes.js'
 import { subscriptionRoutes } from './modules/subscriptions/subscriptionRoutes.js'
+import { systemLogRoutes } from './modules/systemLogs/systemLogRoutes.js'
 import { taskRoutes } from './modules/tasks/taskRoutes.js'
 import { userRoutes } from './modules/users/userRoutes.js'
 import { errorMiddleware } from './shared/errorMiddleware.js'
@@ -84,6 +85,7 @@ app.use('/api/generate', generationRoutes)
 app.use('/api/chat', siteChatRoutes)
 app.use('/api/tasks', taskRoutes)
 app.use('/api/settings', settingRoutes)
+app.use('/api/system-logs', requireAdmin, systemLogRoutes)
 app.use('/api/recharge', rechargeRoutes)
 app.use('/api/redeem-codes', redeemCodeRoutes)
 app.use('/api/checkins', checkinRoutes)

@@ -141,4 +141,6 @@ export const adminApi = {
   sendTestEmail: (email) => request('/api/settings/test-email', json('POST', { email })),
   sendMailBroadcast: (input) => request('/api/mail-broadcast', json('POST', input)),
   listAccountPoolAccounts: () => request('/api/account-pool/accounts'),
+  listSystemLogs: () => request('/api/system-logs'),
+  getSystemLog: (params) => request(`/api/system-logs/detail${query(params)}`),
 }

@@ -3,6 +3,7 @@ import { getRequestIp } from '../../shared/requestIp.js'
 import { ApiLogRepository } from '../apiLogs/apiLogRepository.js'
 import { ApiProviderRepository } from '../apiProviders/apiProviderRepository.js'
 import type { ApiProvider } from '../apiProviders/apiProviderTypes.js'
+import { ModelRepository } from '../models/modelRepository.js'
 import { UserRepository } from '../users/userRepository.js'
 import type { Request, Response } from 'express'
 
@@ -128,9 +129,18 @@ export class SiteChatService {
     private readonly userRepository = new UserRepository(),
     private readonly apiProviderRepository = new ApiProviderRepository(),
     private readonly apiLogRepository = new ApiLogRepository(),
+    private readonly modelRepository = new ModelRepository(),
   ) {}
 
   private async resolveFreeChatTarget(): Promise<{ provider: ApiProvider; modelName: string; modelSource: 'model' | 'provider' }> {
+    const model = await this.modelRepository.findActiveByModelName(freeChatUpstreamModelName, 'chat_image')
+    if (model) {
+      const provider = await this.apiProviderRepository.findById(model.providerId)
+      if (provider?.status === 'active') {
+        return { provider, modelName: freeChatUpstreamModelName, modelSource: 'model' }
+      }
+    }
+
     const provider = await this.apiProviderRepository.findFirstActive()
     if (!provider) throw new AppError(404, '接口配置不存在或已禁用')
     return { provider, modelName: freeChatUpstreamModelName, modelSource: 'provider' }

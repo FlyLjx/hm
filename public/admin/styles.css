@@ -8,6 +8,84 @@
   --admin-sidebar: #101828;
 }
 
+.system-log-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.system-log-files {
+  display: grid;
+  gap: 8px;
+}
+
+.system-log-file {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--admin-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.system-log-file:hover,
+.system-log-file.active {
+  border-color: var(--admin-brand);
+  background: #f0f7ff;
+}
+
+.system-log-file span {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.system-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.system-log-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.system-log-head span {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.system-log-content {
+  min-height: 520px;
+  max-height: 68vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .system-log-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .system-log-content {
+    min-height: 420px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

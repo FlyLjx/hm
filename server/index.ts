@@ -6,6 +6,9 @@ import { attachTaskSocket } from './modules/tasks/taskSocket.js'
 import { startTaskTimeoutScheduler } from './modules/tasks/taskTimeoutScheduler.js'
 import { attachUserSocket } from './modules/users/userSocket.js'
 import { startApiProviderMonitor } from './modules/apiProviders/apiProviderMonitor.js'
+import { installFileLogger } from './shared/fileLogger.js'
+
+installFileLogger()
 
 async function bootstrap() {
   await initializeDatabase()
