@@ -23,6 +23,7 @@ type GenerationTaskRow = RowDataPacket & {
   quantity: number
   user_ip: string
   cost_credits: string | number
+  model_cost_credits?: string | number | null
   remaining_credits: string | number
   duration_seconds: string | number
   status: GenerationTaskStatus
@@ -212,6 +213,7 @@ const taskListSelect = `
   generation_tasks.quantity,
   generation_tasks.user_ip,
   generation_tasks.cost_credits,
+  generation_tasks.model_cost_credits,
   generation_tasks.remaining_credits,
   generation_tasks.duration_seconds,
   generation_tasks.status,
@@ -272,6 +274,7 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     quantity: row.quantity,
     userIp: row.user_ip,
     costCredits: Number(row.cost_credits),
+    modelCostCredits: Number(row.model_cost_credits ?? 0),
     remainingCredits: Number(row.remaining_credits),
     durationSeconds: Number(row.duration_seconds),
     status: row.status,
@@ -556,10 +559,10 @@ export class TaskRepository {
     await db.query(
       `INSERT INTO generation_tasks
         (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, transparent_background, quantity, user_ip,
-         cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
+         cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
        VALUES
         (:id, :userId, :modelId, :providerId, :capability, :prompt, :referenceImageUrl, :sizeTier, :size, :transparentBackground, :quantity, :userIp,
-         :costCredits, :remainingCredits, :durationSeconds, :status, :errorMessage, :resultJson)`,
+         :costCredits, :modelCostCredits, :remainingCredits, :durationSeconds, :status, :errorMessage, :resultJson)`,
       {
         ...task,
         resultJson: task.resultJson ? JSON.stringify(task.resultJson) : null,
@@ -574,6 +577,7 @@ export class TaskRepository {
       Pick<
         GenerationTask,
         | 'costCredits'
+        | 'modelCostCredits'
         | 'remainingCredits'
         | 'durationSeconds'
         | 'status'
@@ -592,6 +596,7 @@ export class TaskRepository {
     const values: unknown[] = []
     const fieldMap = {
       costCredits: 'cost_credits',
+      modelCostCredits: 'model_cost_credits',
       remainingCredits: 'remaining_credits',
       durationSeconds: 'duration_seconds',
       status: 'status',

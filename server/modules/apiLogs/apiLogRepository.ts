@@ -483,27 +483,7 @@ export class ApiLogRepository {
         COALESCE(log_summary.slow, 0) AS slow,
         log_summary.avg_duration_ms,
         log_summary.max_duration_ms,
-        log_summary.last_checked_at,
-        (
-          SELECT latest_log.status
-          FROM api_call_logs latest_log
-          WHERE latest_log.provider_id = api_providers.id
-            AND latest_log.direction = 'upstream'
-            AND latest_log.phase = :monitorPhase
-            AND latest_log.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          ORDER BY latest_log.created_at DESC, latest_log.id DESC
-          LIMIT 1
-        ) AS last_status,
-        (
-          SELECT latest_log.duration_ms
-          FROM api_call_logs latest_log
-          WHERE latest_log.provider_id = api_providers.id
-            AND latest_log.direction = 'upstream'
-            AND latest_log.phase = :monitorPhase
-            AND latest_log.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          ORDER BY latest_log.created_at DESC, latest_log.id DESC
-          LIMIT 1
-        ) AS last_duration_ms
+        log_summary.last_checked_at
        FROM api_providers
        LEFT JOIN (
          SELECT provider_id, GROUP_CONCAT(DISTINCT display_name ORDER BY display_name SEPARATOR ', ') AS model_names
@@ -532,32 +512,27 @@ export class ApiLogRepository {
        ORDER BY api_providers.status ASC, total DESC, api_providers.name ASC`,
       { slowMs: publicSlowRequestMs, monitorPhase: publicMonitorPhase },
     )
-    const [historyRows] = await db.query<PublicProviderHistoryRow[]>(
-      `SELECT
-        recent_logs.provider_id,
-        recent_logs.status,
-        recent_logs.duration_ms,
-        recent_logs.created_at
-       FROM api_call_logs recent_logs
-       WHERE recent_logs.direction = 'upstream'
-         AND recent_logs.phase = :monitorPhase
-         AND recent_logs.provider_id IS NOT NULL
-         AND recent_logs.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-         AND (
-           SELECT COUNT(*)
-           FROM api_call_logs newer_logs
-           WHERE newer_logs.direction = 'upstream'
-             AND newer_logs.phase = :monitorPhase
-             AND newer_logs.provider_id = recent_logs.provider_id
-             AND newer_logs.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-             AND (
-               newer_logs.created_at > recent_logs.created_at
-               OR (newer_logs.created_at = recent_logs.created_at AND newer_logs.id >= recent_logs.id)
-             )
-         ) <= 60
-       ORDER BY recent_logs.provider_id ASC, recent_logs.created_at ASC, recent_logs.id ASC`,
-      { monitorPhase: publicMonitorPhase },
+    const historyResults = await Promise.all(
+      providerRows.map(async (provider) => {
+        const [rows] = await db.query<PublicProviderHistoryRow[]>(
+          `SELECT
+            provider_id,
+            status,
+            duration_ms,
+            created_at
+           FROM api_call_logs
+           WHERE direction = 'upstream'
+             AND phase = :monitorPhase
+             AND provider_id = :providerId
+             AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+           ORDER BY created_at DESC, id DESC
+           LIMIT 60`,
+          { monitorPhase: publicMonitorPhase, providerId: provider.provider_id },
+        )
+        return rows.slice().reverse()
+      }),
     )
+    const historyRows = historyResults.flat()
 
     const normalize = (row?: PublicStatusRow) => {
       const total = Number(row?.total ?? 0)
@@ -594,15 +569,17 @@ export class ApiLogRepository {
       weekly: normalize(weekRows[0]),
       providers: providerRows.map((row) => {
         const item = normalize(row)
+        const history = historyByProvider.get(row.provider_id) ?? []
+        const lastHistory = history.at(-1)
         return {
           providerId: row.provider_id,
           providerName: row.provider_name || '默认接口',
           providerType: row.provider_type,
           providerStatus: row.provider_status,
           modelNames: row.model_names ? row.model_names.split(', ').slice(0, 3) : [],
-          lastStatus: row.last_status,
-          lastDurationMs: Number(row.last_duration_ms ?? 0),
-          history: historyByProvider.get(row.provider_id) ?? [],
+          lastStatus: lastHistory?.status ?? null,
+          lastDurationMs: lastHistory?.durationMs ?? 0,
+          history,
           ...item,
         }
       }),

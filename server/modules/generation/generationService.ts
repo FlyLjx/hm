@@ -9,10 +9,12 @@ import type { AiModel } from '../models/modelTypes.js'
 import { SubscriptionService } from '../subscriptions/subscriptionService.js'
 import { UserRepository } from '../users/userRepository.js'
 import { PromptModerationService } from '../promptModeration/promptModerationService.js'
+import { BarkService } from '../notifications/barkService.js'
 import { taskEvents } from '../tasks/taskEvents.js'
 import { userEvents } from '../users/userEvents.js'
 import { TaskRepository } from '../tasks/taskRepository.js'
 import type { GenerationSizeTier, GenerationTask } from '../tasks/taskTypes.js'
+import sharp from 'sharp'
 
 type GenerateImageInput = {
   userId: string
@@ -36,6 +38,7 @@ const allowedImageSizes: Record<GenerationSizeTier, string[]> = {
   '2k': ['2048x2048', '2048x1152', '1152x2048', '2048x1536', '1536x2048', '2048x1360', '1360x2048'],
   '4k': ['3072x3072', '3072x1728', '1728x3072', '3072x2304', '2304x3072', '3072x2048', '2048x3072'],
 }
+const defaultImageQuality = 'high'
 
 const apiLogRepository = new ApiLogRepository()
 
@@ -49,6 +52,16 @@ function getModelPrice(model: Awaited<ReturnType<ModelRepository['findById']>>, 
   return model.price1k
 }
 
+function getModelCost(model: Awaited<ReturnType<ModelRepository['findById']>>, sizeTier: GenerationSizeTier) {
+  if (!model) {
+    return 0
+  }
+
+  if (sizeTier === '4k') return model.cost4k
+  if (sizeTier === '2k') return model.cost2k
+  return model.cost1k
+}
+
 function getVariantPrice(
   model: Awaited<ReturnType<ModelRepository['findByProviderDisplayNameAndCapability']>>[number] | null | undefined,
   sizeTier: GenerationSizeTier,
@@ -57,6 +70,16 @@ function getVariantPrice(
   if (sizeTier === '4k') return model.price4k
   if (sizeTier === '2k') return model.price2k
   return model.price1k
+}
+
+function getVariantCost(
+  model: Awaited<ReturnType<ModelRepository['findByProviderDisplayNameAndCapability']>>[number] | null | undefined,
+  sizeTier: GenerationSizeTier,
+) {
+  if (!model) return 0
+  if (sizeTier === '4k') return model.cost4k
+  if (sizeTier === '2k') return model.cost2k
+  return model.cost1k
 }
 
 function applyDiscount(amount: number, discountPercent: number) {
@@ -79,15 +102,20 @@ function validateImageSize(sizeTier: GenerationSizeTier, size?: string) {
   return normalizedSize
 }
 
+function shouldUseTransparentBackground(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat'>) {
+  return Boolean(input.transparentBackground || input.outputFormat === 'png')
+}
+
 function getEffectiveOutputFormat(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat'>) {
-  return input.transparentBackground ? 'png' : input.outputFormat
+  return shouldUseTransparentBackground(input) ? 'png' : input.outputFormat
 }
 
 function buildImageOutputParams(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat' | 'openaiParams'>) {
   const outputFormat = getEffectiveOutputFormat(input)
   return {
+    quality: defaultImageQuality,
     ...(input.openaiParams ?? {}),
-    ...(input.transparentBackground ? { background: 'transparent' } : {}),
+    ...(shouldUseTransparentBackground(input) ? { background: 'transparent' } : {}),
     ...(outputFormat ? { output_format: outputFormat } : {}),
   }
 }
@@ -140,8 +168,8 @@ function getSizeRatio(size?: string | null) {
   return `${width / divisor}:${height / divisor}`
 }
 
-function buildUpstreamPrompt(input: Pick<GenerateImageInput, 'prompt' | 'size' | 'sizeTier' | 'transparentBackground'>, model: Pick<AiModel, 'appendSizeToPrompt'>) {
-  const transparentInstruction = input.transparentBackground
+function buildUpstreamPrompt(input: Pick<GenerateImageInput, 'prompt' | 'size' | 'sizeTier' | 'transparentBackground' | 'outputFormat'>, model: Pick<AiModel, 'appendSizeToPrompt'>) {
+  const transparentInstruction = shouldUseTransparentBackground(input)
     ? '背景要求：输出透明背景 PNG，保留主体 Alpha 通道，不要铺白底、灰底或纯色背景。'
     : ''
   if (!model.appendSizeToPrompt) return [input.prompt, transparentInstruction].filter(Boolean).join('\n\n')
@@ -294,6 +322,47 @@ function imageContentTypeFromFormat(format?: string | null) {
   if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg'
   if (normalized === 'webp') return 'image/webp'
   return 'image/png'
+}
+
+function normalizeOutputFormat(format?: string | null): GenerateImageInput['outputFormat'] | null {
+  const normalized = String(format || '').toLowerCase()
+  if (normalized === 'jpg' || normalized === 'jpeg') return 'jpeg'
+  if (normalized === 'webp') return 'webp'
+  if (normalized === 'png') return 'png'
+  return null
+}
+
+async function convertImageBufferToFormat(buffer: Buffer, fallbackContentType: string, outputFormat?: string) {
+  const targetFormat = normalizeOutputFormat(outputFormat)
+  if (!targetFormat) {
+    return {
+      contentType: detectImageContentType(buffer, fallbackContentType),
+      buffer,
+    }
+  }
+
+  if (targetFormat === 'jpeg') {
+    return {
+      contentType: 'image/jpeg',
+      buffer: await sharp(buffer).jpeg({ quality: 95 }).toBuffer(),
+    }
+  }
+
+  if (targetFormat === 'webp') {
+    return {
+      contentType: 'image/webp',
+      buffer: await sharp(buffer).webp({ quality: 95 }).toBuffer(),
+    }
+  }
+
+  return {
+    contentType: 'image/png',
+    buffer: await sharp(buffer).png().toBuffer(),
+  }
+}
+
+function imageDataUrl(buffer: Buffer, contentType: string) {
+  return `data:${contentType};base64,${buffer.toString('base64')}`
 }
 
 function resolveProviderUrl(provider: ApiProvider, value: string) {
@@ -543,20 +612,34 @@ async function materializeImageResult(resultJson: unknown, outputFormat?: string
   if (images.length === 0) return resultJson
 
   const materializedImages = await Promise.all(images.map(async (image) => {
-    if (image.b64_json || !image.url || image.url.startsWith('data:image/')) {
-      return image
-    }
-
     try {
+      if (image.b64_json) {
+        const buffer = Buffer.from(image.b64_json.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, ''), 'base64')
+        const converted = await convertImageBufferToFormat(buffer, imageContentTypeFromFormat(outputFormat), outputFormat)
+        return { url: imageDataUrl(converted.buffer, converted.contentType) }
+      }
+
+      const dataImage = image.url?.startsWith('data:image/') ? parseDataImage(image.url) : null
+      if (dataImage) {
+        const converted = await convertImageBufferToFormat(dataImage.buffer, dataImage.contentType, outputFormat)
+        return { url: imageDataUrl(converted.buffer, converted.contentType) }
+      }
+
+      if (!image.url) {
+        return image
+      }
+
       const response = await fetch(image.url)
       if (!response.ok) {
         return image
       }
       const buffer = Buffer.from(await response.arrayBuffer())
-      const contentType = detectImageContentType(buffer, response.headers.get('content-type') ?? 'image/png')
-      return {
-        url: `data:${contentType};base64,${buffer.toString('base64')}`,
-      }
+      const converted = await convertImageBufferToFormat(
+        buffer,
+        response.headers.get('content-type') ?? imageContentTypeFromFormat(outputFormat),
+        outputFormat,
+      )
+      return { url: imageDataUrl(converted.buffer, converted.contentType) }
     } catch {
       return image
     }
@@ -615,6 +698,11 @@ function extractUpstreamErrorMessage(resultJson: unknown, responseText: string) 
 function buildUpstreamErrorMessage(prefix: string, status: number, resultJson: unknown, responseText: string) {
   const detail = extractUpstreamErrorMessage(resultJson, responseText)
   return detail ? `${prefix}：${status}，${detail}` : `${prefix}：${status}`
+}
+
+function isUnsupportedImageModelError(error: unknown) {
+  if (!(error instanceof AppError)) return false
+  return /unsupported image model|supported models/i.test(error.message)
 }
 
 async function readResponseJsonWithText(response: Response) {
@@ -878,6 +966,7 @@ export class GenerationService {
     private readonly creditLogRepository = new CreditLogRepository(),
     private readonly subscriptionService = new SubscriptionService(),
     private readonly promptModerationService = new PromptModerationService(),
+    private readonly barkService = new BarkService(),
   ) {}
 
   async generateImage(input: GenerateImageInput) {
@@ -946,6 +1035,9 @@ export class GenerationService {
     const baseCostCredits = model.providerType === 'custom'
       ? getVariantPrice(model as Awaited<ReturnType<ModelRepository['findByProviderDisplayNameAndCapability']>>[number], input.sizeTier) * quantity
       : getModelPrice(model, input.sizeTier) * quantity
+    const modelCostCredits = model.providerType === 'custom'
+      ? getVariantCost(model as Awaited<ReturnType<ModelRepository['findByProviderDisplayNameAndCapability']>>[number], input.sizeTier) * quantity
+      : getModelCost(model, input.sizeTier) * quantity
     const subscriptionDiscountPercent = await this.subscriptionService.getUserDiscountPercent(user.id, {
       providerId: provider.id,
       modelId: model.id,
@@ -967,10 +1059,11 @@ export class GenerationService {
       referenceImageUrl: normalizedInput.referenceImageUrl ?? null,
       sizeTier: input.sizeTier,
       size: normalizedSize,
-      transparentBackground: Boolean(input.transparentBackground),
+      transparentBackground: shouldUseTransparentBackground(normalizedInput),
       quantity,
       userIp: input.userIp,
       costCredits: 0,
+      modelCostCredits: 0,
       remainingCredits: user.credits,
       durationSeconds: 0,
       status: 'queued',
@@ -1022,6 +1115,7 @@ export class GenerationService {
         referenceImages: summarizeReferenceImages(normalizedInput.referenceImageUrls),
       },
       costCredits,
+      modelCostCredits,
       baseCostCredits,
       subscriptionDiscountPercent,
       userIp: input.userIp,
@@ -1034,6 +1128,7 @@ export class GenerationService {
       provider,
       input: normalizedInput,
       costCredits,
+      modelCostCredits,
       quantity,
     })
 
@@ -1048,6 +1143,7 @@ export class GenerationService {
     provider,
     input,
     costCredits,
+    modelCostCredits,
     quantity,
   }: {
     taskId: string
@@ -1057,6 +1153,7 @@ export class GenerationService {
     provider: NonNullable<Awaited<ReturnType<ApiProviderRepository['findById']>>>
     input: GenerateImageInput
     costCredits: number
+    modelCostCredits: number
     quantity: number
   }) {
     let resultJson: unknown = null
@@ -1106,6 +1203,7 @@ export class GenerationService {
           (provider.type === 'sub2api' || provider.type === 'custom') &&
           error instanceof AppError &&
           error.statusCode &&
+          !isUnsupportedImageModelError(error) &&
           isStreamFallbackStatus(error.statusCode)
         ) {
           logGeneration('upstream-stream-fallback', {
@@ -1171,20 +1269,36 @@ export class GenerationService {
       logGeneration('canceled-before-final-update', { taskId })
       return
     }
-    taskEvents.emitUpdated(await this.taskRepository.update(taskId, {
+    const finalTask = await this.taskRepository.update(taskId, {
       costCredits: status === 'success' ? costCredits : 0,
+      modelCostCredits: status === 'success' ? modelCostCredits : 0,
       remainingCredits,
       durationSeconds,
       status,
       errorMessage,
       resultJson,
-    }))
+    })
+    taskEvents.emitUpdated(finalTask)
+    if (status === 'failed') {
+      void this.barkService.pushGenerationFailure({
+        taskId,
+        userEmail: user.email,
+        modelName: model.displayName || model.modelName,
+        providerName: provider.name,
+        prompt: input.prompt,
+        errorMessage,
+        durationSeconds,
+      }).catch((error) => {
+        console.warn('[bark:generation-failure-push-failed]', error instanceof Error ? error.message : String(error))
+      })
+    }
     logGeneration('finished', {
       taskId,
       status,
       errorMessage,
       durationSeconds,
       costCredits: status === 'success' ? costCredits : 0,
+      modelCostCredits: status === 'success' ? modelCostCredits : 0,
       remainingCredits,
       result: summarizeImageResult(resultJson),
     })

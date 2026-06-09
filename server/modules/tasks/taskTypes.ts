@@ -24,6 +24,7 @@ export type GenerationTask = {
   quantity: number
   userIp: string
   costCredits: number
+  modelCostCredits?: number
   remainingCredits: number
   durationSeconds: number
   status: GenerationTaskStatus

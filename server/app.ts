@@ -12,7 +12,9 @@ import { apiLogRoutes } from './modules/apiLogs/apiLogRoutes.js'
 import { ApiLogController } from './modules/apiLogs/apiLogController.js'
 import { apiProviderRoutes } from './modules/apiProviders/apiProviderRoutes.js'
 import { checkinRoutes } from './modules/checkins/checkinRoutes.js'
+import { creditLogRoutes } from './modules/creditLogs/creditLogRoutes.js'
 import { dashboardRoutes } from './modules/dashboard/dashboardRoutes.js'
+import { financeStatsRoutes } from './modules/financeStats/financeStatsRoutes.js'
 import { generationRoutes } from './modules/generation/generationRoutes.js'
 import { inviteRoutes } from './modules/invites/inviteRoutes.js'
 import { mailBroadcastRoutes } from './modules/mailBroadcast/mailBroadcastRoutes.js'
@@ -24,6 +26,7 @@ import { rechargeRoutes } from './modules/recharge/rechargeRoutes.js'
 import { redeemCodeRoutes } from './modules/redeemCodes/redeemCodeRoutes.js'
 import { settingRoutes } from './modules/settings/settingRoutes.js'
 import { shopRoutes } from './modules/shop/shopRoutes.js'
+import { siteChatRoutes } from './modules/siteChat/siteChatRoutes.js'
 import { subscriptionRoutes } from './modules/subscriptions/subscriptionRoutes.js'
 import { taskRoutes } from './modules/tasks/taskRoutes.js'
 import { userRoutes } from './modules/users/userRoutes.js'
@@ -68,14 +71,17 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/account-pool', accountPoolRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/dashboard', requireAdmin, dashboardRoutes)
+app.use('/api/finance-stats', requireAdmin, financeStatsRoutes)
 app.use('/api/announcements', announcementRoutes)
 app.use('/api/api-providers', apiProviderRoutes)
 app.use('/api/api-keys', requireAdmin, adminApiKeyRoutes)
 app.use('/api/api-logs', requireAdmin, apiLogRoutes)
+app.use('/api/credit-logs', requireAdmin, creditLogRoutes)
 app.use('/api/models', modelRoutes)
 app.use('/api/promotions', promotionRoutes)
 app.use('/api/prompt-reverse', promptReverseRoutes)
 app.use('/api/generate', generationRoutes)
+app.use('/api/chat', siteChatRoutes)
 app.use('/api/tasks', taskRoutes)
 app.use('/api/settings', settingRoutes)
 app.use('/api/recharge', rechargeRoutes)

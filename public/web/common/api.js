@@ -85,6 +85,18 @@ export const clientApi = {
   listModels: () => request('/api/models?dedupe=display'),
   getServiceStatus: () => request('/api/service-status'),
   reversePrompt: (input) => request('/api/prompt-reverse', { method: 'POST', body: JSON.stringify(input) }),
+  completeChat: (input) => request('/api/chat/completions', { method: 'POST', body: JSON.stringify(input) }),
+  completeChatStream: async (input) => {
+    try {
+      return await fetch('/api/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+    } catch {
+      throw new Error('聊天通道连接失败，请确认前台通过后端地址访问，并刷新后重试')
+    }
+  },
   generateImage: (input) => request('/api/generate/image', { method: 'POST', body: JSON.stringify(input) }),
   generateImageStream: async (input) => {
     try {

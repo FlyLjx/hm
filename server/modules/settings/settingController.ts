@@ -47,4 +47,9 @@ export class SettingController {
     await settingService.sendTestEmail(input.email)
     res.json({ data: { sent: true } })
   }
+
+  async testBark(_req: Request, res: Response) {
+    await settingService.sendTestBark()
+    res.json({ data: { sent: true } })
+  }
 }

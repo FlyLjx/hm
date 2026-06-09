@@ -2,7 +2,7 @@ import { adminApi } from '../api.js'
 import { amount, formatDate, statusItem, text, toNumber } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
-const { computed, onBeforeUnmount, onMounted, ref } = Vue
+const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
 const { message } = antd
 
 const modelFields = [
@@ -34,7 +34,14 @@ export const ModelsPage = {
     const remote = ref([])
     const selected = ref([])
     const loading = ref(false)
+    const sortVisible = ref(false)
+    const sortSaving = ref(false)
+    const sortRows = ref([])
+    const sortReload = ref(null)
     const isMappings = computed(() => props.mode === 'mappings')
+    const modelSortActions = computed(() => [
+      { key: 'sort', label: '排序', icon: 'ti-arrows-sort', onClick: openSort },
+    ])
 
     async function loadBase() {
       const [providerRes, modelRes] = await Promise.all([
@@ -86,7 +93,7 @@ export const ModelsPage = {
       const cost2k = toNumber(model.cost2k, cost1k)
       const cost4k = toNumber(model.cost4k, cost2k)
       const displayName = String(model.displayName || model.name).trim() || model.name
-      return { providerId: providerId.value, modelName: model.name, displayName, capability: 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, status: 'active' }
+      return { providerId: providerId.value, modelName: model.name, displayName, capability: 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), priceChangePercent: 0, price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, sortOrder: 100, status: 'active' }
     }
 
     async function saveSelected() {
@@ -109,6 +116,58 @@ export const ModelsPage = {
       loadBase()
     }
 
+    function groupedSortRows(source = models.value) {
+      const groups = new Map()
+      source.forEach((model) => {
+        const displayName = model.displayName || model.modelName
+        const key = [model.providerId, model.capability, displayName.trim().toLowerCase()].join(':')
+        const existing = groups.get(key)
+        if (!existing) {
+          groups.set(key, reactive({
+            key,
+            providerId: model.providerId,
+            providerName: model.providerName || model.providerId,
+            displayName,
+            modelNames: [model.modelName],
+            ids: [model.id],
+            sortOrder: Number(model.sortOrder ?? 100),
+          }))
+          return
+        }
+        existing.ids.push(model.id)
+        existing.modelNames.push(model.modelName)
+        existing.sortOrder = Math.min(Number(existing.sortOrder ?? 100), Number(model.sortOrder ?? 100))
+      })
+      return [...groups.values()].sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || a.displayName.localeCompare(b.displayName, 'zh-CN'))
+    }
+
+    async function openSort(context) {
+      sortReload.value = context?.load || null
+      await loadBase()
+      sortRows.value = groupedSortRows()
+      sortVisible.value = true
+    }
+
+    async function saveSortOrders() {
+      const items = sortRows.value.flatMap((row) => row.ids.map((id) => ({
+        id,
+        sortOrder: toNumber(row.sortOrder, 100),
+      })))
+      if (!items.length) return
+      sortSaving.value = true
+      try {
+        await adminApi.updateModelSortOrders({ items })
+        message.success('排序已保存')
+        sortVisible.value = false
+        await loadBase()
+        await sortReload.value?.()
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '保存排序失败')
+      } finally {
+        sortSaving.value = false
+      }
+    }
+
     onMounted(() => {
       loadBase()
       window.addEventListener('admin:auto-refresh', handleAutoRefresh)
@@ -116,33 +175,54 @@ export const ModelsPage = {
     onBeforeUnmount(() => {
       window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
-    return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, fetchRemote, filterRemote, saveSelected, toggleSelected, amount, statusItem, text, formatDate }
+    return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, amount, statusItem, text, formatDate }
   },
   template: `
-    <CrudPage
-      v-if="!isMappings"
-      title="模型管理"
-      singular="模型"
-      description="维护模型名称、展示名称、成本和售价。"
-      search
-      :list="adminApi.listModels"
-      :create="adminApi.createModel"
-      :update="adminApi.updateModel"
-      :delete="adminApi.deleteModel"
-      :fields="modelFields"
-      :columns="[
-        { label: '展示名称', key: 'displayName' },
-        { label: '模型名', key: 'modelName' },
-        { label: '服务商', render: row => row.providerName || row.providerId },
-        { label: '1K售价', key: 'price1k', format: 'amount' },
-        { label: '2K售价', key: 'price2k', format: 'amount' },
-        { label: '4K售价', key: 'price4k', format: 'amount' },
-        { label: '尺寸提示词', render: row => row.appendSizeToPrompt ? '开启' : '关闭' },
-        { label: '状态', key: 'status', format: 'status' },
-        { label: '更新时间', key: 'updatedAt', format: 'date' },
-      ]"
-    />
-    <div v-else class="page-stack">
+    <div>
+      <template v-if="!isMappings">
+        <CrudPage
+          title="模型管理"
+          singular="模型"
+          description="维护模型名称、展示名称、成本和售价。"
+          search
+          :list="adminApi.listModels"
+          :create="adminApi.createModel"
+          :update="adminApi.updateModel"
+          :delete="adminApi.deleteModel"
+          :fields="modelFields"
+          :actions="modelSortActions"
+          :columns="[
+            { label: '展示名称', key: 'displayName' },
+            { label: '模型名', key: 'modelName' },
+            { label: '服务商', render: row => row.providerName || row.providerId },
+            { label: '1K售价', key: 'price1k', format: 'amount' },
+            { label: '2K售价', key: 'price2k', format: 'amount' },
+            { label: '4K售价', key: 'price4k', format: 'amount' },
+            { label: '价格浮动', key: 'priceChangePercent', format: 'price-change' },
+            { label: '尺寸提示词', render: row => row.appendSizeToPrompt ? '开启' : '关闭' },
+            { label: '状态', key: 'status', format: 'status' },
+            { label: '更新时间', key: 'updatedAt', format: 'date' },
+          ]"
+        />
+        <a-modal v-model:open="sortVisible" title="模型排序" width="760px" :confirm-loading="sortSaving" @ok="saveSortOrders">
+          <div class="page-desc" style="margin-bottom:12px">仅显示去重后的模型。数值越小越靠前，保存后会同步到该展示名下的所有模型变体。</div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>展示模型</th><th>服务商</th><th>变体</th><th style="width:150px">排序值</th></tr></thead>
+              <tbody>
+                <tr v-for="row in sortRows" :key="row.key">
+                  <td><strong>{{ row.displayName }}</strong><div class="muted">{{ row.modelNames.slice(0, 2).join(' / ') }}{{ row.modelNames.length > 2 ? ' ...' : '' }}</div></td>
+                  <td>{{ row.providerName }}</td>
+                  <td>{{ row.ids.length }} 个</td>
+                  <td><a-input-number v-model:value="row.sortOrder" :min="0" :max="999999" style="width:120px" /></td>
+                </tr>
+              </tbody>
+            </table>
+            <a-empty v-if="!sortRows.length" description="暂无模型" />
+          </div>
+        </a-modal>
+      </template>
+      <div v-else class="page-stack">
       <a-card class="admin-view-card" :bordered="false">
         <div class="admin-card-hero">
           <div><div class="page-kicker">Model Mapping</div><div class="page-title">模型同步</div><div class="page-desc">从接口服务商读取远程模型，筛选后保存到本地模型库。</div></div>
@@ -166,6 +246,7 @@ export const ModelsPage = {
           </table>
         </div>
       </a-card>
+      </div>
     </div>
   `,
 }

@@ -112,10 +112,12 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
       cost_2k DECIMAL(10,4) NOT NULL DEFAULT 0,
       cost_4k DECIMAL(10,4) NOT NULL DEFAULT 0,
       markup_percent DECIMAL(8,2) NOT NULL DEFAULT 0,
+      price_change_percent DECIMAL(8,2) NOT NULL DEFAULT 0,
       price_1k DECIMAL(10,4) NOT NULL DEFAULT 0,
       price_2k DECIMAL(10,4) NOT NULL DEFAULT 0,
       price_4k DECIMAL(10,4) NOT NULL DEFAULT 0,
       append_size_to_prompt TINYINT(1) NOT NULL DEFAULT 0,
+      sort_order INT NOT NULL DEFAULT 100,
       status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -139,6 +141,7 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
       quantity INT NOT NULL DEFAULT 1,
       user_ip VARCHAR(64) NOT NULL,
       cost_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
+      model_cost_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
       remaining_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
       duration_seconds DECIMAL(10,3) NOT NULL DEFAULT 0,
       status ENUM('queued', 'processing', 'pending', 'success', 'failed', 'canceled') NOT NULL DEFAULT 'queued',
@@ -240,6 +243,8 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
       INDEX idx_api_call_logs_direction_created (direction, created_at),
       INDEX idx_api_call_logs_user_created (user_id, created_at),
       INDEX idx_api_call_logs_provider_created (provider_id, created_at),
+      INDEX idx_api_call_logs_monitor_created (direction, phase, created_at),
+      INDEX idx_api_call_logs_monitor_provider_created (direction, phase, provider_id, created_at, id),
       INDEX idx_api_call_logs_status_created (status, created_at),
       INDEX idx_api_call_logs_task_id (task_id)
     )
@@ -439,10 +444,12 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
   await addColumnIfMissing('ai_models', 'cost_2k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'cost_4k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'markup_percent', 'DECIMAL(8,2) NOT NULL DEFAULT 0')
+  await addColumnIfMissing('ai_models', 'price_change_percent', 'DECIMAL(8,2) NOT NULL DEFAULT 0 AFTER markup_percent')
   await addColumnIfMissing('ai_models', 'price_1k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'price_2k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'price_4k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'append_size_to_prompt', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER price_4k')
+  await addColumnIfMissing('ai_models', 'sort_order', 'INT NOT NULL DEFAULT 100 AFTER append_size_to_prompt')
   await db.query(`
     UPDATE ai_models
     SET
@@ -467,6 +474,7 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
   `)
   await addColumnIfMissing('generation_tasks', 'quantity', 'INT NOT NULL DEFAULT 1 AFTER size_tier')
   await addColumnIfMissing('generation_tasks', 'size', 'VARCHAR(30) NULL AFTER size_tier')
+  await addColumnIfMissing('generation_tasks', 'model_cost_credits', 'DECIMAL(12,4) NOT NULL DEFAULT 0 AFTER cost_credits')
   await addColumnIfMissing(
     'generation_tasks',
     'transparent_background',
@@ -565,6 +573,16 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
     'api_call_logs',
     'idx_api_call_logs_provider_created',
     'INDEX idx_api_call_logs_provider_created (provider_id, created_at)',
+  )
+  await addIndexIfMissing(
+    'api_call_logs',
+    'idx_api_call_logs_monitor_created',
+    'INDEX idx_api_call_logs_monitor_created (direction, phase, created_at)',
+  )
+  await addIndexIfMissing(
+    'api_call_logs',
+    'idx_api_call_logs_monitor_provider_created',
+    'INDEX idx_api_call_logs_monitor_provider_created (direction, phase, provider_id, created_at, id)',
   )
   await addIndexIfMissing(
     'api_call_logs',
@@ -707,7 +725,15 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
       ('registerEmailVerification', 'false'),
       ('accountPoolEndpoint', 'https://free-api.yccc.me/api/accounts'),
       ('accountPoolApiKey', ''),
-      ('accountPoolAuthHeader', 'Authorization')`,
+      ('accountPoolAuthHeader', 'Authorization'),
+      ('barkEnabled', 'false'),
+      ('barkServerUrl', 'https://api.day.app'),
+      ('barkDeviceKey', ''),
+      ('barkTitlePrefix', 'AIπ'),
+      ('barkSound', ''),
+      ('barkNotifyGenerationFailure', 'true'),
+      ('barkNotifyTaskTimeout', 'true'),
+      ('barkNotifyProviderFailure', 'true')`,
   )
 
   const [announcementRows] = await db.query('SELECT id FROM announcements LIMIT 1')

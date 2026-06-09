@@ -17,7 +17,13 @@ export function getSizeForRatio(ratio, sizeTier) {
 }
 
 export function getActiveModelsByCapability(models, capability = 'chat_image') {
-  return models.filter((model) => model.status === 'active' && model.capability === capability)
+  return models
+    .filter((model) => model.status === 'active' && model.capability === capability)
+    .sort((a, b) => {
+      const sortDiff = Number(a.sortOrder ?? 100) - Number(b.sortOrder ?? 100)
+      if (sortDiff !== 0) return sortDiff
+      return getModelLabel(a).localeCompare(getModelLabel(b), 'zh-CN')
+    })
 }
 
 export function getAvailableRatioOptions(model) {

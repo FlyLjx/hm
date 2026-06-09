@@ -14,10 +14,12 @@ type CreateModelInput = {
   cost2k: number
   cost4k: number
   markupPercent: number
+  priceChangePercent: number
   price1k: number
   price2k: number
   price4k: number
   appendSizeToPrompt: boolean
+  sortOrder: number
 }
 
 type UpdateModelInput = Partial<CreateModelInput> & {
@@ -28,8 +30,34 @@ function uniqueModelNames(modelNames: string[]) {
   return Array.from(new Set(modelNames))
 }
 
-function filterModelsByCapability(modelNames: string[]) {
-  return uniqueModelNames(modelNames)
+function isImageGenerationModelName(...modelNames: Array<string | null | undefined>) {
+  const normalized = modelNames
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .trim()
+    .toLowerCase()
+  return [
+    'gpt-image',
+    'codex-gpt-image',
+    'dall-e',
+    'image',
+    'nano-banana',
+    'nano banana',
+    'nanobanana',
+    'banana',
+    'gemini-2.5-flash-image',
+    'midjourney',
+    'stable-diffusion',
+    'flux',
+    'recraft',
+    'ideogram',
+  ].some((keyword) => normalized.includes(keyword))
+}
+
+function filterModelsByCapability(modelNames: string[], capability: AiModelCapability) {
+  const uniqueModels = uniqueModelNames(modelNames)
+  if (capability !== 'chat_image') return uniqueModels
+  return uniqueModels.filter((modelName) => isImageGenerationModelName(modelName))
 }
 
 function roundPrice(value: number) {
@@ -65,6 +93,22 @@ function hasExplicitSalePrice(input: UpdateModelInput) {
   return input.price1k !== undefined || input.price2k !== undefined || input.price4k !== undefined
 }
 
+function calculatePriceChangePercent(previousPrice: number, nextPrice: number) {
+  if (previousPrice <= 0 || nextPrice <= 0 || previousPrice === nextPrice) return 0
+  return roundPrice(((nextPrice - previousPrice) / previousPrice) * 100)
+}
+
+function priceChangePercentFromUpdate(current: AiModel, input: UpdateModelInput) {
+  const candidates = [
+    { previous: current.price1k, next: input.price1k },
+    { previous: current.price2k, next: input.price2k },
+    { previous: current.price4k, next: input.price4k },
+  ]
+  const changed = candidates.find((item) => item.next !== undefined && Number(item.next) !== Number(item.previous))
+  if (!changed || changed.next === undefined) return current.priceChangePercent
+  return calculatePriceChangePercent(Number(changed.previous || 0), Number(changed.next || 0))
+}
+
 function hasRemoteCost(model: Pick<RemoteModel, 'cost1k' | 'cost2k' | 'cost4k'>) {
   return model.cost1k > 0 || model.cost2k > 0 || model.cost4k > 0
 }
@@ -92,6 +136,7 @@ function createModelVariant(model: AiModel): AiModelVariant {
     price1k: model.price1k,
     price2k: model.price2k,
     price4k: model.price4k,
+    sortOrder: model.sortOrder,
   }
 }
 
@@ -107,7 +152,8 @@ export class ModelService {
   }
 
   async listPublicModels() {
-    const models = await this.modelRepository.findAll()
+    const models = (await this.modelRepository.findAll())
+      .filter((model) => model.capability !== 'chat_image' || isImageGenerationModelName(model.modelName, model.displayName))
     const groupedModels = new Map<string, AiModel & { variants: AiModelVariant[] }>()
 
     models.forEach((model) => {
@@ -130,6 +176,7 @@ export class ModelService {
       existing.price1k = Math.min(existing.price1k || model.price1k, model.price1k || existing.price1k)
       existing.price2k = Math.min(existing.price2k || model.price2k, model.price2k || existing.price2k)
       existing.price4k = Math.min(existing.price4k || model.price4k, model.price4k || existing.price4k)
+      existing.sortOrder = Math.min(existing.sortOrder ?? 100, model.sortOrder ?? 100)
       if (existing.status !== 'active' && model.status === 'active') {
         Object.assign(existing, {
           ...existing,
@@ -161,6 +208,7 @@ export class ModelService {
       markupPercent,
       ...salePrices,
       appendSizeToPrompt: Boolean(input.appendSizeToPrompt),
+      sortOrder: input.sortOrder ?? 100,
       status: 'active',
       createdAt: now,
       updatedAt: now,
@@ -181,7 +229,7 @@ export class ModelService {
     const shouldRecalculatePrice = !hasExplicitSalePrice(input) && ['cost1k', 'cost2k', 'cost4k', 'markupPercent'].some(
       (key) => input[key as keyof UpdateModelInput] !== undefined,
     )
-    const normalizedInput = shouldRecalculatePrice
+    const priceInput = shouldRecalculatePrice
       ? {
           ...input,
           ...calculateSalePrices({
@@ -192,6 +240,12 @@ export class ModelService {
           }),
         }
       : input
+    const normalizedInput = hasExplicitSalePrice(priceInput)
+      ? {
+          ...priceInput,
+          priceChangePercent: priceChangePercentFromUpdate(current, priceInput),
+        }
+      : priceInput
 
     const model = await this.modelRepository.update(id, normalizedInput)
     if (!model) {
@@ -212,6 +266,10 @@ export class ModelService {
     return { deletedCount }
   }
 
+  async updateModelSortOrders(items: Array<{ id: string; sortOrder: number }>) {
+    return this.modelRepository.updateSortOrders(items)
+  }
+
   async syncModels(providerId: string, capability: AiModelCapability, keyword = '', aliasPrefix = '', markupPercent = 0) {
     const provider = await this.apiProviderRepository.findById(providerId)
     if (!provider) {
@@ -229,7 +287,7 @@ export class ModelService {
     })
     const remoteModelNames = remoteModels.map((model) => model.name)
     const normalizedKeyword = keyword.trim().toLowerCase()
-    const capabilityModels = filterModelsByCapability(remoteModelNames)
+    const capabilityModels = filterModelsByCapability(remoteModelNames, capability)
     const matchedModels = normalizedKeyword
       ? capabilityModels.filter((modelName) => modelName.toLowerCase().includes(normalizedKeyword))
       : capabilityModels
@@ -261,10 +319,12 @@ export class ModelService {
           cost2k: costSource.cost2k,
           cost4k: costSource.cost4k,
           markupPercent,
+          priceChangePercent: existingModel?.priceChangePercent ?? 0,
           price1k: existingModel?.price1k ?? 0,
           price2k: existingModel?.price2k ?? 0,
           price4k: existingModel?.price4k ?? 0,
           appendSizeToPrompt: existingModel?.appendSizeToPrompt ?? false,
+          sortOrder: existingModel?.sortOrder ?? 100,
         })
       }),
     )

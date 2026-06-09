@@ -47,6 +47,14 @@ const defaultSettings = {
   emailFromName: 'AIπ',
   emailFromAddress: '',
   registerEmailVerification: false,
+  barkEnabled: false,
+  barkServerUrl: 'https://api.day.app',
+  barkDeviceKey: '',
+  barkTitlePrefix: 'AIπ',
+  barkSound: '',
+  barkNotifyGenerationFailure: true,
+  barkNotifyTaskTimeout: true,
+  barkNotifyProviderFailure: true,
 }
 
 export const SettingsPage = {
@@ -82,12 +90,23 @@ export const SettingsPage = {
         { key: 'alipayAppId', label: '支付宝 App ID' }, { key: 'alipayGateway', label: '支付宝网关', type: 'url' }, { key: 'alipayPrivateKey', label: '应用私钥', type: 'textarea' }, { key: 'alipayPublicKey', label: '支付宝公钥', type: 'textarea' },
         { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host' }, { key: 'emailPort', label: 'SMTP Port', type: 'number' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean' }, { key: 'emailUser', label: '邮箱账号' }, { key: 'emailPassword', label: '邮箱密码', type: 'password' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址' },
       ] },
+      { title: '通知告警', fields: [
+        { key: 'barkEnabled', label: '开启 Bark 推送', type: 'boolean' },
+        { key: 'barkNotifyGenerationFailure', label: '生图失败推送', type: 'boolean' },
+        { key: 'barkNotifyTaskTimeout', label: '任务超时推送', type: 'boolean' },
+        { key: 'barkNotifyProviderFailure', label: '接口异常推送', type: 'boolean' },
+        { key: 'barkServerUrl', label: 'Bark Server', type: 'url' },
+        { key: 'barkDeviceKey', label: 'Device Key' },
+        { key: 'barkTitlePrefix', label: '标题前缀' },
+        { key: 'barkSound', label: '提示音（可空）' },
+      ] },
     ]
     const statusItems = computed(() => [
       ['当前站点', form.siteName || 'AIπ'],
       ['注册状态', form.registerMode === 'closed' ? '关闭注册' : '开放注册'],
       ['充值功能', form.rechargeEnabled ? '已开启' : '已关闭'],
       ['生图模式', form.streamGenerationEnabled ? '流式' : '普通'],
+      ['Bark 推送', form.barkEnabled ? '已开启' : '已关闭'],
       ['任务超时', `${toNumber(form.taskTimeoutMinutes, 3)} 分钟`],
     ])
     watch(() => props.settings, (next) => Object.assign(form, defaultSettings, next || {}), { deep: true })
@@ -95,7 +114,7 @@ export const SettingsPage = {
     function normalizeInput() {
       const input = { ...form }
       input.announcementEnabled = true
-      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
+      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification', 'barkEnabled', 'barkNotifyGenerationFailure', 'barkNotifyTaskTimeout', 'barkNotifyProviderFailure'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
       ;['rechargeRate', 'rechargeMinAmount', 'inviteRewardCredits', 'taskTimeoutMinutes', 'emailPort', 'registerRewardCredits'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
       input.frontendUrl = input.frontendUrl || window.location.origin
       input.backendUrl = input.backendUrl || window.location.origin
@@ -127,14 +146,24 @@ export const SettingsPage = {
       })
     }
 
-    return { form, groups, statusItems, submit, testEmail }
+    async function testBark() {
+      try {
+        await submit()
+        await adminApi.sendTestBark()
+        message.success('Bark 测试推送已发送')
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : 'Bark 测试失败')
+      }
+    }
+
+    return { form, groups, statusItems, submit, testEmail, testBark }
   },
   template: `
     <div class="settings-page">
       <section class="page-panel">
         <div class="page-hero">
           <div><div class="page-kicker">System Settings</div><div class="page-title">系统设置</div><div class="page-desc">维护站点配置、充值运营、支付邮件和前台展示策略。</div></div>
-          <div class="toolbar"><a-button @click="testEmail">发送测试邮件</a-button><a-button type="primary" @click="submit">保存设置</a-button></div>
+          <div class="toolbar"><a-button @click="testEmail">发送测试邮件</a-button><a-button @click="testBark">测试 Bark</a-button><a-button type="primary" @click="submit">保存设置</a-button></div>
         </div>
         <div class="summary-grid"><div v-for="[label, value] in statusItems" :key="label" class="summary-card"><span>{{ label }}</span><b style="font-size:18px">{{ value }}</b></div></div>
       </section>

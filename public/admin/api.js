@@ -65,6 +65,7 @@ export const adminApi = {
   login: (input) => request('/api/admin/login', json('POST', input)),
   getSession: () => request('/api/admin/session'),
   getDashboard: () => request('/api/dashboard'),
+  getCostStats: (params) => request(`/api/finance-stats/costs${query(params)}`),
   listUsers: () => request('/api/users'),
   createUser: (input) => request('/api/users', json('POST', input)),
   updateUser: (id, input) => request(`/api/users/${pathId(id)}`, json('PATCH', input)),
@@ -82,6 +83,7 @@ export const adminApi = {
   listModels: () => request('/api/models'),
   createModel: (input) => request('/api/models', json('POST', input)),
   updateModel: (id, input) => request(`/api/models/${pathId(id)}`, json('PATCH', input)),
+  updateModelSortOrders: (input) => request('/api/models/sort-orders', json('PATCH', input)),
   deleteModel: (id) => request(`/api/models/${pathId(id)}`, { method: 'DELETE' }),
 
   listTasks: (params) => request(`/api/tasks${query(params)}`),
@@ -97,6 +99,9 @@ export const adminApi = {
   listApiLogs: (params) => request(`/api/api-logs${query(params)}`),
   getApiLogStats: (params) => request(`/api/api-logs/stats${query(params)}`),
   getApiLogDetail: (id) => request(`/api/api-logs/${pathId(id)}`),
+  listCreditLogs: (params) => request(`/api/credit-logs${query(params)}`),
+  getCreditLogStats: (params) => request(`/api/credit-logs/stats${query(params)}`),
+  deleteCreditLog: (id) => request(`/api/credit-logs/${pathId(id)}`, { method: 'DELETE' }),
 
   listRechargeOrders: (params) => request(`/api/recharge/orders${query(params)}`),
   listRechargeProducts: () => request('/api/shop/recharge-products'),
@@ -130,6 +135,7 @@ export const adminApi = {
 
   getSettings: () => request('/api/settings'),
   updateSettings: (input) => request('/api/settings', json('PATCH', input)),
+  sendTestBark: () => request('/api/settings/test-bark', json('POST')),
   getAccountPoolSettings: () => request('/api/settings/account-pool'),
   updateAccountPoolSettings: (input) => request('/api/settings/account-pool', json('PATCH', input)),
   sendTestEmail: (email) => request('/api/settings/test-email', json('POST', { email })),

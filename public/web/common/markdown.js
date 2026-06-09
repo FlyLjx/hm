@@ -80,10 +80,20 @@ function splitTableRow(line) {
     .map((cell) => cell.trim())
 }
 
+function isTableDividerCell(cell) {
+  return /^:?-{1,}:?$/.test(String(cell || '').trim())
+}
+
+function isTableDividerRow(line) {
+  const cells = splitTableRow(line)
+  return cells.length > 0 && cells.every(isTableDividerCell)
+}
+
 function isTableStart(lines, index) {
   if (!lines[index]?.includes('|') || !lines[index + 1]?.includes('|')) return false
+  const headers = splitTableRow(lines[index])
   const cells = splitTableRow(lines[index + 1])
-  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+  return headers.length > 1 && cells.length >= headers.length && cells.every(isTableDividerCell)
 }
 
 function renderList(lines, index, ordered) {
@@ -128,7 +138,7 @@ function renderTable(lines, index) {
   const headers = splitTableRow(lines[index])
   const rows = []
   let cursor = index + 2
-  while (cursor < lines.length && lines[cursor].includes('|') && lines[cursor].trim()) {
+  while (cursor < lines.length && lines[cursor].includes('|') && lines[cursor].trim() && !isTableDividerRow(lines[cursor])) {
     rows.push(splitTableRow(lines[cursor]))
     cursor += 1
   }
@@ -142,7 +152,7 @@ function renderTable(lines, index) {
   }
 }
 
-export function renderMarkdown(value) {
+export function renderMarkdown(value, options = {}) {
   const lines = String(value ?? '').replace(/\r\n?/g, '\n').split('\n')
   const blocks = []
   let index = 0
@@ -162,7 +172,10 @@ export function renderMarkdown(value) {
         index += 1
       }
       if (index < lines.length) index += 1
-      blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+      const codeHtml = `<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`
+      blocks.push(options.copyCode
+        ? `<div class="markdown-code-wrap"><button class="markdown-code-copy" type="button" data-copy-code="1"><i class="ti ti-copy"></i><span>复制</span></button>${codeHtml}</div>`
+        : codeHtml)
       continue
     }
 

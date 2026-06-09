@@ -5,6 +5,9 @@ import { getStringParam } from '../../shared/requestParams.js'
 import { ApiLogRepository } from './apiLogRepository.js'
 
 const apiLogRepository = new ApiLogRepository()
+const publicStatusCacheTtlMs = 20000
+let publicStatusCache: { expiresAt: number; data: unknown } | null = null
+let publicStatusCachePromise: Promise<unknown> | null = null
 
 const apiLogListSchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -45,7 +48,25 @@ export class ApiLogController {
   }
 
   async publicStatus(_req: Request, res: Response) {
-    const status = await apiLogRepository.getPublicStatus()
+    const now = Date.now()
+    if (publicStatusCache && publicStatusCache.expiresAt > now) {
+      res.json({ data: publicStatusCache.data })
+      return
+    }
+
+    publicStatusCachePromise ??= apiLogRepository.getPublicStatus().then((status) => {
+      publicStatusCache = {
+        data: status,
+        expiresAt: Date.now() + publicStatusCacheTtlMs,
+      }
+      publicStatusCachePromise = null
+      return status
+    }).catch((error: unknown) => {
+      publicStatusCachePromise = null
+      throw error
+    })
+
+    const status = await publicStatusCachePromise
     res.json({ data: status })
   }
 }

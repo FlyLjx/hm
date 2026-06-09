@@ -1,4 +1,5 @@
 import { SettingService } from '../settings/settingService.js'
+import { BarkService } from '../notifications/barkService.js'
 import { TaskService } from './taskService.js'
 
 const checkIntervalMs = 60 * 1000
@@ -13,6 +14,7 @@ function formatLogTime(date = new Date()) {
 export function startTaskTimeoutScheduler() {
   const taskService = new TaskService()
   const settingService = new SettingService()
+  const barkService = new BarkService()
   let running = false
   console.info(`[task-timeout] scheduler started at ${formatLogTime()}, interval=${Math.round(checkIntervalMs / 1000)}s`)
 
@@ -27,6 +29,15 @@ export function startTaskTimeoutScheduler() {
       const settings = await settingService.getSettings()
       const timeoutMinutes = Math.max(1, Math.floor(settings.taskTimeoutMinutes || 3))
       const canceledTasks = await taskService.cancelTimedOutRunningTasks(timeoutMinutes)
+      if (canceledTasks.length) {
+        void barkService.pushTaskTimeout({
+          count: canceledTasks.length,
+          timeoutMinutes,
+          taskIds: canceledTasks.map((task) => task.id),
+        }).catch((error) => {
+          console.warn('[bark:task-timeout-push-failed]', error instanceof Error ? error.message : String(error))
+        })
+      }
       console.info(
         `[task-timeout] checked at ${formatLogTime()}, timeout=${timeoutMinutes}m, canceled=${canceledTasks.length}, duration=${Date.now() - startedAt}ms`,
       )

@@ -46,6 +46,14 @@ export const updateSettingsSchema = z.object({
   emailFromName: z.string().max(80),
   emailFromAddress: z.string().email().or(z.literal('')),
   registerEmailVerification: z.boolean(),
+  barkEnabled: z.boolean(),
+  barkServerUrl: z.string().url().or(z.literal('')),
+  barkDeviceKey: z.string().max(500),
+  barkTitlePrefix: z.string().max(80),
+  barkSound: z.string().max(80),
+  barkNotifyGenerationFailure: z.boolean(),
+  barkNotifyTaskTimeout: z.boolean(),
+  barkNotifyProviderFailure: z.boolean(),
 })
 
 export const testEmailSchema = z.object({

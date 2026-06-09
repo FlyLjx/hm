@@ -44,6 +44,17 @@ export class ApiProviderRepository {
     return rows[0] ? toApiProvider(rows[0]) : null
   }
 
+  async findFirstActive() {
+    const [rows] = await db.query<ApiProviderRow[]>(
+      `SELECT *
+       FROM api_providers
+       WHERE status = 'active'
+       ORDER BY created_at DESC, id ASC
+       LIMIT 1`,
+    )
+    return rows[0] ? toApiProvider(rows[0]) : null
+  }
+
   async create(provider: ApiProvider) {
     await db.query(
       `INSERT INTO api_providers

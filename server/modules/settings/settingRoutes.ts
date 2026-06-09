@@ -14,3 +14,4 @@ settingRoutes.patch('/', asyncHandler(settingController.update.bind(settingContr
 settingRoutes.get('/account-pool', asyncHandler(settingController.getAccountPool.bind(settingController)))
 settingRoutes.patch('/account-pool', asyncHandler(settingController.updateAccountPool.bind(settingController)))
 settingRoutes.post('/test-email', asyncHandler(settingController.testEmail.bind(settingController)))
+settingRoutes.post('/test-bark', asyncHandler(settingController.testBark.bind(settingController)))

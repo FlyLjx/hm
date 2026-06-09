@@ -11,10 +11,12 @@ export const createModelSchema = z.object({
   cost2k: z.number().min(0).default(0),
   cost4k: z.number().min(0).default(0),
   markupPercent: z.number().min(0).max(10000).default(0),
+  priceChangePercent: z.number().min(-10000).max(10000).default(0),
   price1k: z.number().min(0).default(0),
   price2k: z.number().min(0).default(0),
   price4k: z.number().min(0).default(0),
   appendSizeToPrompt: z.boolean().default(false),
+  sortOrder: z.number().int().min(0).max(999999).default(100),
 })
 
 export const updateModelSchema = createModelSchema.partial().extend({
@@ -31,4 +33,11 @@ export const syncModelsSchema = z.object({
 
 export const deleteModelsSchema = z.object({
   ids: z.array(z.string().min(1).max(36)).min(1),
+})
+
+export const updateModelSortOrdersSchema = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1).max(36),
+    sortOrder: z.number().int().min(0).max(999999),
+  })).min(1).max(1000),
 })

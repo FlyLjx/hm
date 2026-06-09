@@ -14,10 +14,12 @@ type AiModelRow = RowDataPacket & {
   cost_2k: string | number
   cost_4k: string | number
   markup_percent: string | number
+  price_change_percent: string | number
   price_1k: string | number
   price_2k: string | number
   price_4k: string | number
   append_size_to_prompt: number | boolean
+  sort_order: string | number
   status: AiModelStatus
   created_at: Date
   updated_at: Date
@@ -36,10 +38,12 @@ function toAiModel(row: AiModelRow): AiModel {
     cost2k: Number(row.cost_2k),
     cost4k: Number(row.cost_4k),
     markupPercent: Number(row.markup_percent),
+    priceChangePercent: Number(row.price_change_percent),
     price1k: Number(row.price_1k),
     price2k: Number(row.price_2k),
     price4k: Number(row.price_4k),
     appendSizeToPrompt: Boolean(row.append_size_to_prompt),
+    sortOrder: Number(row.sort_order ?? 100),
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -54,6 +58,7 @@ export class ModelRepository {
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.capability = 'chat_image'
        ORDER BY
+        ai_models.sort_order ASC,
         api_providers.name ASC,
         ai_models.model_name ASC,
         ai_models.created_at DESC,
@@ -79,21 +84,23 @@ export class ModelRepository {
       `INSERT INTO ai_models
         (id, provider_id, model_name, display_name, capability,
          cost_1k, cost_2k, cost_4k, markup_percent,
-         price_1k, price_2k, price_4k, append_size_to_prompt, status)
+         price_change_percent, price_1k, price_2k, price_4k, append_size_to_prompt, sort_order, status)
        VALUES
         (:id, :providerId, :modelName, :displayName, :capability,
          :cost1k, :cost2k, :cost4k, :markupPercent,
-         :price1k, :price2k, :price4k, :appendSizeToPrompt, :status)
+         :priceChangePercent, :price1k, :price2k, :price4k, :appendSizeToPrompt, :sortOrder, :status)
        ON DUPLICATE KEY UPDATE
         display_name = VALUES(display_name),
         cost_1k = VALUES(cost_1k),
         cost_2k = VALUES(cost_2k),
         cost_4k = VALUES(cost_4k),
         markup_percent = VALUES(markup_percent),
+        price_change_percent = VALUES(price_change_percent),
         price_1k = VALUES(price_1k),
         price_2k = VALUES(price_2k),
         price_4k = VALUES(price_4k),
         append_size_to_prompt = VALUES(append_size_to_prompt),
+        sort_order = VALUES(sort_order),
         updated_at = CURRENT_TIMESTAMP`,
       model,
     )
@@ -134,6 +141,22 @@ export class ModelRepository {
     return rows[0] ? toAiModel(rows[0]) : null
   }
 
+  async findActiveByModelName(modelName: string, capability: AiModelCapability) {
+    const [rows] = await db.query<AiModelRow[]>(
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+       FROM ai_models
+       LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
+       WHERE ai_models.capability = :capability
+         AND ai_models.status = 'active'
+         AND api_providers.status = 'active'
+         AND ai_models.model_name = :modelName
+       ORDER BY ai_models.created_at DESC, ai_models.id ASC
+       LIMIT 1`,
+      { modelName, capability },
+    )
+    return rows[0] ? toAiModel(rows[0]) : null
+  }
+
   async findByProviderDisplayNameAndCapability(
     providerId: string,
     displayName: string,
@@ -166,10 +189,12 @@ export class ModelRepository {
       cost2k: 'cost_2k',
       cost4k: 'cost_4k',
       markupPercent: 'markup_percent',
+      priceChangePercent: 'price_change_percent',
       price1k: 'price_1k',
       price2k: 'price_2k',
       price4k: 'price_4k',
       appendSizeToPrompt: 'append_size_to_prompt',
+      sortOrder: 'sort_order',
       status: 'status',
     } as const
 
@@ -197,5 +222,15 @@ export class ModelRepository {
     const placeholders = ids.map(() => '?').join(', ')
     const [result] = await db.query(`DELETE FROM ai_models WHERE id IN (${placeholders})`, ids)
     return 'affectedRows' in result ? result.affectedRows : 0
+  }
+
+  async updateSortOrders(items: Array<{ id: string; sortOrder: number }>) {
+    await Promise.all(
+      items.map((item) => db.query(
+        'UPDATE ai_models SET sort_order = :sortOrder WHERE id = :id',
+        { id: item.id, sortOrder: item.sortOrder },
+      )),
+    )
+    return { updatedCount: items.length }
   }
 }

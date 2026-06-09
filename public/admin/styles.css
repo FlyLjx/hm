@@ -411,6 +411,144 @@ a {
   line-height: 1;
 }
 
+.cost-summary-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.cost-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.cost-card::after {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(22, 119, 255, .08);
+  content: "";
+}
+
+.cost-card.tone-green::after,
+.cost-card.tone-positive::after {
+  background: rgba(34, 197, 94, .12);
+}
+
+.cost-card.tone-orange::after {
+  background: rgba(245, 158, 11, .14);
+}
+
+.cost-card.tone-negative::after {
+  background: rgba(239, 68, 68, .12);
+}
+
+.cost-card.tone-slate::after,
+.cost-card.tone-neutral::after {
+  background: rgba(100, 116, 139, .10);
+}
+
+.positive {
+  color: #16a34a;
+  font-weight: 800;
+}
+
+.negative {
+  color: #dc2626;
+  font-weight: 800;
+}
+
+.neutral {
+  color: #64748b;
+}
+
+.cost-trend-list {
+  display: grid;
+  gap: 10px;
+}
+
+.cost-trend-row {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr) 112px;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.cost-trend-day {
+  color: #334155;
+  font-weight: 800;
+}
+
+.cost-trend-bars {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cost-trend-bar {
+  position: relative;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f1f5f9;
+}
+
+.cost-trend-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+}
+
+.cost-trend-bar em {
+  position: relative;
+  z-index: 1;
+  display: block;
+  padding: 0 8px;
+  color: #172033;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 20px;
+}
+
+.cost-trend-bar.revenue span {
+  background: rgba(34, 197, 94, .28);
+}
+
+.cost-trend-bar.cost span {
+  background: rgba(245, 158, 11, .30);
+}
+
+.cost-trend-bar.cash span {
+  background: rgba(22, 119, 255, .22);
+}
+
+.cost-trend-profit {
+  text-align: right;
+  font-size: 15px;
+}
+
+.cost-trend-profit small {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.amount-positive {
+  color: #16a34a;
+}
+
+.amount-negative {
+  color: #dc2626;
+}
+
 .dashboard-hero-card,
 .dashboard-section-card,
 .dashboard-stat-card {
@@ -684,6 +822,25 @@ a {
 .cell-mono {
   font-family: Consolas, Monaco, "Courier New", monospace;
   font-size: 12px;
+}
+
+.cell-stack {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cell-stack strong,
+.cell-stack small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-stack small {
+  color: var(--admin-muted);
 }
 
 .cell-long-text {
@@ -1400,6 +1557,19 @@ a {
 
   .summary-card b {
     font-size: 21px;
+  }
+
+  .cost-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cost-trend-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .cost-trend-profit {
+    text-align: left;
   }
 
   .filter-row {

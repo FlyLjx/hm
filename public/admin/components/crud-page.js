@@ -106,6 +106,7 @@ export const CrudPage = {
     defaultFilters: Object,
     filters: Array,
     readonly: Boolean,
+    actions: Array,
   },
   setup(props) {
     const rows = ref([])
@@ -134,6 +135,7 @@ export const CrudPage = {
     const canUpdate = computed(() => Boolean(props.update))
     const canDelete = computed(() => Boolean(props.delete))
     const canMutate = computed(() => !props.readonly && (canUpdate.value || canDelete.value))
+    const extraActions = computed(() => props.actions || [])
     const tableColumns = computed(() => {
       const baseColumns = props.columns.map((column, index) => ({
         title: column.label,
@@ -235,9 +237,21 @@ export const CrudPage = {
       return column?.source?.format === 'read-stats'
     }
 
+    function isPriceChangeColumn(column) {
+      return column?.source?.format === 'price-change'
+    }
+
     function statusCell(record, column) {
       const source = column?.source || {}
       return statusItem(source.map || 'common', source.render ? source.render(record) : read(record, source.key))
+    }
+
+    function priceChangeCell(record, column) {
+      const source = column?.source || {}
+      const value = toNumber(source.render ? source.render(record) : read(record, source.key), 0)
+      if (value > 0) return { label: `上涨 ${amount(value)}%`, color: 'red' }
+      if (value < 0) return { label: `下降 ${amount(Math.abs(value))}%`, color: 'green' }
+      return { label: '持平', color: 'default' }
     }
 
     function fieldPreviewHtml(field) {
@@ -382,9 +396,12 @@ export const CrudPage = {
       canCreate,
       canUpdate,
       canDelete,
+      extraActions,
       isStatusColumn,
       isReadStatsColumn,
+      isPriceChangeColumn,
       statusCell,
+      priceChangeCell,
       fieldPreviewHtml,
       handleTextareaTab,
       insertMarkdown,
@@ -404,6 +421,10 @@ export const CrudPage = {
           </div>
           <div class="toolbar">
             <a-button :loading="loading" @click="load">刷新</a-button>
+            <a-button v-for="action in extraActions" :key="action.key || action.label" :type="action.type || 'default'" @click="action.onClick?.({ rows, load })">
+              <i v-if="action.icon" :class="['ti', action.icon]"></i>
+              {{ action.label }}
+            </a-button>
             <a-button v-if="canCreate" type="primary" @click="openCreate">新增{{ singular || '' }}</a-button>
           </div>
         </div>
@@ -444,6 +465,11 @@ export const CrudPage = {
                 <a-progress :percent="record.readRate || 0" size="small" :show-info="false" />
                 <div class="read-stat-sub">未读 {{ record.unreadCount || 0 }}</div>
               </div>
+            </template>
+            <template v-else-if="isPriceChangeColumn(column)">
+              <a-tag :color="priceChangeCell(record, column).color">
+                {{ priceChangeCell(record, column).label }}
+              </a-tag>
             </template>
             <template v-else-if="column.source.copy">
               <button class="copy-cell" type="button" title="点击复制" @click.stop="copyCell(record, column)">

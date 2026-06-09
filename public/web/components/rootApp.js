@@ -16,6 +16,7 @@ import { PlazaPage } from '../pages/plaza.js'
 import { ProfilePage } from '../pages/profile.js'
 import { ReversePromptPage } from '../pages/reversePrompt.js'
 import { StatusPage } from '../pages/status.js'
+import { TextChatPage } from '../pages/textChat.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
 
@@ -29,6 +30,7 @@ export const RootApp = {
     ProfilePage,
     ReversePromptPage,
     StatusPage,
+    TextChatPage,
   },
   setup() {
     const activePage = ref(pageFromHash())
@@ -67,6 +69,7 @@ export const RootApp = {
     const navItems = [
       { id: 'home', label: '首页', icon: 'ti-home' },
       { id: 'chat', label: '对话生图', icon: 'ti-message-2' },
+      { id: 'text-chat', label: '对话聊天', icon: 'ti-message-chatbot' },
       { id: 'reverse', label: '提示词反推', icon: 'ti-scan-eye' },
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
       { id: 'history', label: '作品库', icon: 'ti-photo-heart' },
@@ -81,7 +84,7 @@ export const RootApp = {
     const activeAnnouncement = computed(() => popupAnnouncements.value[0] || null)
     const activeTopbarAnnouncement = computed(() => topbarAnnouncements.value[0] || null)
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
-    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'reverse', 'plaza', 'history'].includes(item.id)))
+    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
     const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
     const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
@@ -629,7 +632,7 @@ export const RootApp = {
     })
 
     watch(() => activePage.value, (page) => {
-      document.body.classList.toggle('chat-page-active', page === 'chat')
+      document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
     }, { immediate: true })
     watch(() => currentUser.value?.id, loadAnnouncements)
     watch(rechargeOpen, (open) => {
@@ -837,9 +840,10 @@ export const RootApp = {
           </div>
         </header>
 
-        <main :class="['web-content', { 'chat-content': activePage === 'chat' }]">
+        <main :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
           <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
           <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
+          <text-chat-page v-if="activePage === 'text-chat'" :credit-name="creditName" :current-user="currentUser" @login="loginOpen = true" @user-updated="updateCurrentUser" />
           <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
           <history-page v-if="activePage === 'history'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
@@ -855,7 +859,7 @@ export const RootApp = {
         </nav>
       </section>
 
-      <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' }]" type="button" @click="supportOpen = true">
+      <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' || activePage === 'text-chat' }]" type="button" @click="supportOpen = true">
         <i class="ti ti-headset"></i>
         <span>联系客服</span>
       </button>

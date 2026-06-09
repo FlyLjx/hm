@@ -4,6 +4,7 @@ import {
   createModelSchema,
   deleteModelsSchema,
   syncModelsSchema,
+  updateModelSortOrdersSchema,
   updateModelSchema,
 } from './modelSchemas.js'
 import { ModelService } from './modelService.js'
@@ -50,6 +51,12 @@ export class ModelController {
   async deleteMany(req: Request, res: Response) {
     const input = deleteModelsSchema.parse(req.body)
     const result = await modelService.deleteModels(input.ids)
+    res.json({ data: result })
+  }
+
+  async updateSortOrders(req: Request, res: Response) {
+    const input = updateModelSortOrdersSchema.parse(req.body)
+    const result = await modelService.updateModelSortOrders(input.items)
     res.json({ data: result })
   }
 }

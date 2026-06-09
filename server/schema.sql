@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   quantity INT NOT NULL DEFAULT 1,
   user_ip VARCHAR(64) NOT NULL,
   cost_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
+  model_cost_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
   remaining_credits DECIMAL(12,4) NOT NULL DEFAULT 0,
   duration_seconds DECIMAL(10,3) NOT NULL DEFAULT 0,
   status ENUM('queued', 'processing', 'pending', 'success', 'failed', 'canceled') NOT NULL DEFAULT 'queued',
@@ -110,10 +111,12 @@ CREATE TABLE IF NOT EXISTS ai_models (
   cost_2k DECIMAL(10,4) NOT NULL DEFAULT 0,
   cost_4k DECIMAL(10,4) NOT NULL DEFAULT 0,
   markup_percent DECIMAL(8,2) NOT NULL DEFAULT 0,
+  price_change_percent DECIMAL(8,2) NOT NULL DEFAULT 0,
   price_1k DECIMAL(10,4) NOT NULL DEFAULT 0,
   price_2k DECIMAL(10,4) NOT NULL DEFAULT 0,
   price_4k DECIMAL(10,4) NOT NULL DEFAULT 0,
   append_size_to_prompt TINYINT(1) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 100,
   status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -279,6 +282,8 @@ CREATE TABLE IF NOT EXISTS api_call_logs (
   INDEX idx_api_call_logs_user_created (user_id, created_at),
   INDEX idx_api_call_logs_api_key_created (api_key_id, created_at),
   INDEX idx_api_call_logs_provider_created (provider_id, created_at),
+  INDEX idx_api_call_logs_monitor_created (direction, phase, created_at),
+  INDEX idx_api_call_logs_monitor_provider_created (direction, phase, provider_id, created_at, id),
   INDEX idx_api_call_logs_status_created (status, created_at),
   INDEX idx_api_call_logs_task_id (task_id)
 );
@@ -322,4 +327,12 @@ VALUES
 法轮功
 政治宣传
 推翻政府'),
-  ('promptModerationRejectMessage', '提示词包含不支持生成的敏感内容，请修改后再试。');
+  ('promptModerationRejectMessage', '提示词包含不支持生成的敏感内容，请修改后再试。'),
+  ('barkEnabled', 'false'),
+  ('barkServerUrl', 'https://api.day.app'),
+  ('barkDeviceKey', ''),
+  ('barkTitlePrefix', 'AIπ'),
+  ('barkSound', ''),
+  ('barkNotifyGenerationFailure', 'true'),
+  ('barkNotifyTaskTimeout', 'true'),
+  ('barkNotifyProviderFailure', 'true');

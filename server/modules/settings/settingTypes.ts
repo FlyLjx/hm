@@ -47,4 +47,12 @@ export type SystemSettings = {
   accountPoolEndpoint: string
   accountPoolApiKey: string
   accountPoolAuthHeader: string
+  barkEnabled: boolean
+  barkServerUrl: string
+  barkDeviceKey: string
+  barkTitlePrefix: string
+  barkSound: string
+  barkNotifyGenerationFailure: boolean
+  barkNotifyTaskTimeout: boolean
+  barkNotifyProviderFailure: boolean
 }

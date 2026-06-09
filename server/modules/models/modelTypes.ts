@@ -12,10 +12,12 @@ export type AiModel = {
   cost2k: number
   cost4k: number
   markupPercent: number
+  priceChangePercent: number
   price1k: number
   price2k: number
   price4k: number
   appendSizeToPrompt: boolean
+  sortOrder: number
   status: AiModelStatus
   createdAt: string
   updatedAt: string
@@ -31,4 +33,5 @@ export type AiModelVariant = {
   price1k: number
   price2k: number
   price4k: number
+  sortOrder: number
 }

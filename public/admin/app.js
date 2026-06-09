@@ -6,6 +6,8 @@ import { ModelsPage } from './pages/models.js'
 import { TasksPage } from './pages/tasks.js'
 import { ApiKeysPage } from './pages/api-keys.js'
 import { ApiLogsPage } from './pages/api-logs.js'
+import { CreditLogsPage } from './pages/credit-logs.js'
+import { CostStatsPage } from './pages/cost-stats.js'
 import { FinancePage } from './pages/finance.js'
 import { OperationsPage } from './pages/operations.js'
 import { SettingsPage } from './pages/settings.js'
@@ -34,6 +36,8 @@ const menuGroups = [
     { id: 'promotions', label: '促销管理', desc: '活动广告', icon: 'ti-discount-2', component: OperationsPage, props: { mode: 'promotions' } },
   ] },
   { title: '运营财务', items: [
+    { id: 'cost-stats', label: '成本统计', desc: '成本与利润', icon: 'ti-chart-bar', component: CostStatsPage },
+    { id: 'credit-logs', label: '积分流水', desc: '余额变动', icon: 'ti-coins', component: CreditLogsPage },
     { id: 'orders', label: '订单列表', desc: '支付订单', icon: 'ti-receipt', component: FinancePage, props: { mode: 'orders' } },
     { id: 'redeem-codes', label: '卡密兑换', desc: '兑换码', icon: 'ti-ticket', component: FinancePage, props: { mode: 'redeem' } },
     { id: 'subscriptions', label: '订阅套餐', desc: '会员权益', icon: 'ti-crown', component: FinancePage, props: { mode: 'subscriptions' } },

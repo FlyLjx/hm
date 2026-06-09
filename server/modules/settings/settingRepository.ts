@@ -85,6 +85,14 @@ const defaultSettings: SystemSettings = {
   accountPoolEndpoint: 'https://free-api.yccc.me/api/accounts',
   accountPoolApiKey: '',
   accountPoolAuthHeader: 'Authorization',
+  barkEnabled: false,
+  barkServerUrl: 'https://api.day.app',
+  barkDeviceKey: '',
+  barkTitlePrefix: 'AIπ',
+  barkSound: '',
+  barkNotifyGenerationFailure: true,
+  barkNotifyTaskTimeout: true,
+  barkNotifyProviderFailure: true,
 }
 
 function parseSettingValue<Key extends keyof SystemSettings>(
@@ -101,7 +109,11 @@ function parseSettingValue<Key extends keyof SystemSettings>(
     key === 'checkinEnabled' ||
     key === 'inviteEnabled' ||
     key === 'streamGenerationEnabled' ||
-    key === 'promptModerationEnabled'
+    key === 'promptModerationEnabled' ||
+    key === 'barkEnabled' ||
+    key === 'barkNotifyGenerationFailure' ||
+    key === 'barkNotifyTaskTimeout' ||
+    key === 'barkNotifyProviderFailure'
   ) {
     return (value === 'true' || value === '1') as SystemSettings[Key]
   }

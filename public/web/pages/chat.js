@@ -22,6 +22,11 @@ const maxReferenceImageBytes = 5 * 1024 * 1024
 const maskBrushColor = 'rgba(22, 163, 91, 0.64)'
 const maskPreviewColor = '#16a35b'
 const downloadTokenChars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+const outputFormatOptions = [
+  { value: 'jpeg', label: 'JPG' },
+  { value: 'png', label: 'PNG' },
+  { value: 'webp', label: 'WEBP' },
+]
 const generatingStages = [
   {
     key: 'queued',
@@ -99,6 +104,7 @@ export const ChatPage = {
     const ratio = ref('1:1')
     const sizeTier = ref('2k')
     const quantity = ref(1)
+    const outputFormat = ref('jpeg')
     const transparentBackground = ref(false)
     const prompt = ref('')
     const messages = ref([])
@@ -128,6 +134,14 @@ export const ChatPage = {
     const streamGenerationEnabled = computed(() => {
       const value = props.settings?.streamGenerationEnabled
       return value === true || value === 'true' || value === 1 || value === '1'
+    })
+
+    watch(transparentBackground, (enabled) => {
+      if (enabled) outputFormat.value = 'png'
+    })
+
+    watch(outputFormat, (format) => {
+      transparentBackground.value = format === 'png'
     })
 
     function autoSessionTitle(no) {
@@ -452,6 +466,13 @@ export const ChatPage = {
       const price = modelUnitOriginalPrice(model)
       if (!modelHasSubscriptionDiscount(model)) return price
       return Number((price * (1 - subscriptionDiscountPercent.value / 100)).toFixed(4))
+    }
+
+    function modelPriceChange(model) {
+      const value = Number(model?.priceChangePercent || 0)
+      if (value > 0) return { type: 'up', text: `涨 ${formatAmount(value)}%` }
+      if (value < 0) return { type: 'down', text: `降 ${formatAmount(Math.abs(value))}%` }
+      return { type: 'flat', text: '持平' }
     }
 
     function ratioIconStyle(value) {
@@ -809,8 +830,8 @@ export const ChatPage = {
           prompt: userMessage.text,
           sizeTier: sizeTier.value,
           size: outputSize.value,
-          outputFormat: 'png',
-          transparentBackground: transparentBackground.value,
+          outputFormat: outputFormat.value,
+          transparentBackground: transparentBackground.value || outputFormat.value === 'png',
           quantity: quantity.value,
           referenceImageUrl: submittedReferenceImages[0]?.url,
           referenceImageUrls: submittedReferenceImages.map((image) => image.url).filter(Boolean),
@@ -1205,6 +1226,7 @@ export const ChatPage = {
       ratio,
       sizeTier,
       quantity,
+      outputFormat,
       transparentBackground,
       prompt,
       messages,
@@ -1225,6 +1247,7 @@ export const ChatPage = {
       availableRatios,
       availableSizeTiers,
       quantityOptions,
+      outputFormatOptions,
       outputSize,
       estimatedCost,
       originalEstimatedCost,
@@ -1233,6 +1256,7 @@ export const ChatPage = {
       modelHasSubscriptionDiscount,
       modelUnitOriginalPrice,
       modelUnitPrice,
+      modelPriceChange,
       getModelLabel,
       getModelVariantPrice,
       isGeneratingStatus,
@@ -1422,6 +1446,7 @@ export const ChatPage = {
                   <span class="composer-option model-option">
                     <i class="ti ti-robot composer-select-icon"></i>
                     <span class="model-option-main">{{ getModelLabel(model) }}</span>
+                    <span class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</span>
                     <span class="model-option-price">
                       <template v-if="modelHasSubscriptionDiscount(model)">
                         <del>{{ formatAmount(modelUnitOriginalPrice(model)) }}</del>
@@ -1485,12 +1510,29 @@ export const ChatPage = {
                 </el-option>
               </el-select>
             </div>
+            <div class="composer-field composer-format">
+              <span>格式</span>
+              <el-select v-model="outputFormat" popper-class="composer-select-popper">
+                <template #label="{ label }">
+                  <span class="composer-selected">
+                    <i class="ti ti-file-type-png composer-select-icon"></i>
+                    {{ label }}
+                  </span>
+                </template>
+                <el-option v-for="item in outputFormatOptions" :key="item.value" :label="item.label" :value="item.value">
+                  <span class="composer-option">
+                    <i class="ti ti-file-type-png composer-select-icon"></i>
+                    <span>{{ item.label }}</span>
+                  </span>
+                </el-option>
+              </el-select>
+            </div>
             <div class="composer-field composer-transparent">
               <span>透明</span>
               <label class="transparent-toggle">
                 <i class="ti ti-layers-intersect"></i>
                 <strong>底图</strong>
-                <el-switch v-model="transparentBackground" active-text="开" inactive-text="关" />
+                <el-switch v-model="transparentBackground" :disabled="outputFormat === 'png'" active-text="开" inactive-text="关" />
               </label>
             </div>
             <span class="cost-chip">
