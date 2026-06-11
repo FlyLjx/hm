@@ -19,6 +19,15 @@ export class OpenAiCompatController {
     }
   }
 
+  async balance(req: Request, res: Response) {
+    try {
+      const auth = await openAiCompatService.authenticate(req)
+      res.json(openAiCompatService.getBalance(auth))
+    } catch (error) {
+      sendOpenAiError(res, error)
+    }
+  }
+
   async imageGenerations(req: Request, res: Response) {
     try {
       const auth = await openAiCompatService.authenticate(req)

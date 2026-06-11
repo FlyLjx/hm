@@ -14,6 +14,7 @@ type GenerationTaskRow = RowDataPacket & {
   model_display_name?: string
   provider_id: string
   provider_name?: string
+  provider_base_url?: string | null
   capability: AiModelCapability
   prompt: string
   reference_image_url?: string | null
@@ -158,6 +159,20 @@ function filterUnreachableLocalUrls(urls: string[]) {
   })
 }
 
+function rewriteLocalUrlWithProvider(url: string, providerBaseUrl?: string | null) {
+  if (!providerBaseUrl || url.startsWith('data:image/')) return url
+  try {
+    const parsed = new URL(url)
+    if (!['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname)) return url
+    const providerUrl = new URL(providerBaseUrl)
+    parsed.protocol = providerUrl.protocol
+    parsed.host = providerUrl.host
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
 function extractUrlsFromString(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return []
@@ -199,6 +214,21 @@ function getTaskThumbnailUrl(taskId: string, index: number) {
   return `/api/tasks/${taskId}/thumbnails/${index}`
 }
 
+function createMaterializedResultJson(urls: string[], previousResultJson: unknown) {
+  return {
+    ...(previousResultJson && typeof previousResultJson === 'object' && !Array.isArray(previousResultJson)
+      ? previousResultJson as Record<string, unknown>
+      : {}),
+    data: urls.map((url) => ({ url })),
+    materialized: true,
+    materializedAt: new Date().toISOString(),
+  }
+}
+
+function hasTaskResultImages(task: GenerationTask) {
+  return Boolean(task.resultUrls?.length || task.resultUrl)
+}
+
 const taskListSelect = `
   generation_tasks.id,
   generation_tasks.user_id,
@@ -232,6 +262,7 @@ const taskListSelect = `
   ai_models.model_name,
   ai_models.display_name AS model_display_name,
   api_providers.name AS provider_name,
+  api_providers.base_url AS provider_base_url,
   subscription_plans.name AS user_subscription_plan_name,
   user_subscriptions.expires_at AS user_subscription_expires_at
 `
@@ -247,10 +278,13 @@ const taskListJoins = `
   LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
 `
 
+const taskHasImageResultSql = "(generation_tasks.status = 'success' OR generation_tasks.result_json IS NOT NULL)"
+
 function toTask(row: GenerationTaskRow): GenerationTask {
   const resultJson = parseJson(row.result_json)
-  const resultUrls = uniqueUrls(getDisplayResultUrls(resultJson))
+  const resultUrls = uniqueUrls(getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, row.provider_base_url)))
   const imageCount = resultUrls.length
+  const hasResultImages = imageCount > 0
   const imageUrls = Array.from({ length: imageCount }, (_, index) => getTaskImageUrl(row.id, index))
   const thumbnailUrls = Array.from({ length: imageCount }, (_, index) => getTaskThumbnailUrl(row.id, index))
 
@@ -277,8 +311,8 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     modelCostCredits: Number(row.model_cost_credits ?? 0),
     remainingCredits: Number(row.remaining_credits),
     durationSeconds: Number(row.duration_seconds),
-    status: row.status,
-    errorMessage: row.error_message,
+    status: hasResultImages ? 'success' : row.status,
+    errorMessage: hasResultImages ? null : row.error_message,
     resultJson: undefined,
     resultUrl: imageUrls[0] ?? null,
     resultUrls: imageUrls,
@@ -375,7 +409,7 @@ export class TaskRepository {
     const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 24))
     const offset = (page - 1) * pageSize
     const where = [
-      "generation_tasks.status = 'success'",
+      taskHasImageResultSql,
     ]
     const params: Record<string, string | number> = { pageSize, offset }
 
@@ -470,8 +504,9 @@ export class TaskRepository {
        LIMIT :pageSize OFFSET :offset`,
       { userId, pageSize, offset },
     )
+    const items = rows.map(toTask).filter(hasTaskResultImages)
     return {
-      items: rows.map(toTask),
+      items,
       total: Number(countRows[0]?.total ?? 0),
       page,
       pageSize,
@@ -485,7 +520,7 @@ export class TaskRepository {
     const where = [
       'generation_tasks.user_id = :userId',
       'generation_tasks.favorite_enabled = 1',
-      "generation_tasks.status = 'success'",
+      taskHasImageResultSql,
     ]
     const params: Record<string, string | number> = { userId, pageSize, offset }
     if (input?.keyword?.trim()) {
@@ -523,7 +558,7 @@ export class TaskRepository {
     const offset = (page - 1) * pageSize
     const where = [
       'generation_tasks.user_id = :userId',
-      "generation_tasks.status = 'success'",
+      taskHasImageResultSql,
     ]
     const params: Record<string, string | number> = { userId, pageSize, offset }
     if (input?.keyword?.trim()) {
@@ -697,14 +732,64 @@ export class TaskRepository {
 
   async findImageUrlByIndex(id: string, index: number) {
     const [rows] = await db.query<GenerationTaskRow[]>(
-      `SELECT *
+      `SELECT generation_tasks.*, api_providers.base_url AS provider_base_url
        FROM generation_tasks
-       WHERE id = :id
+       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       WHERE generation_tasks.id = :id
        LIMIT 1`,
       { id },
     )
     const resultJson = parseJson(rows[0]?.result_json)
-    return getDisplayResultUrls(resultJson)[index] ?? null
+    const urls = getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, rows[0]?.provider_base_url))
+    return urls[index] ?? null
+  }
+
+  async materializeImageUrlByIndex(id: string, index: number, dataUrl: string) {
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT generation_tasks.*, api_providers.base_url AS provider_base_url
+       FROM generation_tasks
+       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       WHERE generation_tasks.id = :id
+       LIMIT 1`,
+      { id },
+    )
+    if (!rows[0]) return false
+    const resultJson = parseJson(rows[0].result_json)
+    const urls = getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, rows[0]?.provider_base_url))
+    if (!urls[index]) return false
+    urls[index] = dataUrl
+    const nextResultJson = createMaterializedResultJson(urls, resultJson)
+    await db.query(
+      `UPDATE generation_tasks
+       SET result_json = :resultJson,
+           status = 'success',
+           error_message = NULL
+       WHERE id = :id`,
+      { id, resultJson: JSON.stringify(nextResultJson) },
+    )
+    return true
+  }
+
+  async findTasksWithRemoteResultImages(limit = 100) {
+    const pageSize = Math.min(1000, Math.max(1, limit))
+    const [rows] = await db.query<GenerationTaskRow[]>(
+      `SELECT generation_tasks.*, api_providers.base_url AS provider_base_url
+       FROM generation_tasks
+       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+       WHERE generation_tasks.result_json LIKE '%http%'
+       ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+       LIMIT :pageSize`,
+      { pageSize },
+    )
+
+    return rows.map((row) => {
+      const resultJson = parseJson(row.result_json)
+      const urls = getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, row.provider_base_url))
+      return {
+        id: row.id,
+        urls,
+      }
+    }).filter((item) => item.urls.some((url) => /^https?:\/\//i.test(url)))
   }
 
   async estimateDuration(input: {

@@ -19,8 +19,9 @@ const generatingStatuses = ['waiting', 'queued', 'pending', 'running', 'processi
 const orphanWaitingExpireMs = 3 * 60 * 1000
 const maxReferenceImages = 5
 const maxReferenceImageBytes = 5 * 1024 * 1024
-const maskBrushColor = 'rgba(22, 163, 91, 0.64)'
+const maskBrushRgb = '22, 163, 91'
 const maskPreviewColor = '#16a35b'
+const nonPassiveTouchListener = { passive: false }
 const downloadTokenChars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
 const outputFormatOptions = [
   { value: 'jpeg', label: 'JPG' },
@@ -114,9 +115,14 @@ export const ChatPage = {
     const fileInput = ref(null)
     const chatThread = ref(null)
     const maskEditorOpen = ref(false)
-    const maskEditor = ref({ sourceUrl: '', prompt: '', brushSize: 42, drawing: false, loading: false, lastPoint: null })
+    const maskEditor = ref({ sourceUrl: '', prompt: '', brushSize: 42, brushOpacity: 64, drawing: false, loading: false, lastPoint: null })
     const maskCanvas = ref(null)
     const maskImageCanvas = ref(null)
+    const perspectiveEditorOpen = ref(false)
+    const perspectiveEditor = ref({ sourceUrl: '', sourceName: '', sourceIndex: -1, points: [], draggingIndex: null, loading: false })
+    const perspectiveCanvas = ref(null)
+    const perspectiveOverlayCanvas = ref(null)
+    let perspectiveDragListening = false
     const unsubscribers = new Map()
     const storageKey = computed(() => props.currentUser?.id ? `${chatStoragePrefix}:${props.currentUser.id}` : '')
     const chatModels = computed(() => getActiveModelsByCapability(models.value))
@@ -492,11 +498,17 @@ export const ChatPage = {
 
     function taskMessage(task, sourceMessages = messages.value) {
       const isSuccess = task.status === 'success'
-      const images = isSuccess ? taskImages(task) : []
+      const taskResultImages = taskImages(task)
       const previous = sourceMessages.find((item) => item.taskId === task.id || item.id === `task-${task.id}`)
+      const preservePreviousImages = previous?.images?.length && task.status === 'failed' && taskResultImages.length === 0
+      const images = preservePreviousImages
+        ? previous.images
+        : isSuccess || taskResultImages.length
+          ? taskResultImages
+          : []
       const hiddenImageIndexes = (previous?.hiddenImageIndexes || []).filter((index) => index >= 0 && index < images.length)
       const activeImageIndex = Math.min(previous?.activeImageIndex || 0, Math.max(0, images.length - 1))
-      const effectiveStatus = task.status
+      const effectiveStatus = preservePreviousImages ? 'success' : task.status
       const statusText = effectiveStatus === 'success'
         ? '生成完毕！'
         : effectiveStatus === 'failed'
@@ -514,9 +526,11 @@ export const ChatPage = {
         text: statusText,
         taskId: task.id,
         status: effectiveStatus,
-        errorMessage: task.errorMessage,
+        errorMessage: preservePreviousImages ? '' : task.errorMessage,
         images,
-        thumbnails: task.thumbnailUrls?.length ? task.thumbnailUrls : task.thumbnailUrl ? [task.thumbnailUrl] : images,
+        thumbnails: preservePreviousImages
+          ? previous.thumbnails?.length ? previous.thumbnails : images
+          : task.thumbnailUrls?.length ? task.thumbnailUrls : task.thumbnailUrl ? [task.thumbnailUrl] : images,
         activeImageIndex,
         hiddenImageIndexes,
         downloadTokens: createDownloadTokens(images.length, previous?.downloadTokens),
@@ -907,7 +921,7 @@ export const ChatPage = {
 
     async function openMaskEditor(url) {
       const sourceUrl = resolveOriginalImageUrl(url)
-      maskEditor.value = { sourceUrl, prompt: prompt.value || '', brushSize: 42, drawing: false, loading: false, lastPoint: null }
+      maskEditor.value = { sourceUrl, prompt: prompt.value || '', brushSize: 42, brushOpacity: 64, drawing: false, loading: false, lastPoint: null }
       maskEditorOpen.value = true
       await nextTick()
       await setupMaskCanvas(sourceUrl)
@@ -954,10 +968,11 @@ export const ChatPage = {
       if (!canvas) return
       const context = canvas.getContext('2d')
       const brushSize = Number(maskEditor.value.brushSize || 42)
+      const brushOpacity = Math.max(5, Math.min(100, Number(maskEditor.value.brushOpacity || 64))) / 100
       const lastPoint = maskEditor.value.lastPoint
       context.globalCompositeOperation = 'source-over'
-      context.strokeStyle = maskBrushColor
-      context.fillStyle = maskBrushColor
+      context.strokeStyle = `rgba(${maskBrushRgb}, ${brushOpacity})`
+      context.fillStyle = `rgba(${maskBrushRgb}, ${brushOpacity})`
       context.lineWidth = brushSize
       context.lineCap = 'round'
       context.lineJoin = 'round'
@@ -1018,10 +1033,12 @@ export const ChatPage = {
       overlay.width = output.width
       overlay.height = output.height
       const overlayContext = overlay.getContext('2d')
-      context.globalAlpha = 0.72
+      const brushOpacity = Math.max(5, Math.min(100, Number(maskEditor.value.brushOpacity || 64))) / 100
+      context.globalAlpha = Math.min(0.86, Math.max(0.18, brushOpacity))
       context.fillStyle = maskPreviewColor
       context.globalCompositeOperation = 'source-over'
       context.fillRect(0, 0, output.width, output.height)
+      context.globalAlpha = 1
       context.globalCompositeOperation = 'destination-in'
       context.drawImage(drawCanvas, 0, 0)
       overlayContext.drawImage(sourceCanvas, 0, 0)
@@ -1085,13 +1102,17 @@ export const ChatPage = {
       return canvas.toDataURL(type, quality)
     }
 
-    async function compressImageFile(file) {
-      const initialUrl = await new Promise((resolve, reject) => {
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve(String(reader.result))
         reader.onerror = () => reject(new Error('参考图读取失败'))
         reader.readAsDataURL(file)
       })
+    }
+
+    async function compressImageFile(file) {
+      const initialUrl = await readFileAsDataUrl(file)
       if (dataUrlBytes(initialUrl) <= maxReferenceImageBytes) {
         return { url: initialUrl, compressed: false }
       }
@@ -1125,6 +1146,29 @@ export const ChatPage = {
       return { url: output, compressed: true }
     }
 
+    async function addReferenceFiles(files, source = 'upload') {
+      const imageFiles = Array.from(files || []).filter((file) => file.type?.startsWith('image/'))
+      if (!imageFiles.length) return 0
+      const remaining = maxReferenceImages - referenceImages.value.length
+      if (remaining <= 0) {
+        ElementPlus.ElMessage.warning(`最多只能添加 ${maxReferenceImages} 张参考图`)
+        return 0
+      }
+      const selectedFiles = imageFiles.slice(0, remaining)
+      if (imageFiles.length > remaining) ElementPlus.ElMessage.warning(`最多只能添加 ${maxReferenceImages} 张参考图，已自动忽略多余图片`)
+      const addedImages = []
+      let compressedCount = 0
+      for (const file of selectedFiles) {
+        const compressed = await compressImageFile(file)
+        if (compressed.compressed) compressedCount += 1
+        addedImages.push({ url: compressed.url, name: file.name || '粘贴图片', source })
+      }
+      addReferenceImages(addedImages)
+      syncActiveSession()
+      if (compressedCount > 0) ElementPlus.ElMessage.success(`已自动压缩 ${compressedCount} 张参考图到 5MB 以内`)
+      return addedImages.length
+    }
+
     function addReferenceImages(images) {
       const nextImages = [...referenceImages.value]
       let skipped = 0
@@ -1143,6 +1187,330 @@ export const ChatPage = {
     function removeReferenceImage(index) {
       referenceImages.value = referenceImages.value.filter((_, itemIndex) => itemIndex !== index)
       syncActiveSession()
+    }
+
+    async function handlePasteReferenceImage(event) {
+      const target = event.target
+      const isTypingTarget = target?.closest?.('textarea, input, [contenteditable="true"]')
+      const files = Array.from(event.clipboardData?.files || []).filter((file) => file.type?.startsWith('image/'))
+      const itemFiles = Array.from(event.clipboardData?.items || [])
+        .filter((item) => item.kind === 'file' && item.type?.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter(Boolean)
+      const images = files.length ? files : itemFiles
+      if (!images.length) return
+      event.preventDefault()
+      try {
+        const addedCount = await addReferenceFiles(images.map((file, index) => {
+          if (file.name) return file
+          return new File([file], `粘贴参考图-${Date.now()}-${index + 1}.png`, { type: file.type || 'image/png' })
+        }), 'upload')
+        if (addedCount > 0) ElementPlus.ElMessage.success(isTypingTarget ? '已从剪贴板添加参考图' : `已粘贴 ${addedCount} 张参考图`)
+      } catch (error) {
+        ElementPlus.ElMessage.error(error.message || '粘贴参考图失败')
+      }
+    }
+
+    function distanceBetweenPoints(a, b) {
+      return Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0))
+    }
+
+    function defaultPerspectivePoints(width, height) {
+      const paddingX = Math.max(24, width * 0.08)
+      const paddingY = Math.max(24, height * 0.08)
+      return [
+        { x: paddingX, y: paddingY },
+        { x: width - paddingX, y: paddingY },
+        { x: width - paddingX, y: height - paddingY },
+        { x: paddingX, y: height - paddingY },
+      ]
+    }
+
+    function getPerspectivePointer(event) {
+      const canvas = perspectiveOverlayCanvas.value
+      if (!canvas) return { x: 0, y: 0 }
+      const rect = canvas.getBoundingClientRect()
+      const source = event.touches?.[0] || event
+      return {
+        x: ((source.clientX - rect.left) / rect.width) * canvas.width,
+        y: ((source.clientY - rect.top) / rect.height) * canvas.height,
+      }
+    }
+
+    function drawPerspectiveOverlay() {
+      const canvas = perspectiveOverlayCanvas.value
+      if (!canvas) return
+      const context = canvas.getContext('2d')
+      const points = perspectiveEditor.value.points || []
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      if (points.length !== 4) return
+      context.fillStyle = 'rgba(58, 195, 105, 0.22)'
+      context.strokeStyle = '#35bf64'
+      context.lineWidth = Math.max(2, canvas.width / 360)
+      context.beginPath()
+      context.moveTo(points[0].x, points[0].y)
+      points.slice(1).forEach((point) => context.lineTo(point.x, point.y))
+      context.closePath()
+      context.fill()
+      context.stroke()
+      points.forEach((point, index) => {
+        context.beginPath()
+        context.fillStyle = '#35bf64'
+        context.strokeStyle = '#ffffff'
+        context.lineWidth = 2
+        context.arc(point.x, point.y, Math.max(7, canvas.width / 80), 0, Math.PI * 2)
+        context.fill()
+        context.stroke()
+        context.fillStyle = '#ffffff'
+        context.font = `700 ${Math.max(10, canvas.width / 52)}px sans-serif`
+        context.textAlign = 'center'
+        context.textBaseline = 'middle'
+        context.fillText(String(index + 1), point.x, point.y)
+      })
+    }
+
+    async function openPerspectiveEditor(image, index) {
+      if (!image?.url) return
+      const sourceUrl = image.url
+      perspectiveEditor.value = { sourceUrl, sourceName: image.name || '参考图', sourceIndex: index, points: [], draggingIndex: null, loading: false }
+      perspectiveEditorOpen.value = true
+      await nextTick()
+      await setupPerspectiveCanvas(sourceUrl)
+    }
+
+    async function setupPerspectiveCanvas(sourceUrl) {
+      const image = await loadImageElement(sourceUrl)
+      const maxWidth = 860
+      const maxHeight = Math.max(320, Math.min(window.innerHeight * 0.66, 720))
+      const scale = Math.min(1, maxWidth / (image.naturalWidth || image.width || maxWidth), maxHeight / (image.naturalHeight || image.height || maxHeight))
+      const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale))
+      const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale))
+      const sourceCanvas = perspectiveCanvas.value
+      const overlayCanvas = perspectiveOverlayCanvas.value
+      if (!sourceCanvas || !overlayCanvas) return
+      ;[sourceCanvas, overlayCanvas].forEach((canvas) => {
+        canvas.width = width
+        canvas.height = height
+      })
+      const context = sourceCanvas.getContext('2d')
+      context.clearRect(0, 0, width, height)
+      context.drawImage(image, 0, 0, width, height)
+      perspectiveEditor.value.points = defaultPerspectivePoints(width, height)
+      drawPerspectiveOverlay()
+    }
+
+    function startPerspectiveDrag(event) {
+      event.preventDefault()
+      const point = getPerspectivePointer(event)
+      const points = perspectiveEditor.value.points || []
+      let nearestIndex = -1
+      let nearestDistance = Infinity
+      points.forEach((item, index) => {
+        const distance = distanceBetweenPoints(point, item)
+        if (distance < nearestDistance) {
+          nearestDistance = distance
+          nearestIndex = index
+        }
+      })
+      if (nearestIndex >= 0) {
+        perspectiveEditor.value.draggingIndex = nearestIndex
+        addPerspectiveDragListeners()
+      }
+      movePerspectivePoint(event)
+    }
+
+    function movePerspectivePoint(event) {
+      const draggingIndex = perspectiveEditor.value.draggingIndex
+      if (draggingIndex === null || draggingIndex === undefined) return
+      event.preventDefault()
+      const canvas = perspectiveOverlayCanvas.value
+      const point = getPerspectivePointer(event)
+      const points = [...(perspectiveEditor.value.points || [])]
+      points[draggingIndex] = {
+        x: Math.max(0, Math.min(canvas.width, point.x)),
+        y: Math.max(0, Math.min(canvas.height, point.y)),
+      }
+      perspectiveEditor.value.points = points
+      drawPerspectiveOverlay()
+    }
+
+    function stopPerspectiveDrag() {
+      perspectiveEditor.value.draggingIndex = null
+      removePerspectiveDragListeners()
+    }
+
+    function addPerspectiveDragListeners() {
+      if (perspectiveDragListening) return
+      perspectiveDragListening = true
+      window.addEventListener('mousemove', movePerspectivePoint)
+      window.addEventListener('mouseup', stopPerspectiveDrag)
+      window.addEventListener('touchmove', movePerspectivePoint, nonPassiveTouchListener)
+      window.addEventListener('touchend', stopPerspectiveDrag)
+      window.addEventListener('touchcancel', stopPerspectiveDrag)
+    }
+
+    function removePerspectiveDragListeners() {
+      if (!perspectiveDragListening) return
+      perspectiveDragListening = false
+      window.removeEventListener('mousemove', movePerspectivePoint)
+      window.removeEventListener('mouseup', stopPerspectiveDrag)
+      window.removeEventListener('touchmove', movePerspectivePoint, nonPassiveTouchListener)
+      window.removeEventListener('touchend', stopPerspectiveDrag)
+      window.removeEventListener('touchcancel', stopPerspectiveDrag)
+    }
+
+    function resetPerspectivePoints() {
+      const canvas = perspectiveOverlayCanvas.value
+      if (!canvas) return
+      perspectiveEditor.value.points = defaultPerspectivePoints(canvas.width, canvas.height)
+      drawPerspectiveOverlay()
+    }
+
+    function interpolatePoint(left, right, ratio) {
+      return {
+        x: left.x + (right.x - left.x) * ratio,
+        y: left.y + (right.y - left.y) * ratio,
+      }
+    }
+
+    function samplePerspective(sourceData, sourceWidth, sourceHeight, x, y) {
+      const clampedX = Math.max(0, Math.min(sourceWidth - 1, x))
+      const clampedY = Math.max(0, Math.min(sourceHeight - 1, y))
+      const x0 = Math.floor(clampedX)
+      const y0 = Math.floor(clampedY)
+      const x1 = Math.min(sourceWidth - 1, x0 + 1)
+      const y1 = Math.min(sourceHeight - 1, y0 + 1)
+      const dx = clampedX - x0
+      const dy = clampedY - y0
+      const result = [0, 0, 0, 0]
+      for (let channel = 0; channel < 4; channel += 1) {
+        const topLeft = sourceData[(y0 * sourceWidth + x0) * 4 + channel]
+        const topRight = sourceData[(y0 * sourceWidth + x1) * 4 + channel]
+        const bottomLeft = sourceData[(y1 * sourceWidth + x0) * 4 + channel]
+        const bottomRight = sourceData[(y1 * sourceWidth + x1) * 4 + channel]
+        result[channel] = topLeft * (1 - dx) * (1 - dy)
+          + topRight * dx * (1 - dy)
+          + bottomLeft * (1 - dx) * dy
+          + bottomRight * dx * dy
+      }
+      return result
+    }
+
+    function solveLinearSystem(matrix, vector) {
+      const size = vector.length
+      const rows = matrix.map((row, index) => [...row, vector[index]])
+      for (let column = 0; column < size; column += 1) {
+        let pivotRow = column
+        for (let row = column + 1; row < size; row += 1) {
+          if (Math.abs(rows[row][column]) > Math.abs(rows[pivotRow][column])) pivotRow = row
+        }
+        if (Math.abs(rows[pivotRow][column]) < 1e-8) return null
+        ;[rows[column], rows[pivotRow]] = [rows[pivotRow], rows[column]]
+        const pivot = rows[column][column]
+        for (let item = column; item <= size; item += 1) rows[column][item] /= pivot
+        for (let row = 0; row < size; row += 1) {
+          if (row === column) continue
+          const factor = rows[row][column]
+          for (let item = column; item <= size; item += 1) {
+            rows[row][item] -= factor * rows[column][item]
+          }
+        }
+      }
+      return rows.map((row) => row[size])
+    }
+
+    function computePerspectiveTransform(sourcePoints, targetPoints) {
+      const matrix = []
+      const vector = []
+      sourcePoints.forEach((source, index) => {
+        const target = targetPoints[index]
+        matrix.push([source.x, source.y, 1, 0, 0, 0, -target.x * source.x, -target.x * source.y])
+        vector.push(target.x)
+        matrix.push([0, 0, 0, source.x, source.y, 1, -target.y * source.x, -target.y * source.y])
+        vector.push(target.y)
+      })
+      const solution = solveLinearSystem(matrix, vector)
+      if (!solution) return null
+      return [
+        solution[0], solution[1], solution[2],
+        solution[3], solution[4], solution[5],
+        solution[6], solution[7], 1,
+      ]
+    }
+
+    function applyPerspectiveTransform(transform, point) {
+      const denominator = transform[6] * point.x + transform[7] * point.y + transform[8]
+      if (Math.abs(denominator) < 1e-8) return point
+      return {
+        x: (transform[0] * point.x + transform[1] * point.y + transform[2]) / denominator,
+        y: (transform[3] * point.x + transform[4] * point.y + transform[5]) / denominator,
+      }
+    }
+
+    function exportPerspectiveDataUrl() {
+      const sourceCanvas = perspectiveCanvas.value
+      const points = perspectiveEditor.value.points || []
+      if (!sourceCanvas || points.length !== 4) return ''
+      const [topLeft, topRight, bottomRight, bottomLeft] = points
+      const outputWidth = Math.max(64, Math.round(Math.max(distanceBetweenPoints(topLeft, topRight), distanceBetweenPoints(bottomLeft, bottomRight))))
+      const outputHeight = Math.max(64, Math.round(Math.max(distanceBetweenPoints(topLeft, bottomLeft), distanceBetweenPoints(topRight, bottomRight))))
+      const sourceContext = sourceCanvas.getContext('2d')
+      const sourceImageData = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+      const outputCanvas = document.createElement('canvas')
+      outputCanvas.width = outputWidth
+      outputCanvas.height = outputHeight
+      const outputContext = outputCanvas.getContext('2d')
+      const outputImageData = outputContext.createImageData(outputWidth, outputHeight)
+      const transform = computePerspectiveTransform([
+        { x: 0, y: 0 },
+        { x: outputWidth - 1, y: 0 },
+        { x: outputWidth - 1, y: outputHeight - 1 },
+        { x: 0, y: outputHeight - 1 },
+      ], points)
+      for (let y = 0; y < outputHeight; y += 1) {
+        for (let x = 0; x < outputWidth; x += 1) {
+          const sourcePoint = transform
+            ? applyPerspectiveTransform(transform, { x, y })
+            : interpolatePoint(
+              interpolatePoint(topLeft, bottomLeft, outputHeight <= 1 ? 0 : y / (outputHeight - 1)),
+              interpolatePoint(topRight, bottomRight, outputHeight <= 1 ? 0 : y / (outputHeight - 1)),
+              outputWidth <= 1 ? 0 : x / (outputWidth - 1),
+            )
+          const sample = samplePerspective(sourceImageData.data, sourceCanvas.width, sourceCanvas.height, sourcePoint.x, sourcePoint.y)
+          const offset = (y * outputWidth + x) * 4
+          outputImageData.data[offset] = sample[0]
+          outputImageData.data[offset + 1] = sample[1]
+          outputImageData.data[offset + 2] = sample[2]
+          outputImageData.data[offset + 3] = sample[3]
+        }
+      }
+      outputContext.putImageData(outputImageData, 0, 0)
+      return outputCanvas.toDataURL('image/png')
+    }
+
+    async function savePerspectiveImage() {
+      perspectiveEditor.value.loading = true
+      try {
+        const url = exportPerspectiveDataUrl()
+        if (!url) throw new Error('透视矫正失败')
+        const nextImages = [...referenceImages.value]
+        const index = perspectiveEditor.value.sourceIndex
+        const corrected = {
+          url,
+          name: `${perspectiveEditor.value.sourceName || '参考图'}-透视矫正`,
+          source: 'upload',
+        }
+        if (index >= 0 && nextImages[index]) nextImages.splice(index, 1, corrected)
+        else nextImages.push(corrected)
+        referenceImages.value = nextImages.slice(0, maxReferenceImages)
+        perspectiveEditorOpen.value = false
+        syncActiveSession()
+        ElementPlus.ElMessage.success('已完成透视矫正')
+      } catch (error) {
+        ElementPlus.ElMessage.error(error.message || '透视矫正失败')
+      } finally {
+        perspectiveEditor.value.loading = false
+      }
     }
 
     function generatingStage(message) {
@@ -1168,34 +1536,17 @@ export const ChatPage = {
     }
 
     async function handleFile(event) {
-      const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/'))
-      if (!files.length) return
-      const remaining = maxReferenceImages - referenceImages.value.length
-      if (remaining <= 0) {
-        ElementPlus.ElMessage.warning(`最多只能添加 ${maxReferenceImages} 张参考图`)
-        event.target.value = ''
-        return
-      }
-      const selectedFiles = files.slice(0, remaining)
-      if (files.length > remaining) ElementPlus.ElMessage.warning(`最多只能添加 ${maxReferenceImages} 张参考图，已自动忽略多余图片`)
       try {
-        const addedImages = []
-        let compressedCount = 0
-        for (const file of selectedFiles) {
-          const compressed = await compressImageFile(file)
-          if (compressed.compressed) compressedCount += 1
-          addedImages.push({ url: compressed.url, name: file.name, source: 'upload' })
-        }
-        addReferenceImages(addedImages)
-        syncActiveSession()
-        if (compressedCount > 0) ElementPlus.ElMessage.success(`已自动压缩 ${compressedCount} 张参考图到 5MB 以内`)
+        await addReferenceFiles(event.target.files || [], 'upload')
       } catch (error) {
         ElementPlus.ElMessage.error(error.message || '参考图处理失败')
+      } finally {
+        event.target.value = ''
       }
-      event.target.value = ''
     }
 
     onMounted(async () => {
+      window.addEventListener('paste', handlePasteReferenceImage)
       loadState()
       const transferred = readTransferredPrompt()
       if (transferred) {
@@ -1213,6 +1564,8 @@ export const ChatPage = {
       }
     })
     onBeforeUnmount(() => {
+      window.removeEventListener('paste', handlePasteReferenceImage)
+      removePerspectiveDragListeners()
       for (const unsubscribe of unsubscribers.values()) unsubscribe()
       unsubscribers.clear()
     })
@@ -1240,6 +1593,10 @@ export const ChatPage = {
       maskEditor,
       maskCanvas,
       maskImageCanvas,
+      perspectiveEditorOpen,
+      perspectiveEditor,
+      perspectiveCanvas,
+      perspectiveOverlayCanvas,
       loading: activeSessionLoading,
       chatThread,
       chatModels,
@@ -1288,6 +1645,12 @@ export const ChatPage = {
       moveMaskDraw,
       stopMaskDraw,
       submitMaskEdit,
+      openPerspectiveEditor,
+      startPerspectiveDrag,
+      movePerspectivePoint,
+      stopPerspectiveDrag,
+      resetPerspectivePoints,
+      savePerspectiveImage,
       referenceSourceLabel,
       removeReferenceImage,
       generatingStage,
@@ -1383,13 +1746,13 @@ export const ChatPage = {
                 <strong>图片走丢咯...</strong>
               </div>
               <div v-if="normalizeReferenceImages(message.referenceImages || message.referenceImage).length" class="reference-preview-list">
-                <div v-for="(image, index) in normalizeReferenceImages(message.referenceImages || message.referenceImage)" :key="image.url || image.name || index" :class="['reference-preview', { 'is-omitted': image.omitted }]">
+                <button v-for="(image, index) in normalizeReferenceImages(message.referenceImages || message.referenceImage)" :key="image.url || image.name || index" :class="['reference-preview', { 'is-omitted': image.omitted }]" type="button" :disabled="!image.url" :title="image.url ? '预览参考图' : '本地参考图未保存'" @click="image.url && $emit('preview', { url: image.url, title: image.name || '参考图' })">
                   <img v-if="image.url" :src="image.url" alt="参考图" />
                   <span v-else>
                     <i class="ti ti-photo-off"></i>
                     本地参考图未保存
                   </span>
-                </div>
+                </button>
               </div>
               <div v-if="visibleResultIndexes(message).length" class="result-stack">
                 <div class="result-item result-active">
@@ -1552,9 +1915,14 @@ export const ChatPage = {
             <div class="composer-reference-thumbs">
               <div v-for="(image, index) in referenceImages" :key="image.url || image.name || index" class="composer-reference-thumb">
                 <img :src="image.url" alt="参考图" />
-                <button type="button" title="移除参考图" @click="removeReferenceImage(index)">
-                  <i class="ti ti-x"></i>
-                </button>
+                <div class="composer-reference-thumb-actions">
+                  <button class="composer-reference-tool" type="button" title="透视矫正" @click="openPerspectiveEditor(image, index)">
+                    <i class="ti ti-perspective"></i>
+                  </button>
+                  <button class="composer-reference-tool danger" type="button" title="移除参考图" @click="removeReferenceImage(index)">
+                    <i class="ti ti-x"></i>
+                  </button>
+                </div>
               </div>
             </div>
             <div class="composer-reference-info">
@@ -1616,10 +1984,48 @@ export const ChatPage = {
               <span>画笔</span>
               <el-slider v-model="maskEditor.brushSize" :min="12" :max="120" />
             </label>
+            <label class="mask-opacity-control">
+              <span>透明度 {{ maskEditor.brushOpacity }}%</span>
+              <input v-model.number="maskEditor.brushOpacity" class="mask-opacity-range" type="range" min="5" max="100" />
+            </label>
             <el-input v-model="maskEditor.prompt" type="textarea" placeholder="请根据蒙版区域修改图片" />
             <div class="mask-editor-actions">
               <button class="result-action" type="button" @click="clearMask"><i class="ti ti-eraser"></i>清空</button>
               <button class="result-action primary" type="button" :disabled="maskEditor.loading" @click="submitMaskEdit"><i class="ti ti-sparkles"></i>提交编辑</button>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
+      <el-dialog v-model="perspectiveEditorOpen" width="min(96vw, 1120px)" class="mask-editor-dialog perspective-editor-dialog" custom-class="mask-editor-panel perspective-editor-panel">
+        <template #header>
+          <div class="mask-editor-head">
+            <div>
+              <span>Perspective</span>
+              <strong>透视矫正</strong>
+            </div>
+            <i class="ti ti-perspective"></i>
+          </div>
+        </template>
+        <div class="mask-editor-body perspective-editor-body">
+          <div class="mask-canvas-wrap perspective-canvas-wrap">
+            <div class="mask-canvas-stage perspective-canvas-stage" @mousedown="startPerspectiveDrag" @touchstart="startPerspectiveDrag">
+              <canvas ref="perspectiveCanvas" class="mask-source-canvas perspective-source-canvas"></canvas>
+              <canvas ref="perspectiveOverlayCanvas" class="mask-draw-canvas perspective-overlay-canvas"></canvas>
+            </div>
+          </div>
+          <div class="mask-editor-tools">
+            <div class="mask-editor-hint">
+              <i class="ti ti-info-circle"></i>
+              <span>拖动四个绿色角点框住需要拉正的区域，确认后会替换当前参考图。</span>
+            </div>
+            <div class="perspective-point-list">
+              <span v-for="(point, index) in perspectiveEditor.points" :key="index">
+                {{ index + 1 }}: {{ Math.round(point.x) }}, {{ Math.round(point.y) }}
+              </span>
+            </div>
+            <div class="mask-editor-actions">
+              <button class="result-action" type="button" @click="resetPerspectivePoints"><i class="ti ti-rotate-2"></i>重置</button>
+              <button class="result-action primary" type="button" :disabled="perspectiveEditor.loading" @click="savePerspectiveImage"><i class="ti ti-device-floppy"></i>确定保存</button>
             </div>
           </div>
         </div>

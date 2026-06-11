@@ -20,8 +20,8 @@ type SiteChatCompletionInput = {
   messages: SiteChatMessage[]
 }
 
-const freeChatDisplayModelName = 'gpt5.5'
-const freeChatUpstreamModelName = 'gpt5.5'
+const freeChatDisplayModelName = 'gpt-5-5'
+const freeChatUpstreamModelName = 'gpt-5-5'
 
 function getOpenAiBaseUrl(baseUrl: string) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
@@ -132,8 +132,8 @@ export class SiteChatService {
     private readonly modelRepository = new ModelRepository(),
   ) {}
 
-  private async resolveFreeChatTarget(): Promise<{ provider: ApiProvider; modelName: string; modelSource: 'model' | 'provider' }> {
-    const model = await this.modelRepository.findActiveByModelName(freeChatUpstreamModelName, 'chat_image')
+  private async resolveFreeChatTarget(): Promise<{ provider: ApiProvider; modelName: string; modelSource: 'model' }> {
+    const model = await this.modelRepository.findActiveByNameOrDisplayName(freeChatUpstreamModelName, 'chat_image')
     if (model) {
       const provider = await this.apiProviderRepository.findById(model.providerId)
       if (provider?.status === 'active') {
@@ -141,9 +141,7 @@ export class SiteChatService {
       }
     }
 
-    const provider = await this.apiProviderRepository.findFirstActive()
-    if (!provider) throw new AppError(404, '接口配置不存在或已禁用')
-    return { provider, modelName: freeChatUpstreamModelName, modelSource: 'provider' }
+    throw new AppError(400, `请先在后台模型管理中添加并启用 ${freeChatDisplayModelName}，用于前台对话聊天`)
   }
 
   async complete(req: Request, input: SiteChatCompletionInput) {
@@ -269,6 +267,15 @@ export class SiteChatService {
       if (!response.ok || !response.body) {
         responseText = await response.text()
         const payload = responseText ? tryParseJson(responseText) : null
+        console.warn('[site-chat:upstream-response-error]', {
+          providerId: provider.id,
+          providerName: provider.name,
+          providerType: provider.type,
+          endpoint,
+          statusCode: response.status,
+          model: modelName,
+          responseText: responseText.slice(0, 4000),
+        })
         throw new AppError(response.status, readUpstreamError(payload) || `上游聊天接口调用失败：HTTP ${response.status}`)
       }
 
@@ -345,6 +352,17 @@ export class SiteChatService {
         },
       })
     } catch (error) {
+      console.warn('[site-chat:failed]', {
+        providerId: provider.id,
+        providerName: provider.name,
+        providerType: provider.type,
+        endpoint,
+        statusCode,
+        model: modelName,
+        modelSource,
+        responseText: responseText.slice(0, 4000),
+        errorMessage: error instanceof Error ? error.message : String(error),
+      })
       await this.apiLogRepository.create({
         direction: 'upstream',
         userId: user.id,

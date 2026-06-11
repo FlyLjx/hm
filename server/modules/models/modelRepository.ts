@@ -7,6 +7,7 @@ type AiModelRow = RowDataPacket & {
   provider_id: string
   provider_name?: string
   provider_type?: 'sub2api' | 'custom'
+  provider_status?: 'active' | 'disabled'
   model_name: string
   display_name: string
   capability: AiModelCapability
@@ -31,6 +32,7 @@ function toAiModel(row: AiModelRow): AiModel {
     providerId: row.provider_id,
     providerName: row.provider_name,
     providerType: row.provider_type,
+    providerStatus: row.provider_status,
     modelName: row.model_name,
     displayName: row.display_name,
     capability: row.capability,
@@ -53,7 +55,7 @@ function toAiModel(row: AiModelRow): AiModel {
 export class ModelRepository {
   async findAll() {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.capability = 'chat_image'
@@ -69,7 +71,7 @@ export class ModelRepository {
 
   async findById(id: string) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.id = :id
@@ -113,7 +115,7 @@ export class ModelRepository {
     capability: AiModelCapability,
   ) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.provider_id = :providerId
@@ -127,7 +129,7 @@ export class ModelRepository {
 
   async findActiveByNameOrDisplayName(modelName: string, capability: AiModelCapability) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.capability = :capability
@@ -143,7 +145,7 @@ export class ModelRepository {
 
   async findActiveByModelName(modelName: string, capability: AiModelCapability) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.capability = :capability
@@ -163,7 +165,7 @@ export class ModelRepository {
     capability: AiModelCapability,
   ) {
     const [rows] = await db.query<AiModelRow[]>(
-      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type
+      `SELECT ai_models.*, api_providers.name AS provider_name, api_providers.type AS provider_type, api_providers.status AS provider_status
        FROM ai_models
        LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
        WHERE ai_models.provider_id = :providerId
@@ -221,6 +223,11 @@ export class ModelRepository {
   async deleteMany(ids: string[]) {
     const placeholders = ids.map(() => '?').join(', ')
     const [result] = await db.query(`DELETE FROM ai_models WHERE id IN (${placeholders})`, ids)
+    return 'affectedRows' in result ? result.affectedRows : 0
+  }
+
+  async deleteByProviderId(providerId: string) {
+    const [result] = await db.query('DELETE FROM ai_models WHERE provider_id = :providerId', { providerId })
     return 'affectedRows' in result ? result.affectedRows : 0
   }
 

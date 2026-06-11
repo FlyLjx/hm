@@ -87,3 +87,31 @@ export function readLogFile(inputName?: string, maxBytes = 300_000) {
     truncated: start > 0,
   }
 }
+
+export function readLogFileSince(inputName?: string, offset = 0, maxBytes = 200_000) {
+  ensureLogDir()
+  const name = basename(inputName || logFileName())
+  if (!/^app-\d{4}-\d{2}-\d{2}\.log$/.test(name)) {
+    return { name, content: '', size: 0, offset: 0, truncated: false }
+  }
+  const path = join(logDir, name)
+  if (!existsSync(path)) {
+    return { name, content: '', size: 0, offset: 0, truncated: false }
+  }
+  const stats = statSync(path)
+  const safeOffset = Math.max(0, Math.min(Number(offset) || 0, stats.size))
+  const availableBytes = stats.size - safeOffset
+  const bytesToRead = Math.min(availableBytes, maxBytes)
+  if (bytesToRead <= 0) {
+    return { name, content: '', size: stats.size, offset: stats.size, truncated: false }
+  }
+  const buffer = readFileSync(path)
+  const start = stats.size - safeOffset > maxBytes ? stats.size - maxBytes : safeOffset
+  return {
+    name,
+    content: buffer.subarray(start, stats.size).toString('utf8'),
+    size: stats.size,
+    offset: stats.size,
+    truncated: start > safeOffset,
+  }
+}

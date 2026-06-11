@@ -249,6 +249,7 @@ function uniqueOpenAiModels(models: Awaited<ReturnType<ModelRepository['findAll'
   const modelMap = new Map<string, Awaited<ReturnType<ModelRepository['findAll']>>[number]>()
   for (const model of models) {
     if (model.status !== 'active') continue
+    if (model.providerStatus !== 'active') continue
     const id = publicModelId(model)
     const key = normalizePublicModelId(id)
     if (!key || modelMap.has(key)) continue
@@ -289,6 +290,26 @@ export class OpenAiCompatService {
       meta: {
         total_count: models.length,
         unique_count: uniqueModels.length,
+      },
+    }
+  }
+
+  getBalance(auth: AuthenticatedApiKey) {
+    return {
+      object: 'balance',
+      balance: auth.user.credits,
+      credits: auth.user.credits,
+      currency: 'credits',
+      user: {
+        id: auth.user.id,
+        email: auth.user.email,
+      },
+      api_key: {
+        id: auth.apiKey.id,
+        name: auth.apiKey.name,
+        prefix: auth.apiKey.keyPrefix,
+        status: auth.apiKey.status,
+        last_used_at: auth.apiKey.lastUsedAt ?? null,
       },
     }
   }

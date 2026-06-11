@@ -9,6 +9,7 @@
     "db:init": "tsx server/scripts/initDb.ts",
     "db:import-legacy-users": "tsx server/scripts/importLegacyUsers.ts",
     "db:repair-legacy-user-ids": "tsx server/scripts/repairLegacyUserIds.ts",
+    "materialize:task-images": "node dist-server/scripts/materializeTaskImages.js",
     "prestart": "node scripts/check-release.mjs",
     "start": "node dist-server/index.js",
     "start:server": "node dist-server/index.js",

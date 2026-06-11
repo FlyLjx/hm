@@ -51,6 +51,11 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req: Request, res: 
   void _next
 
   if (error?.type === 'entity.too.large') {
+    console.warn('[http:error]', {
+      statusCode: 413,
+      message: '参考图请求体过大，请减少图片数量或提高 REQUEST_BODY_LIMIT',
+      type: error?.type,
+    })
     res.status(413).json({
       message: '参考图请求体过大，请减少图片数量或提高 REQUEST_BODY_LIMIT',
     })
@@ -59,6 +64,11 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req: Request, res: 
 
   if (error instanceof ZodError) {
     const firstIssue = error.issues[0]
+    console.warn('[http:error]', {
+      statusCode: 400,
+      message: zodIssueMessage(firstIssue),
+      issues: error.issues,
+    })
     res.status(400).json({
       message: zodIssueMessage(firstIssue),
       issues: error.issues,
@@ -67,6 +77,10 @@ export const errorMiddleware: ErrorRequestHandler = (error, _req: Request, res: 
   }
 
   if (error instanceof AppError) {
+    console.warn('[http:error]', {
+      statusCode: error.statusCode,
+      message: error.message,
+    })
     res.status(error.statusCode).json({ message: error.message })
     return
   }

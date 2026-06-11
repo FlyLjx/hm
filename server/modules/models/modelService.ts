@@ -54,10 +54,14 @@ function isImageGenerationModelName(...modelNames: Array<string | null | undefin
   ].some((keyword) => normalized.includes(keyword))
 }
 
+function isFreeChatModelName(modelName: string) {
+  return modelName.trim().toLowerCase() === 'gpt-5-5'
+}
+
 function filterModelsByCapability(modelNames: string[], capability: AiModelCapability) {
   const uniqueModels = uniqueModelNames(modelNames)
   if (capability !== 'chat_image') return uniqueModels
-  return uniqueModels.filter((modelName) => isImageGenerationModelName(modelName))
+  return uniqueModels.filter((modelName) => isImageGenerationModelName(modelName) || isFreeChatModelName(modelName))
 }
 
 function roundPrice(value: number) {
@@ -153,6 +157,8 @@ export class ModelService {
 
   async listPublicModels() {
     const models = (await this.modelRepository.findAll())
+      .filter((model) => model.providerStatus === 'active')
+      .filter((model) => model.status === 'active')
       .filter((model) => model.capability !== 'chat_image' || isImageGenerationModelName(model.modelName, model.displayName))
     const groupedModels = new Map<string, AiModel & { variants: AiModelVariant[] }>()
 

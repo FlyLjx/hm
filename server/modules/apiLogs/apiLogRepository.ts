@@ -307,8 +307,16 @@ export class ApiLogRepository {
     const page = Math.max(1, input?.page ?? 1)
     const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 30))
     const offset = (page - 1) * pageSize
-    const where = ['api_call_logs.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)']
-    const params: Record<string, string | number> = { pageSize, offset, days: dateFilter(input?.days) }
+    const where = [
+      'api_call_logs.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)',
+      'api_call_logs.phase <> :monitorPhase',
+    ]
+    const params: Record<string, string | number> = {
+      pageSize,
+      offset,
+      days: dateFilter(input?.days),
+      monitorPhase: publicMonitorPhase,
+    }
 
     if (input?.status && input.status !== 'all') {
       where.push('api_call_logs.status = :status')
@@ -374,9 +382,18 @@ export class ApiLogRepository {
   }
 
   async getStats(input?: { days?: number; apiKeyId?: string }) {
-    const where = ['created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)']
-    const groupWhere = ['api_call_logs.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)']
-    const params: Record<string, string | number> = { days: dateFilter(input?.days) }
+    const where = [
+      'created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)',
+      'phase <> :monitorPhase',
+    ]
+    const groupWhere = [
+      'api_call_logs.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)',
+      'api_call_logs.phase <> :monitorPhase',
+    ]
+    const params: Record<string, string | number> = {
+      days: dateFilter(input?.days),
+      monitorPhase: publicMonitorPhase,
+    }
     if (input?.apiKeyId?.trim()) {
       where.push('api_key_id = :apiKeyId')
       groupWhere.push('api_call_logs.api_key_id = :apiKeyId')

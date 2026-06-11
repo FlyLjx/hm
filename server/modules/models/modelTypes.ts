@@ -5,6 +5,7 @@ export type AiModel = {
   id: string
   providerId: string
   providerName?: string
+  providerStatus?: 'active' | 'disabled'
   modelName: string
   displayName: string
   capability: AiModelCapability

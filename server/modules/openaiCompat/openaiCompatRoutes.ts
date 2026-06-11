@@ -27,6 +27,8 @@ function mergeMultipartBody(req: Request, _res: Response, next: NextFunction) {
 export const openAiCompatRoutes = Router()
 
 openAiCompatRoutes.get('/models', asyncHandler(openAiCompatController.listModels.bind(openAiCompatController)))
+openAiCompatRoutes.get('/balance', asyncHandler(openAiCompatController.balance.bind(openAiCompatController)))
+openAiCompatRoutes.get('/credits', asyncHandler(openAiCompatController.balance.bind(openAiCompatController)))
 openAiCompatRoutes.post('/images/generations', asyncHandler(openAiCompatController.imageGenerations.bind(openAiCompatController)))
 openAiCompatRoutes.post('/images/edits', upload.any(), mergeMultipartBody, asyncHandler(openAiCompatController.imageEdits.bind(openAiCompatController)))
 openAiCompatRoutes.post('/chat/completions', asyncHandler(openAiCompatController.chatCompletions.bind(openAiCompatController)))

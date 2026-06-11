@@ -23,14 +23,18 @@ function uniqueModels(models) {
   })
 }
 
+function isGetEndpoint(path) {
+  return ['/v1/models', '/v1/balance', '/v1/credits'].includes(path)
+}
+
 async function openaiRequest(path, apiKey, body) {
   const response = await fetch(path, {
-    method: path.endsWith('/models') ? 'GET' : 'POST',
+    method: isGetEndpoint(path) ? 'GET' : 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      ...(path.endsWith('/models') ? {} : { 'Content-Type': 'application/json' }),
+      ...(isGetEndpoint(path) ? {} : { 'Content-Type': 'application/json' }),
     },
-    body: path.endsWith('/models') ? undefined : JSON.stringify(body),
+    body: isGetEndpoint(path) ? undefined : JSON.stringify(body),
   })
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
@@ -65,16 +69,17 @@ export const ApiTestPage = {
 
     const selectedEndpointLabel = computed(() => ({
       '/v1/models': '模型列表',
+      '/v1/balance': '余额查询',
       '/v1/images/generations': '图片生成',
       '/v1/images/edits': '图片编辑',
       '/v1/chat/completions': '聊天接口',
       '/v1/responses': 'Responses',
     }[form.endpoint] || '接口测试'))
-    const canRun = computed(() => apiKey.value.trim() && (form.endpoint === '/v1/models' || form.model))
+    const canRun = computed(() => apiKey.value.trim() && (isGetEndpoint(form.endpoint) || form.model))
     const curlText = computed(() => {
       const key = apiKey.value.trim() || 'sk-aipi-你的Key'
-      if (form.endpoint === '/v1/models') {
-        return `curl ${location.origin}/v1/models \\\n  -H "Authorization: Bearer ${key}"`
+      if (isGetEndpoint(form.endpoint)) {
+        return `curl ${location.origin}${form.endpoint} \\\n  -H "Authorization: Bearer ${key}"`
       }
       return `curl ${location.origin}${form.endpoint} \\\n  -H "Authorization: Bearer ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d '${stringifyJson(buildBody()).replace(/'/g, "'\\''")}'`
     })
@@ -294,13 +299,14 @@ export const ApiTestPage = {
                 <span>接口</span>
                 <el-select v-model="form.endpoint" style="width:100%">
                   <el-option label="GET /v1/models" value="/v1/models" />
+                  <el-option label="GET /v1/balance" value="/v1/balance" />
                   <el-option label="POST /v1/images/generations" value="/v1/images/generations" />
                   <el-option label="POST /v1/images/edits" value="/v1/images/edits" />
                   <el-option label="POST /v1/chat/completions" value="/v1/chat/completions" />
                   <el-option label="POST /v1/responses" value="/v1/responses" />
                 </el-select>
               </label>
-              <label v-if="form.endpoint !== '/v1/models'">
+              <label v-if="!['/v1/models', '/v1/balance', '/v1/credits'].includes(form.endpoint)">
                 <span>模型</span>
                 <el-select v-model="form.model" allow-create filterable placeholder="先读取模型或手动输入" style="width:100%">
                   <el-option v-for="model in models" :key="model.id" :label="model.id" :value="model.id" />

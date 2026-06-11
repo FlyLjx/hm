@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppError } from '../../shared/AppError.js'
+import { ModelRepository } from '../models/modelRepository.js'
 import { ApiProviderRepository } from './apiProviderRepository.js'
 import type {
   ApiProvider,
@@ -184,7 +185,10 @@ function setPriceAliases(priceMap: Map<string, RemoteModelPrice>, modelName: str
 }
 
 export class ApiProviderService {
-  constructor(private readonly apiProviderRepository = new ApiProviderRepository()) {}
+  constructor(
+    private readonly apiProviderRepository = new ApiProviderRepository(),
+    private readonly modelRepository = new ModelRepository(),
+  ) {}
 
   async listProviders() {
     return this.apiProviderRepository.findAll()
@@ -212,6 +216,7 @@ export class ApiProviderService {
   }
 
   async deleteProvider(id: string) {
+    await this.modelRepository.deleteByProviderId(id)
     const deleted = await this.apiProviderRepository.delete(id)
     if (!deleted) {
       throw new AppError(404, '接口配置不存在')

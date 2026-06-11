@@ -4,7 +4,7 @@ import { renderMarkdown } from '../common/markdown.js'
 const { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } = Vue
 
 const textChatStoragePrefix = 'aipi:text-chat'
-const freeChatModelName = 'gpt5.5'
+const freeChatModelName = 'GPT-5.5'
 const maxVisionImages = 3
 const maxVisionImageBytes = 5 * 1024 * 1024
 const textChatSystemPrompt = '你是 AIπ 的文字和图片理解助手。回答要清晰、直接；当内容适合对比、清单、参数、步骤或结构化信息时，优先使用 Markdown 表格、列表和代码块。代码块请使用标准三反引号 Markdown。'
@@ -543,7 +543,7 @@ export const TextChatPage = {
             <div class="composer-reference-info">
               <small>图片理解</small>
               <strong>{{ visionImages.length }} / {{ maxVisionImages }} 张图片</strong>
-              <span>发送后由 gpt5.5 读取图片内容</span>
+              <span>发送后由 GPT-5.5 读取图片内容</span>
             </div>
           </div>
           <div class="composer-input text-chat-composer-input">

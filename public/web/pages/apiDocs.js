@@ -12,6 +12,7 @@ export const ApiDocsPage = {
     const sampleKey = computed(() => props.currentUser ? 'sk-aipi-你的完整Key' : '登录后在用户中心生成 API Key')
     const endpoints = [
       { method: 'GET', path: '/v1/models', label: '模型列表', desc: '返回可用模型，模型名称来自系统上游模型配置。' },
+      { method: 'GET', path: '/v1/balance', label: '余额查询', desc: '返回当前 API Key 绑定账号的积分余额。' },
       { method: 'POST', path: '/v1/images/generations', label: '图片生成', desc: '文生图接口，支持 n 返回多张图片。' },
       { method: 'POST', path: '/v1/images/edits', label: '图片编辑', desc: '图生图/编辑接口，支持传入图片 URL 或图片数组。' },
       { method: 'POST', path: '/v1/chat/completions', label: '聊天接口', desc: '兼容 OpenAI 聊天格式，可用于图片场景的上游模型。' },
@@ -147,6 +148,14 @@ export const ApiDocsPage = {
             <button class="result-action" type="button" @click="copyText(curl('/v1/models'))"><i class="ti ti-copy"></i>复制</button>
           </header>
           <pre>{{ curl('/v1/models') }}</pre>
+        </article>
+
+        <article class="api-docs-panel">
+          <header class="api-docs-panel-head">
+            <div><span>Example</span><h3>查询余额</h3></div>
+            <button class="result-action" type="button" @click="copyText(curl('/v1/balance'))"><i class="ti ti-copy"></i>复制</button>
+          </header>
+          <pre>{{ curl('/v1/balance') }}</pre>
         </article>
 
         <article class="api-docs-panel">

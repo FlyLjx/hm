@@ -40,6 +40,10 @@ function imageExtension(contentType: string) {
   return 'png'
 }
 
+function imageDataUrl(buffer: Buffer, contentType: string) {
+  return `data:${contentType};base64,${buffer.toString('base64')}`
+}
+
 function escapeExcelCell(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -298,12 +302,28 @@ export class TaskService {
 
     const response = await fetch(imageUrl)
     if (!response.ok) {
+      console.warn('[task:image-fetch-failed]', {
+        taskId: id,
+        index,
+        imageUrl,
+        statusCode: response.status,
+        statusText: response.statusText,
+      })
       throw new AppError(response.status, `图片读取失败：${response.status}`)
     }
 
     const buffer = Buffer.from(await response.arrayBuffer())
+    const contentType = detectImageContentType(buffer, response.headers.get('content-type') ?? 'image/png')
+    await this.taskRepository.materializeImageUrlByIndex(id, index, imageDataUrl(buffer, contentType)).catch((error) => {
+      console.warn('[task:image-materialize-failed]', {
+        taskId: id,
+        index,
+        imageUrl,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      })
+    })
     return {
-      contentType: detectImageContentType(buffer, response.headers.get('content-type') ?? 'image/png'),
+      contentType,
       buffer,
     }
   }
