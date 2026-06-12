@@ -9,7 +9,6 @@ import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
 import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/user.js'
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 import { ChatPage } from '../pages/chat.js'
-import { CanvasPage } from '../pages/canvas.js'
 import { ApiDocsPage } from '../pages/apiDocs.js'
 import { HistoryPage } from '../pages/history.js'
 import { HomePage } from '../pages/home.js'
@@ -26,7 +25,6 @@ export const RootApp = {
     HomePage,
     PlazaPage,
     ChatPage,
-    CanvasPage,
     ApiDocsPage,
     HistoryPage,
     ProfilePage,
@@ -77,7 +75,6 @@ export const RootApp = {
     const navItems = [
       { id: 'home', label: '首页', icon: 'ti-home' },
       { id: 'chat', label: '对话生图', icon: 'ti-message-2' },
-      { id: 'canvas', label: '画布工作台', icon: 'ti-infinite' },
       { id: 'text-chat', label: '对话聊天', icon: 'ti-message-chatbot' },
       { id: 'reverse', label: '提示词反推', icon: 'ti-scan-eye' },
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
@@ -93,10 +90,10 @@ export const RootApp = {
     const activeAnnouncement = computed(() => popupAnnouncements.value[0] || null)
     const activeTopbarAnnouncement = computed(() => topbarAnnouncements.value[0] || null)
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
-    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'canvas', 'text-chat', 'history'].includes(item.id)))
+    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
     const secondaryNavItems = computed(() => navItems.filter((item) => !primaryNavItems.value.some((primary) => primary.id === item.id)))
     const isSecondaryNavActive = computed(() => secondaryNavItems.value.some((item) => item.id === activePage.value))
-    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'canvas', 'text-chat', 'history'].includes(item.id)))
+    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
     const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
     const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
@@ -711,7 +708,6 @@ export const RootApp = {
 
     watch(() => activePage.value, (page) => {
       document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
-      document.body.classList.toggle('canvas-page-active', page === 'canvas')
     }, { immediate: true })
     watch(() => currentUser.value?.id, loadAnnouncements)
     watch(rechargeOpen, (open) => {
@@ -732,7 +728,6 @@ export const RootApp = {
       stopRechargePolling()
       disconnectCurrentUserSocket()
       document.body.classList.remove('chat-page-active')
-      document.body.classList.remove('canvas-page-active')
     })
 
     return {
@@ -967,10 +962,9 @@ export const RootApp = {
             </div>
           </section>
         </main>
-        <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat', 'canvas-content': activePage === 'canvas' }]">
+        <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
           <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
           <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
-          <canvas-page v-if="activePage === 'canvas'" :current-user="currentUser" :site-name="siteName" @go="setPage" @login="loginOpen = true" />
           <text-chat-page v-if="activePage === 'text-chat'" :credit-name="creditName" :current-user="currentUser" @login="loginOpen = true" @user-updated="updateCurrentUser" />
           <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
