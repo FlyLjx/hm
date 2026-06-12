@@ -173,6 +173,7 @@
           disabled: props.disabled,
           popupClassName: props.popperClass,
           dropdownClassName: props.popperClass,
+          optionLabelProp: 'label',
           style: attrs.style || 'width:100%',
           onChange: (value) => emit('update:modelValue', value),
         }, slotChildren(slots))

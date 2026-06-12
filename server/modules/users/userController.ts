@@ -14,6 +14,7 @@ import {
   verifyEmailSchema,
 } from './userSchemas.js'
 import { UserService } from './userService.js'
+import { createUserToken } from './userAuth.js'
 
 const userService = new UserService()
 
@@ -36,13 +37,13 @@ export class UserController {
       userIp: getRequestIp(req),
       origin: getRequestOrigin(req),
     })
-    res.status(201).json({ data: user })
+    res.status(201).json({ data: { ...user, token: createUserToken(user.id) } })
   }
 
   async login(req: Request, res: Response) {
     const input = loginSchema.parse(req.body)
     const user = await userService.login(input)
-    res.json({ data: user })
+    res.json({ data: { ...user, token: createUserToken(user.id) } })
   }
 
   async profile(req: Request, res: Response) {

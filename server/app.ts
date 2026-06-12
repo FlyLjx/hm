@@ -20,6 +20,7 @@ import { inviteRoutes } from './modules/invites/inviteRoutes.js'
 import { mailBroadcastRoutes } from './modules/mailBroadcast/mailBroadcastRoutes.js'
 import { modelRoutes } from './modules/models/modelRoutes.js'
 import { openAiCompatRoutes } from './modules/openaiCompat/openaiCompatRoutes.js'
+import { oauthRoutes } from './modules/oauth/oauthRoutes.js'
 import { promptReverseRoutes } from './modules/promptReverse/promptReverseRoutes.js'
 import { promotionRoutes } from './modules/promotions/promotionRoutes.js'
 import { rechargeRoutes } from './modules/recharge/rechargeRoutes.js'
@@ -68,6 +69,7 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/service-status', asyncHandler(apiLogController.publicStatus.bind(apiLogController)))
 
 app.use('/v1', openAiCompatRoutes)
+app.use('/oauth', oauthRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/account-pool', accountPoolRoutes)
 app.use('/api/users', userRoutes)
@@ -105,7 +107,7 @@ if (env.serveStatic && existsSync(staticAdminPath)) {
 }
 
 if (env.serveStatic && existsSync(staticWebPath)) {
-  app.get(/^\/(?!api\/|ws\/).*/, (_req, res) => {
+  app.get(/^\/(?!api\/|oauth\/|ws\/).*/, (_req, res) => {
     res.sendFile(staticWebPath)
   })
 }

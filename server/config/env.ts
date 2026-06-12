@@ -23,6 +23,17 @@ export const env = {
     apiKey: process.env.ACCOUNT_POOL_API_KEY ?? '',
     authHeader: process.env.ACCOUNT_POOL_AUTH_HEADER ?? 'Authorization',
   },
+  oauth: {
+    clients: (process.env.OAUTH_CLIENTS ?? '')
+      .split(';')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const [id, secret, redirectUri, name] = item.split('|')
+        return { id, secret, redirectUri, name: name || id }
+      })
+      .filter((item) => item.id && item.secret && item.redirectUri),
+  },
   alipay: {
     timeoutMs: Number(process.env.ALIPAY_TIMEOUT_MS ?? 30000),
     proxyUrl: process.env.ALIPAY_PROXY_URL

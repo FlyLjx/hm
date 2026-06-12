@@ -34,7 +34,8 @@ export const RootApp = {
   },
   setup() {
     const activePage = ref(pageFromHash())
-    const currentUser = ref(getCurrentUser())
+    const cachedUser = getCurrentUser()
+    const currentUser = ref(cachedUser ? { ...cachedUser, credits: null } : null)
     const settings = ref(null)
     const siteName = ref('AIπ')
     const logoText = ref('AIπ')
@@ -54,8 +55,13 @@ export const RootApp = {
     const subscriptionPlans = ref([])
     const announcementSigning = ref(false)
     const userRefreshing = ref(false)
+    const userSynced = ref(!currentUser.value?.id)
     const accountMenuOpen = ref(false)
     const mobileMenuOpen = ref(false)
+    const navMoreOpen = ref(false)
+    const oauthClient = ref(null)
+    const oauthLoading = ref(false)
+    const oauthError = ref('')
 
     const authForm = reactive({ email: '', password: '', newPassword: '', token: '' })
     const rechargeState = reactive({ products: [], selectedProductId: '', mode: 'product', customAmount: '', order: null, qrImage: '', qrLoading: false, loading: false, syncing: false })
@@ -84,10 +90,17 @@ export const RootApp = {
     const activeAnnouncement = computed(() => popupAnnouncements.value[0] || null)
     const activeTopbarAnnouncement = computed(() => topbarAnnouncements.value[0] || null)
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
+    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
+    const secondaryNavItems = computed(() => navItems.filter((item) => !primaryNavItems.value.some((primary) => primary.id === item.id)))
+    const isSecondaryNavActive = computed(() => secondaryNavItems.value.some((item) => item.id === activePage.value))
     const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
     const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
     const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
+    const userBalanceText = computed(() => {
+      const credits = Number(currentUser.value?.credits)
+      return userSynced.value && Number.isFinite(credits) ? `${formatAmount(credits)} ${creditName.value}` : '同步中'
+    })
     const supportItems = computed(() => {
       const config = settings.value || {}
       return [
@@ -134,6 +147,17 @@ export const RootApp = {
       const name = String(siteName.value || 'AIπ').trim()
       return name.split(/[·-]/)[0]?.trim() || name
     })
+    const oauthParams = computed(() => {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('oauth') !== '1') return null
+      return {
+        client_id: params.get('client_id') || '',
+        redirect_uri: params.get('redirect_uri') || '',
+        response_type: params.get('response_type') || 'code',
+        state: params.get('state') || '',
+      }
+    })
+    const isOAuthPage = computed(() => Boolean(oauthParams.value))
 
     function isFeatureEnabled(value) {
       return value === true || value === 'true' || value === 1 || value === '1'
@@ -142,6 +166,7 @@ export const RootApp = {
     function setPage(page) {
       activePage.value = page
       window.location.hash = `/${page}`
+      navMoreOpen.value = false
       mobileMenuOpen.value = false
     }
 
@@ -157,8 +182,10 @@ export const RootApp = {
     function logout() {
       clearCurrentUser()
       currentUser.value = null
+      userSynced.value = true
       accountMenuOpen.value = false
       mobileMenuOpen.value = false
+      navMoreOpen.value = false
       disconnectGenerationTaskSocket()
       disconnectCurrentUserSocket()
       notifySuccess('已退出登录')
@@ -167,11 +194,18 @@ export const RootApp = {
     function closeNavMenus() {
       accountMenuOpen.value = false
       mobileMenuOpen.value = false
+      navMoreOpen.value = false
     }
 
     function runNavAction(action) {
       closeNavMenus()
       action?.()
+    }
+
+    function closeFloatingMenusOnOutsideClick(event) {
+      const target = event.target
+      if (!target?.closest?.('.nav-more-wrap')) navMoreOpen.value = false
+      if (!target?.closest?.('.account-menu-wrap')) accountMenuOpen.value = false
     }
 
     async function refreshUser() {
@@ -183,6 +217,7 @@ export const RootApp = {
       } catch {
         logout()
       } finally {
+        userSynced.value = true
         userRefreshing.value = false
       }
     }
@@ -208,8 +243,43 @@ export const RootApp = {
     }
 
     function updateCurrentUser(user) {
-      currentUser.value = user
-      saveCurrentUser(user)
+      currentUser.value = saveCurrentUser(user)
+      userSynced.value = true
+    }
+
+    async function loadOAuthClient() {
+      if (!oauthParams.value) return
+      oauthError.value = ''
+      try {
+        const response = await clientApi.getOAuthClient(oauthParams.value)
+        oauthClient.value = response.data
+      } catch (error) {
+        oauthError.value = error.message || 'OAuth 应用信息加载失败'
+      }
+    }
+
+    async function approveOAuth() {
+      if (!oauthParams.value) return
+      if (!currentUser.value?.token) {
+        loginOpen.value = true
+        return
+      }
+      try {
+        oauthLoading.value = true
+        const response = await clientApi.authorizeOAuth({
+          ...oauthParams.value,
+          userToken: currentUser.value.token,
+        })
+        window.location.href = response.data.redirectUrl
+      } catch (error) {
+        oauthError.value = error.message || '授权失败'
+      } finally {
+        oauthLoading.value = false
+      }
+    }
+
+    function leaveOAuthPage() {
+      window.location.href = `${window.location.origin}/`
     }
 
     function closePaidRecharge(order) {
@@ -375,6 +445,9 @@ export const RootApp = {
         loginOpen.value = false
         notifySuccess(authMode.value === 'register' ? '注册成功' : '登录成功')
         loadAnnouncements()
+        if (isOAuthPage.value) {
+          await approveOAuth()
+        }
       } catch (error) {
         notifyError(error, '登录失败')
       }
@@ -612,7 +685,9 @@ export const RootApp = {
     onMounted(() => {
       window.addEventListener('hashchange', handleHashChange)
       window.addEventListener('focus', refreshUserQuietly)
+      document.addEventListener('pointerdown', closeFloatingMenusOnOutsideClick)
       document.addEventListener('visibilitychange', handleVisibilityChange)
+      loadOAuthClient()
       const params = new URLSearchParams(location.search)
       const resetToken = params.get('resetPasswordToken')
       if (resetToken) {
@@ -648,6 +723,7 @@ export const RootApp = {
     onBeforeUnmount(() => {
       window.removeEventListener('hashchange', handleHashChange)
       window.removeEventListener('focus', refreshUserQuietly)
+      document.removeEventListener('pointerdown', closeFloatingMenusOnOutsideClick)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       stopRechargePolling()
       disconnectCurrentUserSocket()
@@ -686,13 +762,23 @@ export const RootApp = {
       activeNav,
       authMeta,
       shortSiteName,
+      userBalanceText,
+      oauthClient,
+      oauthLoading,
+      oauthError,
+      isOAuthPage,
       announcementSigning,
       userRefreshing,
+      userSynced,
       accountMenuOpen,
       mobileMenuOpen,
+      navMoreOpen,
       promotions,
       subscriptionPlans,
       navItems,
+      primaryNavItems,
+      secondaryNavItems,
+      isSecondaryNavActive,
       bottomNavItems,
       setPage,
       requireLogin,
@@ -717,6 +803,8 @@ export const RootApp = {
       closeAnnouncement,
       announcementHtml,
       updateCurrentUser,
+      approveOAuth,
+      leaveOAuthPage,
       manualRefreshUser,
       formatAmount,
       formatCurrency,
@@ -744,17 +832,30 @@ export const RootApp = {
               </span>
             </button>
             <nav class="web-primary-nav" aria-label="用户端导航">
-              <button v-for="item in navItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
+              <button v-for="item in primaryNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
                 <i :class="['ti', item.icon]"></i>
                 <span>{{ item.label }}</span>
               </button>
+              <div class="nav-more-wrap">
+                <button :class="['nav-more-trigger', { active: isSecondaryNavActive || navMoreOpen }]" type="button" @click="navMoreOpen = !navMoreOpen; accountMenuOpen = false; mobileMenuOpen = false">
+                  <i class="ti ti-dots"></i>
+                  <span>更多</span>
+                  <i class="ti ti-chevron-down"></i>
+                </button>
+                <div v-if="navMoreOpen" class="nav-more-menu">
+                  <button v-for="item in secondaryNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
+                    <i :class="['ti', item.icon]"></i>
+                    <span>{{ item.label }}</span>
+                  </button>
+                </div>
+              </div>
             </nav>
           </div>
           <div class="web-top-actions">
             <template v-if="currentUser">
               <span class="user-chip">
                 <span class="user-chip-label">余额</span>
-                <span class="user-balance">{{ formatAmount(currentUser.credits) }} {{ creditName }}</span>
+                <span class="user-balance">{{ userBalanceText }}</span>
                 <button class="balance-refresh" type="button" title="刷新余额" :disabled="userRefreshing" @click="manualRefreshUser">
                   <i :class="['ti', 'ti-refresh', { 'is-spinning': userRefreshing }]"></i>
                 </button>
@@ -777,7 +878,7 @@ export const RootApp = {
                     <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
                     <div>
                       <strong>{{ currentUser.email }}</strong>
-                      <small>{{ formatAmount(currentUser.credits) }} {{ creditName }}</small>
+                      <small>{{ userBalanceText }}</small>
                     </div>
                   </div>
                   <button type="button" @click="runNavAction(openSubscription)">
@@ -822,7 +923,7 @@ export const RootApp = {
               <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
               <div>
                 <strong>{{ currentUser.email }}</strong>
-                <small>{{ formatAmount(currentUser.credits) }} {{ creditName }}</small>
+                <small>{{ userBalanceText }}</small>
               </div>
             </div>
             <div class="mobile-account-actions">
@@ -840,7 +941,28 @@ export const RootApp = {
           </div>
         </header>
 
-        <main :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
+        <main v-if="isOAuthPage" class="web-content oauth-content">
+          <section class="oauth-panel">
+            <div class="oauth-mark"><i class="ti ti-plug-connected"></i></div>
+            <span class="eyebrow">OAuth 授权</span>
+            <h2>{{ oauthClient?.name || '第三方应用' }} 请求连接 {{ shortSiteName }}</h2>
+            <p>授权后，画布应用可以读取你的账号信息，并使用你的 API Key 同步创作能力。</p>
+            <div v-if="oauthError" class="oauth-error">{{ oauthError }}</div>
+            <div v-if="currentUser" class="oauth-user-card">
+              <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
+              <div>
+                <strong>{{ currentUser.email }}</strong>
+                <small>{{ userBalanceText }}</small>
+              </div>
+            </div>
+            <div class="oauth-actions">
+              <el-button v-if="!currentUser" type="primary" @click="loginOpen = true">登录后授权</el-button>
+              <el-button v-else type="primary" :loading="oauthLoading" @click="approveOAuth">确认授权</el-button>
+              <el-button @click="leaveOAuthPage">返回首页</el-button>
+            </div>
+          </section>
+        </main>
+        <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
           <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
           <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
           <text-chat-page v-if="activePage === 'text-chat'" :credit-name="creditName" :current-user="currentUser" @login="loginOpen = true" @user-updated="updateCurrentUser" />
@@ -851,7 +973,7 @@ export const RootApp = {
           <status-page v-if="activePage === 'status'" />
           <profile-page v-if="activePage === 'profile'" :credit-name="creditName" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @user-updated="updateCurrentUser" />
         </main>
-        <nav class="web-bottom-nav" aria-label="移动端主导航">
+        <nav v-if="!isOAuthPage" class="web-bottom-nav" aria-label="移动端主导航">
           <button v-for="item in bottomNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
             <i :class="['ti', item.icon]"></i>
             <span>{{ item.label.replace('提示词', '') }}</span>

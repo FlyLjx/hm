@@ -34,7 +34,7 @@ type GenerateImageInput = {
 }
 
 const allowedImageSizes: Record<GenerationSizeTier, string[]> = {
-  '1k': ['1024x1024', '1536x864', '864x1536', '1152x864', '864x1152', '1152x768', '768x1152'],
+  '1k': ['1024x1024', '1536x864', '864x1536', '1536x1152', '1152x1536', '1536x1024', '1024x1536'],
   '2k': ['2048x2048', '2048x1152', '1152x2048', '2048x1536', '1536x2048', '2048x1360', '1360x2048'],
   '4k': ['3072x3072', '3072x1728', '1728x3072', '3072x2304', '2304x3072', '3072x2048', '2048x3072'],
 }
@@ -607,6 +607,18 @@ function summarizeImageResult(resultJson: unknown, outputFormat?: string) {
   }
 }
 
+function extractTextResultMessage(resultJson: unknown) {
+  if (!resultJson || typeof resultJson !== 'object' || Array.isArray(resultJson)) return ''
+  const payload = resultJson as {
+    content?: unknown
+    message?: unknown
+    text?: unknown
+    output_text?: unknown
+  }
+  const text = payload.content ?? payload.message ?? payload.text ?? payload.output_text
+  return typeof text === 'string' ? text.trim() : ''
+}
+
 async function materializeImageResult(resultJson: unknown, outputFormat?: string) {
   const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
   if (images.length === 0) return resultJson
@@ -683,21 +695,22 @@ function extractUpstreamErrorMessage(resultJson: unknown, responseText: string) 
       message?: unknown
     }
     const message = payload.error?.message ?? payload.message
-    const type = payload.error?.type
-    const code = payload.error?.code
-    const parts = [message, type, code]
-      .filter((item): item is string | number => typeof item === 'string' || typeof item === 'number')
-      .map(String)
-
-    if (parts.length > 0) return parts.join(' / ')
+    if (typeof message === 'string' || typeof message === 'number') return String(message)
   }
 
   return summarizeText(responseText) ?? ''
 }
 
 function buildUpstreamErrorMessage(prefix: string, status: number, resultJson: unknown, responseText: string) {
-  const detail = extractUpstreamErrorMessage(resultJson, responseText)
+  const detail = cleanUserFacingErrorMessage(extractUpstreamErrorMessage(resultJson, responseText))
   return detail ? `${prefix}：${status}，${detail}` : `${prefix}：${status}`
+}
+
+function cleanUserFacingErrorMessage(value: string) {
+  return String(value || '')
+    .replace(/\s*\/\s*invalid_request_error\s*\/\s*content_policy_violation\s*$/i, '')
+    .replace(/\s*\/\s*content_policy_violation\s*$/i, '')
+    .trim()
 }
 
 function isUnsupportedImageModelError(error: unknown) {
@@ -1160,6 +1173,7 @@ export class GenerationService {
     let status: GenerationTask['status'] = 'success'
     let errorMessage: string | null = null
     let remainingCredits = user.credits
+    let fallbackSourceError: string | null = null
 
     try {
       taskEvents.emitUpdated(await this.taskRepository.update(taskId, { status: 'processing' }))
@@ -1214,6 +1228,7 @@ export class GenerationService {
             fallback: provider.type === 'custom' ? 'chat_completion' : input.referenceImageUrls?.length ? 'image_edit' : 'image_json',
             reason: error.message,
           })
+          fallbackSourceError = cleanUserFacingErrorMessage(error.message)
           if (provider.type === 'custom') {
             try {
               resultJson = await this.callCustomChatImageCompletion({ taskId, provider, model, input, quantity })
@@ -1256,7 +1271,9 @@ export class GenerationService {
         })
       } else {
         status = 'failed'
-        errorMessage = '上游接口未返回图片结果'
+        const textResultMessage = cleanUserFacingErrorMessage(extractTextResultMessage(resultJson))
+        errorMessage = fallbackSourceError
+          || (textResultMessage ? `上游接口未返回图片结果：${textResultMessage}` : '上游接口未返回图片结果')
       }
     } catch (error) {
       status = 'failed'

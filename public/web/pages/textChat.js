@@ -519,7 +519,7 @@ export const TextChatPage = {
             <p>可以用来写提示词、改文案、做方案，也可以让模型帮你整理生图思路。</p>
           </div>
           <div v-for="message in messages" :key="message.id" :class="['message', message.role, { error: message.error }]">
-            <div class="avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
+            <div class="avatar">{{ message.role === 'user' ? '我' : 'AIπ' }}</div>
             <div class="bubble">
               <div v-if="message.images?.length" class="text-chat-image-row">
                 <img v-for="(image, index) in message.images" :key="image.url || image.name || index" :src="image.url" :alt="image.name || '图片'" />

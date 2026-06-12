@@ -124,6 +124,7 @@ export const ChatPage = {
     const perspectiveOverlayCanvas = ref(null)
     let perspectiveDragListening = false
     const unsubscribers = new Map()
+    const failedTaskNotices = new Set()
     const storageKey = computed(() => props.currentUser?.id ? `${chatStoragePrefix}:${props.currentUser.id}` : '')
     const chatModels = computed(() => getActiveModelsByCapability(models.value))
     const selectedModel = computed(() => chatModels.value.find((item) => item.id === modelId.value))
@@ -492,6 +493,50 @@ export const ChatPage = {
       }
     }
 
+    function aspectRatioFromSize(value) {
+      const match = String(value || '').match(/(\d+)\D+(\d+)/)
+      if (!match) return ''
+      const width = Number(match[1])
+      const height = Number(match[2])
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return ''
+      return `${width} / ${height}`
+    }
+
+    function resultImageAspectRatio(message, index) {
+      const measuredRatio = Number(message?.imageAspectRatios?.[index])
+      if (Number.isFinite(measuredRatio) && measuredRatio > 0) return `${measuredRatio} / 1`
+      return aspectRatioFromSize(message?.size) || '1 / 1'
+    }
+
+    function resultImageStyle(message, index) {
+      return { aspectRatio: resultImageAspectRatio(message, index) }
+    }
+
+    function rememberResultImageRatio(event, message, index) {
+      const image = event?.target
+      const width = Number(image?.naturalWidth || image?.width)
+      const height = Number(image?.naturalHeight || image?.height)
+      if (!message || !Number.isInteger(index) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+      const ratio = Number((width / height).toFixed(4))
+      if (Number(message.imageAspectRatios?.[index]) === ratio) return
+      const nextRatios = [...(message.imageAspectRatios || [])]
+      nextRatios[index] = ratio
+      message.imageAspectRatios = nextRatios
+    }
+
+    function cleanDisplayErrorMessage(value) {
+      return String(value || '')
+        .replace(/\s*\/\s*invalid_request_error\s*\/\s*content_policy_violation\s*$/i, '')
+        .replace(/\s*\/\s*content_policy_violation\s*$/i, '')
+        .trim()
+    }
+
+    function isThreadNearBottom(offset = 96) {
+      if (!chatThread.value) return true
+      const distance = chatThread.value.scrollHeight - chatThread.value.scrollTop - chatThread.value.clientHeight
+      return distance <= offset
+    }
+
     function scrollBottom() {
       if (chatThread.value) chatThread.value.scrollTop = chatThread.value.scrollHeight
     }
@@ -526,7 +571,7 @@ export const ChatPage = {
         text: statusText,
         taskId: task.id,
         status: effectiveStatus,
-        errorMessage: preservePreviousImages ? '' : task.errorMessage,
+        errorMessage: preservePreviousImages ? '' : cleanDisplayErrorMessage(task.errorMessage),
         images,
         thumbnails: preservePreviousImages
           ? previous.thumbnails?.length ? previous.thumbnails : images
@@ -534,6 +579,7 @@ export const ChatPage = {
         activeImageIndex,
         hiddenImageIndexes,
         downloadTokens: createDownloadTokens(images.length, previous?.downloadTokens),
+        imageAspectRatios: previous?.imageAspectRatios,
         favoriteEnabled: task.favoriteEnabled,
         publicStatus: task.publicStatus,
         displayNote: task.displayNote,
@@ -664,9 +710,14 @@ export const ChatPage = {
       const index = sessionMessages.findIndex((item) => item.taskId === task.id || item.id === next.id)
       if (index >= 0) sessionMessages.splice(index, 1, next)
       else sessionMessages.push(next)
+      const shouldKeepBottom = sessionId === activeSessionId.value && isThreadNearBottom()
       syncSessionMessages(sessionId, sessionMessages)
-      if (sessionId === activeSessionId.value) nextTick(scrollBottom)
+      if (shouldKeepBottom) nextTick(scrollBottom)
       syncUserCreditsFromTask(task)
+      if (task.status === 'failed' && task.errorMessage && !failedTaskNotices.has(task.id)) {
+        failedTaskNotices.add(task.id)
+        ElementPlus.ElMessage.error(cleanDisplayErrorMessage(task.errorMessage))
+      }
       if (isTerminalTaskStatus(task.status)) {
         unsubscribers.get(task.id)?.()
         unsubscribers.delete(task.id)
@@ -853,9 +904,15 @@ export const ChatPage = {
         }, waitingId, sessionId)
       } catch (error) {
         const sessionMessages = readSessionMessages(sessionId).filter((item) => item.id !== waitingId)
-        sessionMessages.push({ id: createClientId('message'), role: 'assistant', text: error.message || '生成失败', status: 'failed' })
+        sessionMessages.push({
+          id: createClientId('message'),
+          role: 'assistant',
+          text: '生成失败',
+          status: 'failed',
+          errorMessage: cleanDisplayErrorMessage(error.message || '生成失败'),
+        })
         syncSessionMessages(sessionId, sessionMessages)
-        ElementPlus.ElMessage.error(error.message || '生成失败')
+        ElementPlus.ElMessage.error(cleanDisplayErrorMessage(error.message || '生成失败'))
       }
     }
 
@@ -1608,6 +1665,7 @@ export const ChatPage = {
       outputSize,
       estimatedCost,
       originalEstimatedCost,
+      activeSession,
       hasSubscriptionDiscount,
       subscriptionDiscountPercent,
       modelHasSubscriptionDiscount,
@@ -1634,6 +1692,9 @@ export const ChatPage = {
       sessionPreview,
       sessionCount,
       ratioIconStyle,
+      resultImageStyle,
+      rememberResultImageRatio,
+      cleanDisplayErrorMessage,
       handleGenerate,
       useAsReference,
       toggleFavorite,
@@ -1673,6 +1734,7 @@ export const ChatPage = {
         </div>
         <el-button class="new-session-button" type="primary" title="新建对话" aria-label="新建对话" @click="newSession">
           <i class="ti ti-plus"></i>
+          <span class="new-session-button-text">新建会话</span>
         </el-button>
         <div class="session-strip">
           <div class="session-list">
@@ -1699,14 +1761,17 @@ export const ChatPage = {
       </aside>
       <section class="chat-panel">
         <header class="chat-header">
-          <div>
-            <small>Current model</small>
-            <strong>{{ getModelLabel(selectedModel) }}</strong>
+          <div class="chat-header-copy">
+            <strong>{{ activeSession?.title || '当前会话' }}</strong>
+            <small>{{ getModelLabel(selectedModel) }} · {{ ratio }} · {{ outputSize }}</small>
           </div>
-          <div class="chat-specs">
-            <span>{{ ratio }}</span>
-            <span>{{ sizeTier.toUpperCase() }}</span>
-            <span>{{ outputSize }}</span>
+          <div class="chat-header-actions">
+            <button type="button" title="重命名会话" aria-label="重命名会话" @click="renameSession(activeSession)">
+              <i class="ti ti-pencil"></i>
+            </button>
+            <button type="button" title="删除会话" aria-label="删除会话" @click="deleteSession(activeSession)">
+              <i class="ti ti-trash"></i>
+            </button>
           </div>
         </header>
         <div class="chat-thread" ref="chatThread">
@@ -1721,29 +1786,26 @@ export const ChatPage = {
             </div>
           </div>
           <div v-for="message in messages" :key="message.id" :class="['message', message.role]">
-            <div class="avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
+            <div class="avatar">{{ message.role === 'user' ? '我' : 'AIπ' }}</div>
             <div :class="['bubble', { 'generating-bubble': isGeneratingStatus(message.status) }]">
               <template v-if="isGeneratingStatus(message.status)">
                 <div class="generating-card">
-                  <div class="generating-orb"><i class="ti ti-sparkles"></i></div>
-                  <div class="generating-copy">
-                    <strong>
-                      {{ generatingTitle(message) }}
-                      <span class="generating-title-dots"><i></i><i></i><i></i></span>
-                    </strong>
-                    <span>{{ generatingStage(message).detail }}</span>
-                  </div>
-                  <div class="generating-progress"><i></i></div>
-                  <div class="generating-tags">
-                    <span v-for="tag in generatingStage(message).tags" :key="tag">{{ tag }}</span>
+                  <div class="generating-progress" :style="resultImageStyle(message, 0)">
+                    <i></i>
+                    <div class="generating-placeholder-copy">
+                      <strong>{{ generatingStage(message).detail || '正在处理图片，请稍候' }}</strong>
+                      <div class="generating-tags">
+                        <span v-for="tag in generatingStage(message).tags" :key="tag">{{ tag }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
-              <p v-else>{{ message.text }}</p>
-              <p v-if="message.errorMessage" style="color:var(--red)">{{ message.errorMessage }}</p>
+              <p v-else-if="!visibleResultIndexes(message).length && !(message.status === 'failed' && !message.images?.length)">{{ message.text }}</p>
               <div v-if="message.status === 'failed' && !message.images?.length" class="lost-image-card">
                 <i class="ti ti-photo-off"></i>
-                <strong>图片走丢咯...</strong>
+                <strong>生成失败</strong>
+                <small v-if="message.errorMessage">{{ cleanDisplayErrorMessage(message.errorMessage) }}</small>
               </div>
               <div v-if="normalizeReferenceImages(message.referenceImages || message.referenceImage).length" class="reference-preview-list">
                 <button v-for="(image, index) in normalizeReferenceImages(message.referenceImages || message.referenceImage)" :key="image.url || image.name || index" :class="['reference-preview', { 'is-omitted': image.omitted }]" type="button" :disabled="!image.url" :title="image.url ? '预览参考图' : '本地参考图未保存'" @click="image.url && $emit('preview', { url: image.url, title: image.name || '参考图' })">
@@ -1755,40 +1817,47 @@ export const ChatPage = {
                 </button>
               </div>
               <div v-if="visibleResultIndexes(message).length" class="result-stack">
-                <div class="result-item result-active">
-                  <img :src="activeResultThumbnail(message)" alt="生成结果" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" @click="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果' })" />
-                  <div class="card-actions">
-                    <button class="result-action" type="button" @click="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果' })">
-                      <i class="ti ti-maximize"></i>
-                      放大
-                    </button>
-                    <button class="result-action primary" type="button" @click="useAsReference(activeResultImage(message))">
-                      <i class="ti ti-wand"></i>
-                      改图
-                    </button>
-                    <button class="result-action" type="button" @click="openMaskEditor(activeResultImage(message))">
-                      <i class="ti ti-brush"></i>
-                      蒙版
-                    </button>
-                    <button class="result-action" type="button" @click="toggleFavorite(message)">
-                      <i :class="['ti', message.favoriteEnabled ? 'ti-heart-filled' : 'ti-heart']"></i>
-                      {{ message.favoriteEnabled ? '已收藏' : '收藏' }}
-                    </button>
-                    <button class="result-action" type="button" :disabled="message.publicStatus === 'pending' || message.publicStatus === 'approved'" @click="requestPublic(message)">
-                      <i class="ti ti-world-upload"></i>
-                      {{ publicActionLabel(message) }}
-                    </button>
-                    <a class="result-action" :href="downloadImageUrl(message, activeResultImage(message), activeResultIndex(message))" :download="downloadImageName(message, activeResultIndex(message))">
-                      <i class="ti ti-download"></i>
-                      下载
-                    </a>
-                  </div>
-                </div>
-                <div v-if="visibleResultIndexes(message).length > 1" class="result-filmstrip">
-                  <button v-for="index in visibleResultIndexes(message)" :key="message.images[index] || index" :class="['result-thumb', { active: activeResultIndex(message) === index }]" type="button" @click="selectResultImage(message, index)">
-                    <img :src="message.thumbnails?.[index] || message.images?.[index]" :alt="'生成结果 ' + (index + 1)" @error="(event) => hideBrokenImage(event, message, index)" />
+                <div class="result-gallery">
+                  <button
+                    v-for="index in visibleResultIndexes(message)"
+                    :key="message.images[index] || index"
+                    :class="['result-gallery-item', { active: activeResultIndex(message) === index }]"
+                    :style="resultImageStyle(message, index)"
+                    type="button"
+                    :aria-label="'查看生成结果 ' + (index + 1)"
+                    @click="selectResultImage(message, index)"
+                    @dblclick="$emit('preview', { url: resolveOriginalImageUrl(message.images[index]), title: '生成结果 ' + (index + 1) })"
+                  >
+                    <img :src="message.thumbnails?.[index] || message.images?.[index]" :alt="'生成结果 ' + (index + 1)" @load="(event) => rememberResultImageRatio(event, message, index)" @error="(event) => hideBrokenImage(event, message, index)" />
                     <span>{{ index + 1 }}</span>
                   </button>
+                </div>
+                <div class="result-toolbar">
+                  <button class="result-action" type="button" title="放大" @click="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果' })">
+                    <i class="ti ti-maximize"></i>
+                    <span>放大</span>
+                  </button>
+                  <button class="result-action primary" type="button" title="作为参考图继续创作" @click="useAsReference(activeResultImage(message))">
+                    <i class="ti ti-wand"></i>
+                    <span>改图</span>
+                  </button>
+                  <button class="result-action" type="button" title="蒙版编辑" @click="openMaskEditor(activeResultImage(message))">
+                    <i class="ti ti-brush"></i>
+                    <span>蒙版</span>
+                  </button>
+                  <button class="result-action" type="button" :title="message.favoriteEnabled ? '取消收藏' : '收藏'" @click="toggleFavorite(message)">
+                    <i :class="['ti', message.favoriteEnabled ? 'ti-heart-filled' : 'ti-heart']"></i>
+                    <span>{{ message.favoriteEnabled ? '已收藏' : '收藏' }}</span>
+                  </button>
+                  <button class="result-action" type="button" :disabled="message.publicStatus === 'pending' || message.publicStatus === 'approved'" :title="publicActionLabel(message)" @click="requestPublic(message)">
+                    <i class="ti ti-world-upload"></i>
+                    <span>{{ publicActionLabel(message) }}</span>
+                  </button>
+                  <a class="result-action" title="下载当前图片" :href="downloadImageUrl(message, activeResultImage(message), activeResultIndex(message))" :download="downloadImageName(message, activeResultIndex(message))">
+                    <i class="ti ti-download"></i>
+                    <span>下载</span>
+                  </a>
+                  <small>已选择第 {{ activeResultIndex(message) + 1 }} 张</small>
                 </div>
               </div>
             </div>
@@ -1808,8 +1877,10 @@ export const ChatPage = {
                 <el-option v-for="model in chatModels" :key="model.id" :label="getModelLabel(model)" :value="model.id">
                   <span class="composer-option model-option">
                     <i class="ti ti-robot composer-select-icon"></i>
-                    <span class="model-option-main">{{ getModelLabel(model) }}</span>
-                    <span class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</span>
+                    <span class="model-option-copy">
+                      <span class="model-option-main">{{ getModelLabel(model) }}</span>
+                      <small class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</small>
+                    </span>
                     <span class="model-option-price">
                       <template v-if="modelHasSubscriptionDiscount(model)">
                         <del>{{ formatAmount(modelUnitOriginalPrice(model)) }}</del>
@@ -1822,9 +1893,9 @@ export const ChatPage = {
                 </el-option>
               </el-select>
             </div>
-            <div class="composer-field">
+            <div class="composer-field composer-ratio">
               <span>比例</span>
-              <el-select v-model="ratio" popper-class="composer-select-popper ratio-select-popper">
+              <el-select v-model="ratio" fit-input-width popper-class="composer-select-popper ratio-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected ratio-selected">
                     <i class="ratio-shape" :style="ratioIconStyle(label)"></i>
@@ -1839,9 +1910,9 @@ export const ChatPage = {
                 </el-option>
               </el-select>
             </div>
-            <div class="composer-field">
+            <div class="composer-field composer-quality">
               <span>清晰度</span>
-              <el-select v-model="sizeTier" popper-class="composer-select-popper">
+              <el-select v-model="sizeTier" fit-input-width popper-class="composer-select-popper quality-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected">
                     <i class="ti ti-badge-hd composer-select-icon"></i>
@@ -1856,9 +1927,9 @@ export const ChatPage = {
                 </el-option>
               </el-select>
             </div>
-            <div class="composer-field">
+            <div class="composer-field composer-quantity">
               <span>数量</span>
-              <el-select v-model="quantity" popper-class="composer-select-popper">
+              <el-select v-model="quantity" fit-input-width popper-class="composer-select-popper quantity-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected">
                     <i class="ti ti-copy composer-select-icon"></i>
@@ -1875,7 +1946,7 @@ export const ChatPage = {
             </div>
             <div class="composer-field composer-format">
               <span>格式</span>
-              <el-select v-model="outputFormat" popper-class="composer-select-popper">
+              <el-select v-model="outputFormat" fit-input-width popper-class="composer-select-popper format-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected">
                     <i class="ti ti-file-type-png composer-select-icon"></i>

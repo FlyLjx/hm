@@ -71,7 +71,7 @@ function sizeToTier(size: string): GenerationSizeTier {
   const match = size.match(/^(\d+)x(\d+)$/)
   const maxSide = match ? Math.max(Number(match[1]), Number(match[2])) : 1024
   if (maxSide >= 3000) return '4k'
-  if (maxSide >= 1500) return '2k'
+  if (maxSide >= 2000) return '2k'
   return '1k'
 }
 

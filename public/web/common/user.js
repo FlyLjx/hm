@@ -40,9 +40,18 @@ export function getCurrentUser() {
 }
 
 export function saveCurrentUser(user) {
-  const normalizedUser = { ...user, id: normalizeLegacyUserId(user.id) }
+  let previousUser = null
+  try {
+    previousUser = JSON.parse(localStorage.getItem(USER_KEY) || 'null')
+  } catch {}
+  const normalizedId = normalizeLegacyUserId(user.id)
+  const preservedToken = !user.token && previousUser?.id && normalizeLegacyUserId(previousUser.id) === normalizedId
+    ? previousUser.token
+    : undefined
+  const normalizedUser = { ...user, ...(preservedToken ? { token: preservedToken } : {}), id: normalizedId }
   localStorage.setItem(USER_KEY, JSON.stringify(normalizedUser))
   localStorage.setItem(USER_ID_KEY, normalizedUser.id)
+  return normalizedUser
 }
 
 export function clearCurrentUser() {

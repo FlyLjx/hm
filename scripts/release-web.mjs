@@ -145,6 +145,10 @@ PROMPT_REVERSE_MODEL=gpt-4o-mini
 PROMPT_REVERSE_MESSAGES_VERSION=2023-06-01
 PROMPT_REVERSE_MAX_ATTEMPTS=3
 
+# OAuth clients for external apps, format:
+# client_id|client_secret|redirect_uri|display_name;another_id|another_secret|another_redirect|another_name
+# OAUTH_CLIENTS=canvas-client-id|canvas-client-secret|https://canvas.example.com/oauth/aipi/callback|画布应用
+
 # MySQL
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306

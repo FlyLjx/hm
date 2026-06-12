@@ -129,4 +129,7 @@ export const clientApi = {
   getCheckinStatus: (userId) => request(`/api/checkins/status${query({ userId })}`),
   checkin: (userId) => request('/api/checkins', { method: 'POST', body: JSON.stringify({ userId }) }),
   getInviteSummary: (userId) => request(`/api/invites/summary${query({ userId })}`),
+
+  getOAuthClient: (input) => request(`/oauth/client${query(input)}`),
+  authorizeOAuth: (input) => request('/oauth/authorize', { method: 'POST', body: JSON.stringify(input) }),
 }
