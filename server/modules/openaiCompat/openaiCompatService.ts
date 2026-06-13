@@ -19,8 +19,12 @@ type CompatImageGenerationInput = {
   model: string
   prompt: string
   n: number
-  size: string
-  response_format: 'url' | 'b64_json'
+  size?: string
+  aspect_ratio?: string
+  ratio?: string
+  size_tier?: string
+  resolution?: string
+  response_format: 'url'
   quality?: string
   background?: string
   output_format?: 'png' | 'jpeg' | 'jpg' | 'webp'
@@ -49,6 +53,15 @@ type CompatResponsesInput = {
 
 const imageWaitTimeoutMs = 8 * 60 * 1000
 const imageWaitIntervalMs = 1200
+const compatSizeMap: Record<string, Record<GenerationSizeTier, string>> = {
+  '1:1': { '1k': '1024x1024', '2k': '2048x2048', '4k': '3072x3072' },
+  '16:9': { '1k': '1536x864', '2k': '2048x1152', '4k': '3072x1728' },
+  '9:16': { '1k': '864x1536', '2k': '1152x2048', '4k': '1728x3072' },
+  '4:3': { '1k': '1536x1152', '2k': '2048x1536', '4k': '3072x2304' },
+  '3:4': { '1k': '1152x1536', '2k': '1536x2048', '4k': '2304x3072' },
+  '3:2': { '1k': '1536x1024', '2k': '2048x1360', '4k': '3072x2048' },
+  '2:3': { '1k': '1024x1536', '2k': '1360x2048', '4k': '2048x3072' },
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -73,6 +86,78 @@ function sizeToTier(size: string): GenerationSizeTier {
   if (maxSide >= 3000) return '4k'
   if (maxSide >= 2000) return '2k'
   return '1k'
+}
+
+function normalizeSizeTier(value?: string | null): GenerationSizeTier | null {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === '1k' || normalized === '2k' || normalized === '4k') return normalized
+  return null
+}
+
+function normalizeAspectRatio(value?: string | null) {
+  const normalized = String(value || '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/[xX*×]/g, ':')
+    .replace(/\s+/g, '')
+  const match = normalized.match(/^(\d{1,2}):(\d{1,2})$/)
+  if (!match) return null
+  return `${Number(match[1])}:${Number(match[2])}`
+}
+
+function getSizeForRatio(ratio: string | null, sizeTier: GenerationSizeTier) {
+  return compatSizeMap[ratio || '']?.[sizeTier] || compatSizeMap['1:1'][sizeTier]
+}
+
+function getSizeTierFromModelName(modelName: string): GenerationSizeTier | null {
+  const match = modelName.match(/(?:^|[-_\s])([124])k(?=$|[-_\s])/i)
+  return normalizeSizeTier(match?.[1] ? `${match[1]}k` : null)
+}
+
+function getRatioFromModelName(modelName: string) {
+  const matches = Array.from(modelName.matchAll(/(?:^|[-_\s])(\d{1,2})\s*[xX*×]\s*(\d{1,2})(?=$|[-_\s])/g))
+  const lastMatch = matches.at(-1)
+  if (!lastMatch) return null
+  return `${Number(lastMatch[1])}:${Number(lastMatch[2])}`
+}
+
+function getRatioFromSize(size?: string | null) {
+  const match = String(size || '').match(/^(\d+)x(\d+)$/)
+  if (!match) return null
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!width || !height) return null
+  const divisor = gcd(width, height)
+  return `${width / divisor}:${height / divisor}`
+}
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b)
+}
+
+function resolveCompatImageSize(input: CompatImageGenerationInput, modelName: string) {
+  const explicitTier =
+    normalizeSizeTier(input.size_tier) ||
+    normalizeSizeTier(input.resolution) ||
+    normalizeSizeTier(input.quality)
+  if (input.size) {
+    return {
+      size: input.size,
+      sizeTier: explicitTier || sizeToTier(input.size),
+      aspectRatio: getRatioFromSize(input.size),
+    }
+  }
+  const aspectRatio =
+    normalizeAspectRatio(input.aspect_ratio) ||
+    normalizeAspectRatio(input.ratio) ||
+    getRatioFromModelName(modelName) ||
+    '1:1'
+  const sizeTier = explicitTier || getSizeTierFromModelName(modelName) || '1k'
+  return {
+    size: getSizeForRatio(aspectRatio, sizeTier),
+    sizeTier,
+    aspectRatio,
+  }
 }
 
 function normalizeOutputFormat(value?: string | null) {
@@ -180,28 +265,16 @@ function absoluteUrl(req: Request, path: string) {
   return `${protocol}://${req.get('host')}${path}`
 }
 
-async function imageUrlToBase64(url: string) {
-  if (url.startsWith('data:image/')) {
-    return url.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
-  }
-  const response = await fetch(url)
-  if (!response.ok) throw new AppError(response.status, `图片读取失败：HTTP ${response.status}`)
-  return Buffer.from(await response.arrayBuffer()).toString('base64')
-}
-
-async function taskToOpenAiImageResponse(req: Request, task: GenerationTask, responseFormat: 'url' | 'b64_json') {
+async function taskToOpenAiImageResponse(req: Request, task: GenerationTask) {
   const urls = task.resultUrls || []
   return {
     created: Math.floor(Date.now() / 1000),
-    data: await Promise.all(urls.map(async (url) => {
+    data: urls.map((url) => {
       const resolvedUrl = url.startsWith('http') || url.startsWith('data:image/')
         ? url
         : absoluteUrl(req, url)
-      if (responseFormat === 'b64_json') {
-        return { b64_json: await imageUrlToBase64(resolvedUrl) }
-      }
       return { url: resolvedUrl }
-    })),
+    }),
   }
 }
 
@@ -246,16 +319,24 @@ function normalizePublicModelId(value: string) {
 }
 
 function uniqueOpenAiModels(models: Awaited<ReturnType<ModelRepository['findAll']>>) {
-  const modelMap = new Map<string, Awaited<ReturnType<ModelRepository['findAll']>>[number]>()
+  const modelMap = new Map<string, {
+    model: Awaited<ReturnType<ModelRepository['findAll']>>[number]
+    variants: Awaited<ReturnType<ModelRepository['findAll']>>
+  }>()
   for (const model of models) {
     if (model.status !== 'active') continue
     if (model.providerStatus !== 'active') continue
     const id = publicModelId(model)
     const key = normalizePublicModelId(id)
-    if (!key || modelMap.has(key)) continue
-    modelMap.set(key, model)
+    if (!key) continue
+    const existing = modelMap.get(key)
+    if (!existing) {
+      modelMap.set(key, { model, variants: [model] })
+      continue
+    }
+    existing.variants.push(model)
   }
-  return [...modelMap.values()].sort((a, b) => publicModelId(a).localeCompare(publicModelId(b), 'zh-CN'))
+  return [...modelMap.values()].sort((a, b) => publicModelId(a.model).localeCompare(publicModelId(b.model), 'zh-CN'))
 }
 
 export class OpenAiCompatService {
@@ -281,11 +362,25 @@ export class OpenAiCompatService {
     return {
       object: 'list',
       data: uniqueModels
-        .map((model) => ({
-          id: publicModelId(model),
+        .map((entry) => ({
+          id: publicModelId(entry.model),
           object: 'model',
-          created: Math.floor(new Date(model.createdAt).getTime() / 1000),
+          created: Math.floor(new Date(entry.model.createdAt).getTime() / 1000),
           owned_by: 'aipi',
+          variants: entry.variants
+            .map((variant) => {
+              const ratio = getRatioFromModelName(variant.modelName)
+              const sizeTier = getSizeTierFromModelName(variant.modelName)
+              return {
+                id: variant.modelName,
+                object: 'model.variant',
+                ratio,
+                aspect_ratio: ratio,
+                size_tier: sizeTier,
+                size: sizeTier ? getSizeForRatio(ratio, sizeTier) : null,
+              }
+            })
+            .sort((a, b) => `${a.ratio || ''}:${a.size_tier || ''}:${a.id}`.localeCompare(`${b.ratio || ''}:${b.size_tier || ''}:${b.id}`, 'zh-CN')),
         })),
       meta: {
         total_count: models.length,
@@ -317,9 +412,9 @@ export class OpenAiCompatService {
   async generateImage(req: Request, auth: AuthenticatedApiKey, input: CompatImageGenerationInput | CompatImageEditInput) {
     const startedAt = Date.now()
     const endpoint = req.path
-    const sizeTier = sizeToTier(input.size)
     const model = await this.modelRepository.findActiveByNameOrDisplayName(input.model, 'chat_image')
     if (!model) throw new AppError(404, '模型不存在或已禁用')
+    const resolvedSize = resolveCompatImageSize(input, model.modelName)
     const settings = await this.settingService.getSettings()
     const isEdit = endpoint.includes('/edits')
     const editInput = input as CompatImageEditInput
@@ -329,8 +424,8 @@ export class OpenAiCompatService {
       userId: auth.user.id,
       modelId: model.id,
       prompt: input.prompt,
-      sizeTier,
-      size: input.size,
+      sizeTier: resolvedSize.sizeTier,
+      size: resolvedSize.size,
       transparentBackground: input.background === 'transparent',
       outputFormat: normalizeOutputFormat(input.output_format),
       quantity: input.n,
@@ -363,7 +458,9 @@ export class OpenAiCompatService {
         model: input.model,
         prompt: input.prompt,
         n: input.n,
-        size: input.size,
+        size: resolvedSize.size,
+        aspectRatio: resolvedSize.aspectRatio,
+        sizeTier: resolvedSize.sizeTier,
         responseFormat: input.response_format,
         referenceImageCount: referenceImageUrls.length,
         mask: Boolean(maskImageUrl),
@@ -381,7 +478,7 @@ export class OpenAiCompatService {
     if (finalTask.status !== 'success') {
       throw new AppError(500, finalTask.errorMessage || '图片生成失败')
     }
-    return taskToOpenAiImageResponse(req, finalTask, input.response_format)
+    return taskToOpenAiImageResponse(req, finalTask)
   }
 
   async chatCompletion(req: Request, auth: AuthenticatedApiKey, input: CompatChatCompletionInput) {

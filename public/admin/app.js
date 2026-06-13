@@ -1,18 +1,15 @@
 import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js'
 import { DashboardPage } from './pages/dashboard.js'
 import { UsersPage } from './pages/users.js'
-import { ProvidersPage } from './pages/providers.js'
-import { ModelsPage } from './pages/models.js'
+import { ModelCenterPage } from './pages/model-center.js'
 import { TasksPage } from './pages/tasks.js'
 import { ApiKeysPage } from './pages/api-keys.js'
 import { ApiLogsPage } from './pages/api-logs.js'
-import { CreditLogsPage } from './pages/credit-logs.js'
-import { CostStatsPage } from './pages/cost-stats.js'
+import { CreditCenterPage } from './pages/credit-center.js'
 import { FinancePage } from './pages/finance.js'
 import { OperationsPage } from './pages/operations.js'
 import { SettingsPage } from './pages/settings.js'
 import { MailBroadcastPage } from './pages/mail-broadcast.js'
-import { AccountPoolPage } from './pages/account-pool.js'
 import { SystemLogsPage } from './pages/system-logs.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
@@ -24,9 +21,7 @@ const menuGroups = [
   { title: '数据总览', items: [{ id: 'console', label: '控制台中心', desc: '订单与任务概览', icon: 'ti-layout-dashboard', component: DashboardPage }] },
   { title: '基础配置', items: [
     { id: 'users', label: '用户管理', desc: '账号与权限', icon: 'ti-users', component: UsersPage },
-    { id: 'apis', label: '接口管理', desc: '服务商与密钥', icon: 'ti-plug-connected', component: ProvidersPage },
-    { id: 'models', label: '模型管理', desc: '模型与价格', icon: 'ti-robot', component: ModelsPage },
-    { id: 'model-mappings', label: '模型映射', desc: '远程同步', icon: 'ti-arrows-exchange', component: ModelsPage, props: { mode: 'mappings' } },
+    { id: 'model-center', label: '模型与接口', desc: '模型、接口、号池', icon: 'ti-robot', component: ModelCenterPage },
   ] },
   { title: '创作内容', items: [
     { id: 'tasks', label: '任务列表', desc: '生成记录', icon: 'ti-list-check', component: TasksPage },
@@ -37,8 +32,7 @@ const menuGroups = [
     { id: 'promotions', label: '促销管理', desc: '活动广告', icon: 'ti-discount-2', component: OperationsPage, props: { mode: 'promotions' } },
   ] },
   { title: '运营财务', items: [
-    { id: 'cost-stats', label: '成本统计', desc: '成本与利润', icon: 'ti-chart-bar', component: CostStatsPage },
-    { id: 'credit-logs', label: '积分流水', desc: '余额变动', icon: 'ti-coins', component: CreditLogsPage },
+    { id: 'credit-center', label: '积分与统计', desc: '收入、成本、流水', icon: 'ti-chart-bar', component: CreditCenterPage },
     { id: 'orders', label: '订单列表', desc: '支付订单', icon: 'ti-receipt', component: FinancePage, props: { mode: 'orders' } },
     { id: 'redeem-codes', label: '卡密兑换', desc: '兑换码', icon: 'ti-ticket', component: FinancePage, props: { mode: 'redeem' } },
     { id: 'subscriptions', label: '订阅套餐', desc: '会员权益', icon: 'ti-crown', component: FinancePage, props: { mode: 'subscriptions' } },
@@ -47,14 +41,22 @@ const menuGroups = [
     { id: 'shop', label: '商品管理', desc: '充值套餐', icon: 'ti-shopping-bag', component: FinancePage, props: { mode: 'shop' } },
   ] },
   { title: '系统管理', items: [
-    { id: 'account-pool', label: '号池管理', desc: '账号额度', icon: 'ti-address-book', component: AccountPoolPage },
     { id: 'mail-broadcast', label: '邮件群发', desc: '用户通知', icon: 'ti-mail', component: MailBroadcastPage },
     { id: 'system-logs', label: '系统日志', desc: '运行日志', icon: 'ti-file-text', component: SystemLogsPage },
     { id: 'settings', label: '系统设置', desc: '站点配置', icon: 'ti-settings', component: SettingsPage },
   ] },
 ]
 
-const routes = new Map(menuGroups.flatMap((group) => group.items.map((item) => [item.id, item])))
+const visibleRoutes = new Map(menuGroups.flatMap((group) => group.items.map((item) => [item.id, item])))
+const legacyRoutes = new Map([
+  ['apis', { id: 'apis', label: '接口管理', component: ModelCenterPage, props: { initialTab: 'providers' }, menuId: 'model-center' }],
+  ['models', { id: 'models', label: '模型管理', component: ModelCenterPage, props: { initialTab: 'models' }, menuId: 'model-center' }],
+  ['model-mappings', { id: 'model-mappings', label: '模型映射', component: ModelCenterPage, props: { initialTab: 'mappings' }, menuId: 'model-center' }],
+  ['account-pool', { id: 'account-pool', label: '号池管理', component: ModelCenterPage, props: { initialTab: 'account-pool' }, menuId: 'model-center' }],
+  ['cost-stats', { id: 'cost-stats', label: '成本统计', component: CreditCenterPage, props: { initialTab: 'stats' }, menuId: 'credit-center' }],
+  ['credit-logs', { id: 'credit-logs', label: '积分流水', component: CreditCenterPage, props: { initialTab: 'logs' }, menuId: 'credit-center' }],
+])
+const routes = new Map([...visibleRoutes, ...legacyRoutes])
 
 function getRouteId() {
   const id = window.location.hash.replace(/^#\/?/, '')
@@ -72,7 +74,8 @@ const App = {
     const activeId = ref(getRouteId())
     const mobileMenuOpen = ref(false)
     const activeRoute = computed(() => routes.get(activeId.value) || routes.get('console'))
-    const activeGroup = computed(() => menuGroups.find((group) => group.items.some((item) => item.id === activeRoute.value.id)))
+    const activeMenuId = computed(() => activeRoute.value.menuId || activeRoute.value.id)
+    const activeGroup = computed(() => menuGroups.find((group) => group.items.some((item) => item.id === activeMenuId.value)))
     const activeComponent = computed(() => activeRoute.value.component)
     const activeProps = computed(() => activeRoute.value.props || {})
     let autoRefreshTimer = null
@@ -181,7 +184,7 @@ const App = {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     })
 
-    return { menuGroups, settings, authed, authChecking, loginLoading, loginForm, activeId, mobileMenuOpen, activeRoute, activeGroup, activeComponent, activeProps, navigate, toggleMobileMenu, closeMobileMenu, login, logout, refreshSettings }
+    return { menuGroups, settings, authed, authChecking, loginLoading, loginForm, activeId, activeMenuId, mobileMenuOpen, activeRoute, activeGroup, activeComponent, activeProps, navigate, toggleMobileMenu, closeMobileMenu, login, logout, refreshSettings }
   },
   template: `
     <div v-if="authChecking" class="admin-login-page"><div class="admin-login-card"><div class="admin-login-title">正在验证后台登录</div></div></div>
@@ -201,7 +204,7 @@ const App = {
         <a class="admin-brand" href="#/console"><span class="admin-brand-mark">AIπ</span><span>{{ settings.logoText || 'AIπ' }} Admin</span></a>
         <div v-for="group in menuGroups" :key="group.title" class="admin-menu-group">
           <div class="admin-menu-title">{{ group.title }}</div>
-          <div v-for="item in group.items" :key="item.id" class="admin-menu-item" :class="{ 'is-active': activeId === item.id }" @click="navigate(item.id)">
+          <div v-for="item in group.items" :key="item.id" class="admin-menu-item" :class="{ 'is-active': activeMenuId === item.id }" @click="navigate(item.id)">
             <i :class="['ti', item.icon]"></i>
             <span>{{ item.label }}</span>
           </div>

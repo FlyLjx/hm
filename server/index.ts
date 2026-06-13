@@ -7,6 +7,7 @@ import { startTaskTimeoutScheduler } from './modules/tasks/taskTimeoutScheduler.
 import { attachUserSocket } from './modules/users/userSocket.js'
 import { startApiProviderMonitor } from './modules/apiProviders/apiProviderMonitor.js'
 import { installFileLogger } from './shared/fileLogger.js'
+import { runtimeBuildInfo } from './shared/buildInfo.js'
 
 installFileLogger()
 
@@ -21,6 +22,11 @@ async function bootstrap() {
 
   server.listen(env.port, () => {
     console.log(`API server running at http://localhost:${env.port}`)
+    console.info('[runtime-build]', JSON.stringify({
+      ...runtimeBuildInfo,
+      cwd: process.cwd(),
+      entry: process.argv[1],
+    }))
   })
 }
 

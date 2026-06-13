@@ -1,5 +1,5 @@
 import { adminApi } from '../api.js'
-import { amount, formatCurrency } from '../format.js'
+import { amount, formatCurrency, formatDate } from '../format.js'
 
 const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
 const { message } = antd
@@ -93,6 +93,8 @@ export const CostStatsPage = {
       amount,
       money,
       percent,
+      metricTone,
+      formatDate,
     }
   },
   template: `
@@ -129,7 +131,7 @@ export const CostStatsPage = {
         <a-spin :spinning="loading">
           <div class="cost-trend-list">
             <div v-for="item in trends" :key="item.day" class="cost-trend-row">
-              <div class="cost-trend-day">{{ item.day }}</div>
+              <div class="cost-trend-day">{{ formatDate(item.day).slice(0, 10) }}</div>
               <div class="cost-trend-bars">
                 <div class="cost-trend-bar revenue"><span :style="{ width: trendWidth(item.taskRevenue) }"></span><em>生成 {{ amount(item.taskRevenue) }}</em></div>
                 <div class="cost-trend-bar cost"><span :style="{ width: trendWidth(item.modelCost) }"></span><em>成本 {{ amount(item.modelCost) }}</em></div>

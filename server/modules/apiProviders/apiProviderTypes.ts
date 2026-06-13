@@ -1,4 +1,4 @@
-export type ApiProviderType = 'sub2api' | 'custom'
+export type ApiProviderType = 'sub2api' | 'custom' | 'newapi'
 export type ApiProviderStatus = 'active' | 'disabled'
 export type ApiProviderCapability = 'chat_image'
 

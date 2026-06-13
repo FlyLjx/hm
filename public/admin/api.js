@@ -99,6 +99,7 @@ export const adminApi = {
   listApiLogs: (params) => request(`/api/api-logs${query(params)}`),
   getApiLogStats: (params) => request(`/api/api-logs/stats${query(params)}`),
   getApiLogDetail: (id) => request(`/api/api-logs/${pathId(id)}`),
+  cleanupApiLogs: () => request('/api/api-logs/cleanup', json('POST')),
   listCreditLogs: (params) => request(`/api/credit-logs${query(params)}`),
   getCreditLogStats: (params) => request(`/api/credit-logs/stats${query(params)}`),
   deleteCreditLog: (id) => request(`/api/credit-logs/${pathId(id)}`, { method: 'DELETE' }),
@@ -143,4 +144,5 @@ export const adminApi = {
   listAccountPoolAccounts: () => request('/api/account-pool/accounts'),
   listSystemLogs: () => request('/api/system-logs'),
   getSystemLog: (params) => request(`/api/system-logs/detail${query(params)}`),
+  deleteSystemLog: (name) => request(`/api/system-logs/${pathId(name)}`, { method: 'DELETE' }),
 }

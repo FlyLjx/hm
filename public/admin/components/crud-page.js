@@ -222,8 +222,8 @@ export const CrudPage = {
         okType: 'danger',
         cancelText: '取消',
         async onOk() {
-          await props.delete(row.id)
-          message.success('删除成功')
+          const response = await props.delete(row.id)
+          message.success(response?.message || response?.data?.message || '删除成功')
           await load()
         },
       })

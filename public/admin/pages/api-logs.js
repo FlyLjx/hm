@@ -41,6 +41,7 @@ export const ApiLogsPage = {
     const rows = ref([])
     const stats = ref(null)
     const loading = ref(false)
+    const cleanupLoading = ref(false)
     const detailLoading = ref(false)
     const detail = ref(null)
     const page = ref(1)
@@ -59,6 +60,10 @@ export const ApiLogsPage = {
       avgDurationMs: 0,
       maxDurationMs: 0,
       groups: [],
+    })
+    const retentionText = computed(() => {
+      const policy = summary.value.retentionPolicy || {}
+      return `成功 ${policy.successDays || 7} 天，失败 ${policy.failedDays || 30} 天，监控 ${policy.monitorDays || 14} 天`
     })
 
     async function load() {
@@ -92,6 +97,22 @@ export const ApiLogsPage = {
       }
     }
 
+    async function cleanupLogs() {
+      if (!window.confirm('清理超过保留周期的 API 日志？成功日志和监控日志会更早清理。')) return
+      cleanupLoading.value = true
+      try {
+        const response = await adminApi.cleanupApiLogs()
+        const result = response.data || {}
+        message.success(`已清理 ${result.deletedCount || 0} 条旧日志`)
+        page.value = 1
+        await load()
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '清理 API 日志失败')
+      } finally {
+        cleanupLoading.value = false
+      }
+    }
+
     function handleAutoRefresh() {
       if (!detail.value) load()
     }
@@ -114,7 +135,7 @@ export const ApiLogsPage = {
       window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
-    return { rows, summary, loading, detailLoading, detail, page, pageSize, pagination, days, status, direction, keyword, load, openDetail, duration, percent, statusColor, directionLabel, directionColor, jsonText, formatDate }
+    return { rows, summary, loading, cleanupLoading, detailLoading, detail, page, pageSize, pagination, days, status, direction, keyword, retentionText, cleanupLogs, load, openDetail, duration, percent, statusColor, directionLabel, directionColor, jsonText, formatDate }
   },
   template: `
     <div class="page-stack">
@@ -123,9 +144,12 @@ export const ApiLogsPage = {
           <div>
             <div class="page-kicker">Upstream Monitor</div>
             <div class="page-title">API 日志</div>
-            <div class="page-desc">查看上游接口调用耗时、状态码、成功率和错误信息。</div>
+            <div class="page-desc">轻量保留接口调用状态和错误信息。成功日志只存摘要，失败日志保留排障细节；保留周期：{{ retentionText }}。</div>
           </div>
-          <a-button :loading="loading" @click="load">刷新</a-button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <a-button :loading="cleanupLoading" @click="cleanupLogs">清理旧日志</a-button>
+            <a-button :loading="loading" @click="load">刷新</a-button>
+          </div>
         </div>
         <div class="summary-grid api-log-summary">
           <div class="summary-card"><span>总调用</span><b>{{ summary.total }}</b></div>

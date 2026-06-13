@@ -36,15 +36,24 @@ export function getAvailableRatioOptions(model) {
 }
 
 export function getAvailableSizeTierOptions(model, ratio) {
-  if (model?.providerType !== 'custom' || !model.variants?.length) return sizeTierOptions
+  const modelEnabled = Array.isArray(model?.enabledSizeTiers) && model.enabledSizeTiers.length
+    ? model.enabledSizeTiers.filter((item) => sizeTierOptions.includes(item))
+    : sizeTierOptions
+  const baseEnabled = modelEnabled.length ? modelEnabled : sizeTierOptions
+  if (model?.providerType !== 'custom' || !model.variants?.length) return sizeTierOptions.filter((item) => baseEnabled.includes(item))
   const available = new Set(
     model.variants
-      .filter((item) => item.ratio === ratio)
-      .map((item) => item.sizeTier)
-      .filter((item) => sizeTierOptions.includes(item)),
+      .filter((variant) => {
+        const tier = variant.sizeTier
+        const variantEnabled = Array.isArray(variant.enabledSizeTiers) && variant.enabledSizeTiers.length
+          ? variant.enabledSizeTiers
+          : sizeTierOptions
+        return variant.ratio === ratio && sizeTierOptions.includes(tier) && variantEnabled.includes(tier)
+      })
+      .map((variant) => variant.sizeTier),
   )
-  if (available.size === 0) return sizeTierOptions
-  return sizeTierOptions.filter((item) => available.has(item))
+  if (available.size === 0) return sizeTierOptions.filter((item) => baseEnabled.includes(item))
+  return sizeTierOptions.filter((item) => baseEnabled.includes(item) && available.has(item))
 }
 
 export function getModelLabel(model) {

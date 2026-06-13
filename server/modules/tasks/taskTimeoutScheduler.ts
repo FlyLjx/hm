@@ -3,6 +3,7 @@ import { BarkService } from '../notifications/barkService.js'
 import { TaskService } from './taskService.js'
 
 const checkIntervalMs = 60 * 1000
+const schedulerLogVerbose = process.env.SCHEDULER_LOG_VERBOSE === '1'
 
 function formatLogTime(date = new Date()) {
   return date.toLocaleString('zh-CN', {
@@ -20,7 +21,9 @@ export function startTaskTimeoutScheduler() {
 
   const checkTimedOutTasks = async () => {
     if (running) {
-      console.info(`[task-timeout] skip check at ${formatLogTime()}, previous check still running`)
+      if (schedulerLogVerbose) {
+        console.info(`[task-timeout] skip check at ${formatLogTime()}, previous check still running`)
+      }
       return
     }
     running = true
@@ -38,9 +41,11 @@ export function startTaskTimeoutScheduler() {
           console.warn('[bark:task-timeout-push-failed]', error instanceof Error ? error.message : String(error))
         })
       }
-      console.info(
-        `[task-timeout] checked at ${formatLogTime()}, timeout=${timeoutMinutes}m, canceled=${canceledTasks.length}, duration=${Date.now() - startedAt}ms`,
-      )
+      if (schedulerLogVerbose || canceledTasks.length > 0) {
+        console.info(
+          `[task-timeout] checked at ${formatLogTime()}, timeout=${timeoutMinutes}m, canceled=${canceledTasks.length}, duration=${Date.now() - startedAt}ms`,
+        )
+      }
     } catch (error) {
       console.error(`[task-timeout] failed at ${formatLogTime()}, duration=${Date.now() - startedAt}ms`)
       console.error(error)

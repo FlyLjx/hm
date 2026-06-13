@@ -1,12 +1,12 @@
 import type { RowDataPacket } from 'mysql2'
 import { db } from '../../config/db.js'
-import type { AiModel, AiModelCapability, AiModelStatus } from './modelTypes.js'
+import type { AiModel, AiModelCapability, AiModelSizeTier, AiModelStatus } from './modelTypes.js'
 
 type AiModelRow = RowDataPacket & {
   id: string
   provider_id: string
   provider_name?: string
-  provider_type?: 'sub2api' | 'custom'
+  provider_type?: 'sub2api' | 'custom' | 'newapi'
   provider_status?: 'active' | 'disabled'
   model_name: string
   display_name: string
@@ -20,10 +20,33 @@ type AiModelRow = RowDataPacket & {
   price_2k: string | number
   price_4k: string | number
   append_size_to_prompt: number | boolean
+  enabled_size_tiers?: string | AiModelSizeTier[] | null
   sort_order: string | number
   status: AiModelStatus
   created_at: Date
   updated_at: Date
+}
+
+type CountRow = RowDataPacket & {
+  total: string | number
+}
+
+const defaultEnabledSizeTiers: AiModelSizeTier[] = ['1k', '2k', '4k']
+
+function normalizeEnabledSizeTiers(value: unknown): AiModelSizeTier[] {
+  const source = typeof value === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(value) as unknown
+        } catch {
+          return null
+        }
+      })()
+    : value
+  const tiers = Array.isArray(source)
+    ? source.filter((item): item is AiModelSizeTier => defaultEnabledSizeTiers.includes(item as AiModelSizeTier))
+    : []
+  return tiers.length ? [...new Set(tiers)] : [...defaultEnabledSizeTiers]
 }
 
 function toAiModel(row: AiModelRow): AiModel {
@@ -45,6 +68,7 @@ function toAiModel(row: AiModelRow): AiModel {
     price2k: Number(row.price_2k),
     price4k: Number(row.price_4k),
     appendSizeToPrompt: Boolean(row.append_size_to_prompt),
+    enabledSizeTiers: normalizeEnabledSizeTiers(row.enabled_size_tiers),
     sortOrder: Number(row.sort_order ?? 100),
     status: row.status,
     createdAt: row.created_at.toISOString(),
@@ -86,11 +110,11 @@ export class ModelRepository {
       `INSERT INTO ai_models
         (id, provider_id, model_name, display_name, capability,
          cost_1k, cost_2k, cost_4k, markup_percent,
-         price_change_percent, price_1k, price_2k, price_4k, append_size_to_prompt, sort_order, status)
+         price_change_percent, price_1k, price_2k, price_4k, append_size_to_prompt, enabled_size_tiers, sort_order, status)
        VALUES
         (:id, :providerId, :modelName, :displayName, :capability,
          :cost1k, :cost2k, :cost4k, :markupPercent,
-         :priceChangePercent, :price1k, :price2k, :price4k, :appendSizeToPrompt, :sortOrder, :status)
+         :priceChangePercent, :price1k, :price2k, :price4k, :appendSizeToPrompt, :enabledSizeTiersJson, :sortOrder, :status)
        ON DUPLICATE KEY UPDATE
         display_name = VALUES(display_name),
         cost_1k = VALUES(cost_1k),
@@ -102,9 +126,13 @@ export class ModelRepository {
         price_2k = VALUES(price_2k),
         price_4k = VALUES(price_4k),
         append_size_to_prompt = VALUES(append_size_to_prompt),
+        enabled_size_tiers = VALUES(enabled_size_tiers),
         sort_order = VALUES(sort_order),
         updated_at = CURRENT_TIMESTAMP`,
-      model,
+      {
+        ...model,
+        enabledSizeTiersJson: JSON.stringify(normalizeEnabledSizeTiers(model.enabledSizeTiers)),
+      },
     )
     return this.findByProviderNameAndCapability(model.providerId, model.modelName, model.capability)
   }
@@ -196,6 +224,7 @@ export class ModelRepository {
       price2k: 'price_2k',
       price4k: 'price_4k',
       appendSizeToPrompt: 'append_size_to_prompt',
+      enabledSizeTiers: 'enabled_size_tiers',
       sortOrder: 'sort_order',
       status: 'status',
     } as const
@@ -204,7 +233,7 @@ export class ModelRepository {
       const value = input[key as keyof AiModel]
       if (value !== undefined) {
         fields.push(`${column} = ?`)
-        values.push(value)
+        values.push(key === 'enabledSizeTiers' ? JSON.stringify(normalizeEnabledSizeTiers(value)) : value)
       }
     })
 
@@ -220,6 +249,14 @@ export class ModelRepository {
     return 'affectedRows' in result && result.affectedRows > 0
   }
 
+  async countTaskReferences(id: string) {
+    const [rows] = await db.query<CountRow[]>(
+      'SELECT COUNT(*) AS total FROM generation_tasks WHERE model_id = :id',
+      { id },
+    )
+    return Number(rows[0]?.total || 0)
+  }
+
   async deleteMany(ids: string[]) {
     const placeholders = ids.map(() => '?').join(', ')
     const [result] = await db.query(`DELETE FROM ai_models WHERE id IN (${placeholders})`, ids)
@@ -227,8 +264,26 @@ export class ModelRepository {
   }
 
   async deleteByProviderId(providerId: string) {
-    const [result] = await db.query('DELETE FROM ai_models WHERE provider_id = :providerId', { providerId })
-    return 'affectedRows' in result ? result.affectedRows : 0
+    const [disableResult] = await db.query(
+      `UPDATE ai_models
+       SET status = 'disabled'
+       WHERE provider_id = :providerId
+         AND EXISTS (
+          SELECT 1 FROM generation_tasks WHERE generation_tasks.model_id = ai_models.id
+         )`,
+      { providerId },
+    )
+    const [deleteResult] = await db.query(
+      `DELETE FROM ai_models
+       WHERE provider_id = :providerId
+         AND NOT EXISTS (
+          SELECT 1 FROM generation_tasks WHERE generation_tasks.model_id = ai_models.id
+         )`,
+      { providerId },
+    )
+    const disabledCount = 'affectedRows' in disableResult ? disableResult.affectedRows : 0
+    const deletedCount = 'affectedRows' in deleteResult ? deleteResult.affectedRows : 0
+    return disabledCount + deletedCount
   }
 
   async updateSortOrders(items: Array<{ id: string; sortOrder: number }>) {

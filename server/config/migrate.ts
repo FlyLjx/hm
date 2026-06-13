@@ -91,7 +91,7 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
     CREATE TABLE IF NOT EXISTS api_providers (
       id VARCHAR(36) PRIMARY KEY,
       name VARCHAR(80) NOT NULL,
-      type ENUM('sub2api', 'custom') NOT NULL,
+      type ENUM('sub2api', 'custom', 'newapi') NOT NULL,
       capability ENUM('chat_image') NOT NULL DEFAULT 'chat_image',
       base_url VARCHAR(255) NOT NULL,
       api_key VARCHAR(255) NOT NULL,
@@ -117,6 +117,7 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
       price_2k DECIMAL(10,4) NOT NULL DEFAULT 0,
       price_4k DECIMAL(10,4) NOT NULL DEFAULT 0,
       append_size_to_prompt TINYINT(1) NOT NULL DEFAULT 0,
+      enabled_size_tiers JSON NULL,
       sort_order INT NOT NULL DEFAULT 100,
       status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -425,6 +426,10 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
     'status',
     "ENUM('active', 'disabled') NOT NULL DEFAULT 'active'",
   )
+  await db.query(`
+    ALTER TABLE api_providers
+    MODIFY type ENUM('sub2api', 'custom', 'newapi') NOT NULL
+  `)
   await addColumnIfMissing(
     'api_providers',
     'capability',
@@ -449,6 +454,7 @@ export async function initializeDatabase(options: { repairLegacyUserIds?: boolea
   await addColumnIfMissing('ai_models', 'price_2k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'price_4k', 'DECIMAL(10,4) NOT NULL DEFAULT 0')
   await addColumnIfMissing('ai_models', 'append_size_to_prompt', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER price_4k')
+  await addColumnIfMissing('ai_models', 'enabled_size_tiers', 'JSON NULL AFTER append_size_to_prompt')
   await addColumnIfMissing('ai_models', 'sort_order', 'INT NOT NULL DEFAULT 100 AFTER append_size_to_prompt')
   await db.query(`
     UPDATE ai_models

@@ -36,7 +36,7 @@ export class ApiLogController {
   async stats(req: Request, res: Response) {
     const input = apiLogListSchema.pick({ days: true }).parse(req.query)
     const stats = await apiLogRepository.getStats(input)
-    res.json({ data: stats })
+    res.json({ data: { ...stats, retentionPolicy: apiLogRepository.retentionPolicy() } })
   }
 
   async detail(req: Request, res: Response) {
@@ -45,6 +45,11 @@ export class ApiLogController {
       throw new AppError(404, 'API 日志不存在')
     }
     res.json({ data: log })
+  }
+
+  async cleanup(_req: Request, res: Response) {
+    const result = await apiLogRepository.cleanupExpired()
+    res.json({ data: result })
   }
 
   async publicStatus(_req: Request, res: Response) {

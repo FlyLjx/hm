@@ -39,9 +39,7 @@ export const HistoryPage = {
     const keyword = ref('')
     const searchText = ref('')
     const brokenImageIds = ref(new Set())
-    const imageItems = computed(() => items.value
-      .flatMap(expandTaskImages)
-      .filter((item) => !brokenImageIds.value.has(item.id)))
+    const imageItems = computed(() => items.value.flatMap(expandTaskImages))
     const hasItems = computed(() => imageItems.value.length > 0)
     const totalText = computed(() => {
       const total = Number(pagination.value?.total || 0)
@@ -128,6 +126,10 @@ export const HistoryPage = {
       brokenImageIds.value = new Set([...brokenImageIds.value, item.id])
     }
 
+    function isBrokenImage(item) {
+      return brokenImageIds.value.has(item.id)
+    }
+
     function editImage(item) {
       saveTransferredPrompt({
         prompt: item.task.prompt || '',
@@ -203,6 +205,7 @@ export const HistoryPage = {
       changePage,
       previewImage,
       hideBrokenImage,
+      isBrokenImage,
       editImage,
       createFromImage,
       toggleFavorite,
@@ -255,8 +258,13 @@ export const HistoryPage = {
 
       <section v-else v-loading="loading" class="history-board">
         <article v-for="item in imageItems" :key="item.id" class="history-card">
-          <button class="history-cover plain-btn" type="button" @click="previewImage(item)">
-            <img :src="item.thumbnailUrl || item.url" :alt="item.task.displayNote || item.task.prompt || '历史图片'" @error="hideBrokenImage(item)" />
+          <button class="history-cover plain-btn" type="button" :disabled="isBrokenImage(item)" @click="previewImage(item)">
+            <img v-if="!isBrokenImage(item)" :src="item.thumbnailUrl || item.url" :alt="item.task.displayNote || item.task.prompt || '历史图片'" @error="hideBrokenImage(item)" />
+            <span v-else class="history-missing-image">
+              <i class="ti ti-photo-off"></i>
+              <strong>图片跑丢了</strong>
+              <small>原图片链接已失效</small>
+            </span>
             <span>{{ publicStatusLabel(item.task.publicStatus) }}</span>
             <small v-if="(item.task.resultUrls || []).length > 1">{{ item.index + 1 }} / {{ item.task.resultUrls.length }}</small>
           </button>
@@ -270,9 +278,9 @@ export const HistoryPage = {
             </div>
           </div>
           <div class="history-actions">
-            <button class="result-action" type="button" @click="previewImage(item)"><i class="ti ti-maximize"></i>预览</button>
-            <button class="result-action primary" type="button" @click="editImage(item)"><i class="ti ti-wand"></i>继续改</button>
-            <button class="result-action" type="button" @click="createFromImage(item)"><i class="ti ti-photo-plus"></i>新增图片</button>
+            <button class="result-action" type="button" :disabled="isBrokenImage(item)" @click="previewImage(item)"><i class="ti ti-maximize"></i>预览</button>
+            <button class="result-action primary" type="button" :disabled="isBrokenImage(item)" @click="editImage(item)"><i class="ti ti-wand"></i>继续改</button>
+            <button class="result-action" type="button" :disabled="isBrokenImage(item)" @click="createFromImage(item)"><i class="ti ti-photo-plus"></i>新增图片</button>
             <button class="result-action" type="button" @click="toggleFavorite(item)">
               <i :class="['ti', item.task.favoriteEnabled ? 'ti-heart-filled' : 'ti-heart']"></i>{{ item.task.favoriteEnabled ? '已收藏' : '收藏' }}
             </button>

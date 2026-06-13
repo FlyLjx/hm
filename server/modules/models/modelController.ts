@@ -44,8 +44,8 @@ export class ModelController {
   }
 
   async delete(req: Request, res: Response) {
-    await modelService.deleteModel(getStringParam(req.params.id, 'id'))
-    res.status(204).send()
+    const result = await modelService.deleteModel(getStringParam(req.params.id, 'id'))
+    res.json({ data: result, message: result.message })
   }
 
   async deleteMany(req: Request, res: Response) {

@@ -1,5 +1,5 @@
 import { API_BASE_URL, adminApi } from '../api.js'
-import { amount, statusItem } from '../format.js'
+import { amount, formatDate, statusItem } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
 const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
@@ -186,7 +186,7 @@ export const TasksPage = {
       else loadTasks()
     })
 
-    return { adminApi, isImages, taskRows, taskLoading, taskPage, taskPageSize, taskPagination, imageRows, imageLoading, imagePage, imagePageSize, imagePagination, imageDisplay, imageKeyword, preview, brokenImageIds, loadTasks, cancelTask, canCancelTask, loadImages, toggle, reviewPublic, imageSrc, markImageBroken, openPreview, API_BASE_URL, amount, statusItem, formatDuration, modelLabel, userLabel, subscriptionLabel, subscriptionStatus, errorLabel, publicStatusText, publicStatusColor }
+    return { adminApi, isImages, taskRows, taskLoading, taskPage, taskPageSize, taskPagination, imageRows, imageLoading, imagePage, imagePageSize, imagePagination, imageDisplay, imageKeyword, preview, brokenImageIds, loadTasks, cancelTask, canCancelTask, loadImages, toggle, reviewPublic, imageSrc, markImageBroken, openPreview, API_BASE_URL, amount, formatDate, statusItem, formatDuration, modelLabel, userLabel, subscriptionLabel, subscriptionStatus, errorLabel, publicStatusText, publicStatusColor }
   },
   template: `
     <div v-if="!isImages" class="page-stack">
@@ -242,48 +242,98 @@ export const TasksPage = {
         <div class="pagination-row"><a-pagination v-model:current="taskPage" size="small" :page-size="taskPageSize" :total="taskPagination?.total || 0" /></div>
       </a-card>
     </div>
-    <div v-else class="page-stack">
-      <a-card class="admin-view-card" :bordered="false">
+    <div v-else class="page-stack image-manager-page">
+      <a-card class="admin-view-card image-manager-header" :bordered="false">
         <div class="admin-card-hero">
-          <div><div class="page-kicker">Gallery Review</div><div class="page-title">图片管理</div><div class="page-desc">审核公开展示图片，支持直接预览原图。</div></div>
-          <a-button :loading="imageLoading" @click="loadImages">刷新</a-button>
+          <div class="image-manager-heading">
+            <span class="image-manager-heading-icon"><i class="ti ti-photo-shield"></i></span>
+            <div>
+              <div class="page-kicker">Gallery Review</div>
+              <div class="page-title">图片管理</div>
+              <div class="page-desc">集中审核作品公开状态，失效的上游图片会保留记录并明确标记。</div>
+            </div>
+          </div>
+          <div class="image-manager-summary">
+            <div><span>全部记录</span><strong>{{ amount(imagePagination?.total || 0) }}</strong></div>
+            <div><span>当前页</span><strong>{{ amount(imageRows.length) }}</strong></div>
+            <div><span>失效图片</span><strong :class="{ 'amount-negative': brokenImageIds.size }">{{ amount(brokenImageIds.size) }}</strong></div>
+          </div>
         </div>
-        <div class="filter-row">
-          <a-input v-model:value="imageKeyword" allow-clear placeholder="搜索提示词 / 用户 / 模型" style="width:320px" />
-          <a-select v-model:value="imageDisplay" style="width:150px"><a-select-option value="all">全部图片</a-select-option><a-select-option value="pending">待审核</a-select-option><a-select-option value="public">公开展示</a-select-option><a-select-option value="private">未公开</a-select-option><a-select-option value="rejected">未通过</a-select-option></a-select>
+        <div class="gallery-filter-row">
+          <a-input v-model:value="imageKeyword" allow-clear placeholder="搜索提示词、用户或模型">
+            <template #prefix><i class="ti ti-search"></i></template>
+          </a-input>
+          <a-select v-model:value="imageDisplay">
+            <a-select-option value="all">全部图片</a-select-option>
+            <a-select-option value="pending">待审核</a-select-option>
+            <a-select-option value="public">公开展示</a-select-option>
+            <a-select-option value="private">未公开</a-select-option>
+            <a-select-option value="rejected">未通过</a-select-option>
+          </a-select>
+          <span class="gallery-result-count">本页 {{ imageRows.length }} 张</span>
+          <a-button :loading="imageLoading" @click="loadImages"><i class="ti ti-refresh"></i>刷新</a-button>
         </div>
       </a-card>
-      <a-spin :spinning="imageLoading">
-        <div class="image-grid">
-          <article v-for="task in imageRows" :key="task.id" class="image-card">
-            <button v-if="imageSrc(task) && !brokenImageIds.has(task.id)" class="image-card-cover" type="button" @click="openPreview(task)">
-              <img :src="imageSrc(task)" alt="" loading="lazy" @error="markImageBroken(task)" />
-            </button>
-            <div v-else class="image-card-missing">
-              <i class="ti ti-photo-off"></i>
-              <strong>图片走丢咯...</strong>
-              <span>{{ task.displayNote || task.prompt || '图片加载失败' }}</span>
-            </div>
-            <div class="image-card-body">
-              <div><a-tag :color="publicStatusColor(task)">{{ publicStatusText(task) }}</a-tag></div>
-              <div v-if="subscriptionLabel(task)"><a-tag color="gold">{{ subscriptionLabel(task) }}</a-tag></div>
-              <div class="muted cell-ellipsis">{{ modelLabel(task) }}</div>
-              <div class="image-card-prompt">{{ task.displayNote || task.prompt || '-' }}</div>
-              <div class="image-card-actions">
-                <a-button v-if="task.publicStatus === 'pending'" type="primary" @click="reviewPublic(task, 'approved')">通过</a-button>
-                <a-button v-if="task.publicStatus === 'pending'" danger @click="reviewPublic(task, 'rejected')">拒绝</a-button>
-                <a-button v-if="task.publicStatus !== 'pending'" :type="task.displayEnabled ? 'default' : 'primary'" @click="toggle(task)">{{ task.displayEnabled ? '取消公开' : '设为公开' }}</a-button>
-              </div>
-            </div>
-          </article>
+
+      <section class="gallery-panel">
+        <div class="gallery-panel-head">
+          <div>
+            <strong>作品审核</strong>
+            <span>点击图片可查看原图和完整生成信息</span>
+          </div>
+          <a-tag color="blue">第 {{ imagePage }} 页</a-tag>
         </div>
-        <a-empty v-if="!imageRows.length && !imageLoading" description="暂无图片" />
-      </a-spin>
-      <div class="pagination-row"><a-pagination v-model:current="imagePage" size="small" :page-size="imagePageSize" :total="imagePagination?.total || 0" /></div>
+        <a-spin :spinning="imageLoading">
+          <div class="image-grid">
+            <article v-for="task in imageRows" :key="task.id" :class="['image-card', { 'is-missing': brokenImageIds.has(task.id) }]">
+              <div class="image-card-media">
+                <a-tag class="image-card-status" :color="publicStatusColor(task)">{{ publicStatusText(task) }}</a-tag>
+                <button v-if="imageSrc(task) && !brokenImageIds.has(task.id)" class="image-card-cover" type="button" @click="openPreview(task)">
+                  <img :src="imageSrc(task)" :alt="task.displayNote || task.prompt || '生成图片'" loading="lazy" @error="markImageBroken(task)" />
+                  <span class="image-card-preview-hint"><i class="ti ti-maximize"></i>查看原图</span>
+                </button>
+                <div v-else class="image-card-missing">
+                  <i class="ti ti-photo-off"></i>
+                  <strong>图片跑丢了</strong>
+                  <span>上游原图可能已过期或无法访问</span>
+                </div>
+              </div>
+              <div class="image-card-body">
+                <div class="image-card-meta">
+                  <span :title="modelLabel(task)"><i class="ti ti-robot"></i>{{ modelLabel(task) }}</span>
+                  <time>{{ formatDate(task.createdAt) }}</time>
+                </div>
+                <div class="image-card-prompt" :title="task.displayNote || task.prompt || '-'">{{ task.displayNote || task.prompt || '-' }}</div>
+                <div class="image-card-owner">
+                  <span :title="userLabel(task)"><i class="ti ti-user"></i>{{ userLabel(task) }}</span>
+                  <a-tag v-if="subscriptionLabel(task)" color="gold">{{ subscriptionLabel(task) }}</a-tag>
+                </div>
+                <div class="image-card-actions">
+                  <a-button v-if="task.publicStatus === 'pending'" type="primary" @click="reviewPublic(task, 'approved')">通过</a-button>
+                  <a-button v-if="task.publicStatus === 'pending'" danger @click="reviewPublic(task, 'rejected')">拒绝</a-button>
+                  <a-button v-if="task.publicStatus !== 'pending'" :type="task.displayEnabled ? 'default' : 'primary'" @click="toggle(task)">
+                    <i :class="['ti', task.displayEnabled ? 'ti-eye-off' : 'ti-world']"></i>
+                    {{ task.displayEnabled ? '取消公开' : '设为公开' }}
+                  </a-button>
+                </div>
+              </div>
+            </article>
+          </div>
+          <a-empty v-if="!imageRows.length && !imageLoading" class="gallery-empty" description="暂无符合条件的图片" />
+        </a-spin>
+        <div v-if="imagePagination?.total" class="gallery-pagination">
+          <span>共 {{ amount(imagePagination.total) }} 条记录</span>
+          <a-pagination v-model:current="imagePage" size="small" :page-size="imagePageSize" :total="imagePagination.total" :show-size-changer="false" />
+        </div>
+      </section>
+
       <a-modal :open="Boolean(preview)" title="图片预览" width="920px" @cancel="preview = null" @ok="preview = null">
-        <div v-if="preview" class="page-stack">
-          <img :src="preview.src" style="width:100%;max-height:58vh;object-fit:contain;background:#f5f7fb;border-radius:8px" />
-          <div class="summary-grid" style="padding:0"><div class="summary-card"><span>模型</span><b style="font-size:16px">{{ preview.model || '-' }}</b></div><div class="summary-card"><span>用户</span><b style="font-size:16px">{{ preview.user || '-' }}</b></div></div>
+        <div v-if="preview" class="image-preview-dialog">
+          <img :src="preview.src" />
+          <div class="image-preview-meta">
+            <div><span>模型</span><strong>{{ preview.model || '-' }}</strong></div>
+            <div><span>用户</span><strong>{{ preview.user || '-' }}</strong></div>
+          </div>
           <p>{{ preview.prompt }}</p>
         </div>
       </a-modal>

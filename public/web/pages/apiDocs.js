@@ -11,7 +11,7 @@ export const ApiDocsPage = {
     const baseUrl = computed(() => (typeof location === 'undefined' ? '' : location.origin))
     const sampleKey = computed(() => props.currentUser ? 'sk-aipi-你的完整Key' : '登录后在用户中心生成 API Key')
     const endpoints = [
-      { method: 'GET', path: '/v1/models', label: '模型列表', desc: '返回可用模型，模型名称来自系统上游模型配置。' },
+      { method: 'GET', path: '/v1/models', label: '模型列表', desc: '返回可用模型和 variants；variants 可查看支持的比例与分辨率。' },
       { method: 'GET', path: '/v1/balance', label: '余额查询', desc: '返回当前 API Key 绑定账号的积分余额。' },
       { method: 'POST', path: '/v1/images/generations', label: '图片生成', desc: '文生图接口，支持 n 返回多张图片。' },
       { method: 'POST', path: '/v1/images/edits', label: '图片编辑', desc: '图生图/编辑接口，支持传入图片 URL 或图片数组。' },
@@ -21,7 +21,8 @@ export const ApiDocsPage = {
     const generationBody = {
       model: 'gpt-image-2',
       prompt: '一张绿色霓虹风格的未来城市海报',
-      size: '1024x1024',
+      aspect_ratio: '16:9',
+      size_tier: '2k',
       n: 1,
       response_format: 'url',
     }
@@ -29,7 +30,8 @@ export const ApiDocsPage = {
       model: 'gpt-image-2',
       prompt: '把图片改成赛博朋克风格，保留主体构图',
       image_url: ['https://example.com/image.png'],
-      size: '1024x1024',
+      aspect_ratio: '1:1',
+      size_tier: '1k',
       n: 1,
       response_format: 'url',
     }
@@ -117,6 +119,7 @@ export const ApiDocsPage = {
             <i class="ti ti-coins"></i>
           </header>
           <p>通过 Key 调用接口会消耗当前账号积分。模型价格读取后台模型管理配置；图片接口支持 n 参数返回多张图片，并按系统计费规则扣费。</p>
+          <p>图片接口支持两种尺寸写法：直接传 <code>size: "2048x1152"</code>，或传 <code>aspect_ratio: "16:9"</code> + <code>size_tier: "2k"</code>。如果使用 /v1/models 里 variants 的 id，也可以直接作为 model 调用。</p>
           <div class="api-docs-note">
             <i class="ti ti-info-circle"></i>
             <span>请勿在浏览器公开页面或客户端应用中暴露完整 Key。</span>
@@ -193,7 +196,7 @@ export const ApiDocsPage = {
         <div class="api-docs-response-grid">
           <div>
             <strong>图片接口</strong>
-            <p>返回 OpenAI 兼容的 data 数组，元素可能包含 url 或 b64_json，取决于 response_format。</p>
+            <p>统一返回 OpenAI 兼容的 data 数组，每个元素只包含 url。图片链接由上游保留约 15 天，请按需及时下载。</p>
           </div>
           <div>
             <strong>错误响应</strong>

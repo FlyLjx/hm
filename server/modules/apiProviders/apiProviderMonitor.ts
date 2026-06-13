@@ -6,6 +6,7 @@ import { BarkService } from '../notifications/barkService.js'
 const monitorIntervalMs = 60 * 1000
 const monitorTimeoutMs = 15 * 1000
 const monitorPhase = 'service-monitor'
+const schedulerLogVerbose = process.env.SCHEDULER_LOG_VERBOSE === '1'
 
 function formatLogTime(date = new Date()) {
   return date.toLocaleString('zh-CN', {
@@ -122,7 +123,9 @@ export function startApiProviderMonitor() {
 
   const run = async () => {
     if (running) {
-      console.info(`[service-monitor] skip sample at ${formatLogTime()}, previous sample still running`)
+      if (schedulerLogVerbose) {
+        console.info(`[service-monitor] skip sample at ${formatLogTime()}, previous sample still running`)
+      }
       return
     }
 
@@ -131,7 +134,9 @@ export function startApiProviderMonitor() {
     try {
       const providers = (await apiProviderRepository.findAll()).filter((provider) => provider.status === 'active')
       await Promise.allSettled(providers.map((provider) => sampleProvider(provider, apiLogRepository, barkService)))
-      console.info(`[service-monitor] sampled at ${formatLogTime()}, providers=${providers.length}, duration=${Date.now() - startedAt}ms`)
+      if (schedulerLogVerbose) {
+        console.info(`[service-monitor] sampled at ${formatLogTime()}, providers=${providers.length}, duration=${Date.now() - startedAt}ms`)
+      }
     } catch (error) {
       console.error(`[service-monitor] failed at ${formatLogTime()}, duration=${Date.now() - startedAt}ms`)
       console.error(error)

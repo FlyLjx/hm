@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
 export const modelCapabilitySchema = z.literal('chat_image')
+export const modelSizeTierSchema = z.enum(['1k', '2k', '4k'])
+export const enabledSizeTiersSchema = z.array(modelSizeTierSchema).min(1)
 
 export const createModelSchema = z.object({
   providerId: z.string().min(1).max(36),
@@ -16,10 +18,12 @@ export const createModelSchema = z.object({
   price2k: z.number().min(0).default(0),
   price4k: z.number().min(0).default(0),
   appendSizeToPrompt: z.boolean().default(false),
+  enabledSizeTiers: enabledSizeTiersSchema.default(['1k', '2k', '4k']),
   sortOrder: z.number().int().min(0).max(999999).default(100),
 })
 
 export const updateModelSchema = createModelSchema.partial().extend({
+  enabledSizeTiers: enabledSizeTiersSchema.optional(),
   status: z.enum(['active', 'disabled']).optional(),
 })
 

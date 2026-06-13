@@ -3,7 +3,7 @@ import { AppError } from '../../shared/AppError.js'
 import { ApiProviderRepository } from '../apiProviders/apiProviderRepository.js'
 import { ApiProviderService, type RemoteModel } from '../apiProviders/apiProviderService.js'
 import { ModelRepository } from './modelRepository.js'
-import type { AiModel, AiModelCapability, AiModelStatus, AiModelVariant } from './modelTypes.js'
+import type { AiModel, AiModelCapability, AiModelSizeTier, AiModelStatus, AiModelVariant } from './modelTypes.js'
 
 type CreateModelInput = {
   providerId: string
@@ -19,6 +19,7 @@ type CreateModelInput = {
   price2k: number
   price4k: number
   appendSizeToPrompt: boolean
+  enabledSizeTiers: AiModelSizeTier[]
   sortOrder: number
 }
 
@@ -102,6 +103,15 @@ function calculatePriceChangePercent(previousPrice: number, nextPrice: number) {
   return roundPrice(((nextPrice - previousPrice) / previousPrice) * 100)
 }
 
+const defaultEnabledSizeTiers: AiModelSizeTier[] = ['1k', '2k', '4k']
+
+function normalizeEnabledSizeTiers(value?: AiModelSizeTier[] | null): AiModelSizeTier[] {
+  const tiers = Array.isArray(value)
+    ? value.filter((item): item is AiModelSizeTier => defaultEnabledSizeTiers.includes(item))
+    : []
+  return tiers.length ? [...new Set(tiers)] : [...defaultEnabledSizeTiers]
+}
+
 function priceChangePercentFromUpdate(current: AiModel, input: UpdateModelInput) {
   const candidates = [
     { previous: current.price1k, next: input.price1k },
@@ -140,6 +150,7 @@ function createModelVariant(model: AiModel): AiModelVariant {
     price1k: model.price1k,
     price2k: model.price2k,
     price4k: model.price4k,
+    enabledSizeTiers: normalizeEnabledSizeTiers(model.enabledSizeTiers),
     sortOrder: model.sortOrder,
   }
 }
@@ -179,6 +190,10 @@ export class ModelService {
       }
 
       existing.variants.push(variant)
+      existing.enabledSizeTiers = normalizeEnabledSizeTiers([
+        ...(existing.enabledSizeTiers || []),
+        ...variant.enabledSizeTiers,
+      ])
       existing.price1k = Math.min(existing.price1k || model.price1k, model.price1k || existing.price1k)
       existing.price2k = Math.min(existing.price2k || model.price2k, model.price2k || existing.price2k)
       existing.price4k = Math.min(existing.price4k || model.price4k, model.price4k || existing.price4k)
@@ -214,6 +229,7 @@ export class ModelService {
       markupPercent,
       ...salePrices,
       appendSizeToPrompt: Boolean(input.appendSizeToPrompt),
+      enabledSizeTiers: normalizeEnabledSizeTiers(input.enabledSizeTiers),
       sortOrder: input.sortOrder ?? 100,
       status: 'active',
       createdAt: now,
@@ -250,8 +266,12 @@ export class ModelService {
       ? {
           ...priceInput,
           priceChangePercent: priceChangePercentFromUpdate(current, priceInput),
+          ...(priceInput.enabledSizeTiers !== undefined ? { enabledSizeTiers: normalizeEnabledSizeTiers(priceInput.enabledSizeTiers) } : {}),
         }
-      : priceInput
+      : {
+          ...priceInput,
+          ...(priceInput.enabledSizeTiers !== undefined ? { enabledSizeTiers: normalizeEnabledSizeTiers(priceInput.enabledSizeTiers) } : {}),
+        }
 
     const model = await this.modelRepository.update(id, normalizedInput)
     if (!model) {
@@ -261,15 +281,37 @@ export class ModelService {
   }
 
   async deleteModel(id: string) {
+    const model = await this.modelRepository.findById(id)
+    if (!model) {
+      throw new AppError(404, '模型不存在')
+    }
+    const usedCount = await this.modelRepository.countTaskReferences(id)
+    if (usedCount > 0) {
+      await this.modelRepository.update(id, { status: 'disabled' })
+      return {
+        action: 'disabled' as const,
+        usedCount,
+        message: `模型已有 ${usedCount} 条历史任务，已改为禁用并保留历史数据`,
+      }
+    }
     const deleted = await this.modelRepository.delete(id)
     if (!deleted) {
       throw new AppError(404, '模型不存在')
     }
+    return {
+      action: 'deleted' as const,
+      usedCount,
+      message: '模型已删除',
+    }
   }
 
   async deleteModels(ids: string[]) {
-    const deletedCount = await this.modelRepository.deleteMany(ids)
-    return { deletedCount }
+    const results = await Promise.all(Array.from(new Set(ids)).map((id) => this.deleteModel(id)))
+    return {
+      deletedCount: results.filter((item) => item.action === 'deleted').length,
+      disabledCount: results.filter((item) => item.action === 'disabled').length,
+      usedCount: results.reduce((sum, item) => sum + item.usedCount, 0),
+    }
   }
 
   async updateModelSortOrders(items: Array<{ id: string; sortOrder: number }>) {
@@ -330,6 +372,7 @@ export class ModelService {
           price2k: existingModel?.price2k ?? 0,
           price4k: existingModel?.price4k ?? 0,
           appendSizeToPrompt: existingModel?.appendSizeToPrompt ?? false,
+          enabledSizeTiers: normalizeEnabledSizeTiers(existingModel?.enabledSizeTiers),
           sortOrder: existingModel?.sortOrder ?? 100,
         })
       }),

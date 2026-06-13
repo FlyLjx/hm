@@ -11,6 +11,7 @@ const generationService = new GenerationService()
 const taskRepository = new TaskRepository()
 const apiLogRepository = new ApiLogRepository()
 const settingService = new SettingService()
+const generationLogVerbose = process.env.GENERATION_LOG_VERBOSE === '1'
 
 function summarizeReferenceImage(value?: string) {
   if (!value) return null
@@ -29,7 +30,8 @@ function summarizeMaskImage(value?: string) {
 }
 
 function logGenerationRequest(event: string, payload: Record<string, unknown>) {
-  console.info(`[generation:${event}]`, JSON.stringify(payload, null, 2))
+  if (!generationLogVerbose && event !== 'request-accepted') return
+  console.info(`[generation:${event}]`, JSON.stringify(payload))
 }
 
 function requestSummary(req: Request, input: ReturnType<typeof generateImageSchema.parse>, userIp: string) {
@@ -231,6 +233,15 @@ export class GenerationController {
         ...input,
         userIp,
         streamGenerationEnabled,
+      })
+      logGenerationRequest('request-accepted', {
+        taskId: task?.id,
+        status: task?.status,
+        userId: task?.userId,
+        modelId: task?.modelId,
+        sizeTier: task?.sizeTier,
+        size: task?.size,
+        quantity: task?.quantity,
       })
       await recordDownstreamLog({
         taskId: task?.id,

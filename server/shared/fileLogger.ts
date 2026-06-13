@@ -1,16 +1,46 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, truncateSync, unlinkSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { env } from '../config/env.js'
 
 const logDir = resolve(process.env.LOG_DIR || join(process.cwd(), 'logs'))
+const logTimeZone = process.env.LOG_TIME_ZONE || 'Asia/Shanghai'
 let installed = false
+
+function localDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: logTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+    hour: values.hour,
+    minute: values.minute,
+    second: values.second,
+    millisecond: String(date.getMilliseconds()).padStart(3, '0'),
+  }
+}
+
+function formatLogTimestamp(date = new Date()) {
+  const parts = localDateParts(date)
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${parts.millisecond}`
+}
 
 function ensureLogDir() {
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
 }
 
 function logFileName(date = new Date()) {
-  return `app-${date.toISOString().slice(0, 10)}.log`
+  const parts = localDateParts(date)
+  return `app-${parts.year}-${parts.month}-${parts.day}.log`
 }
 
 function logFilePath(date = new Date()) {
@@ -30,7 +60,7 @@ function serializeArg(value: unknown) {
 function writeLine(level: string, args: unknown[]) {
   try {
     ensureLogDir()
-    const line = `${new Date().toISOString()} [${level}] ${args.map(serializeArg).join(' ')}\n`
+    const line = `${formatLogTimestamp()} [${level}] ${args.map(serializeArg).join(' ')}\n`
     appendFileSync(logFilePath(), line, 'utf8')
   } catch {
     // Logging must never break the app.
@@ -113,5 +143,50 @@ export function readLogFileSince(inputName?: string, offset = 0, maxBytes = 200_
     size: stats.size,
     offset: stats.size,
     truncated: start > safeOffset,
+  }
+}
+
+export function deleteLogFile(inputName?: string) {
+  ensureLogDir()
+  const name = basename(inputName || '')
+  if (!/^app-\d{4}-\d{2}-\d{2}\.log$/.test(name)) {
+    return { deleted: false, name, reason: 'invalid_name' }
+  }
+  const path = resolve(logDir, name)
+  if (!path.startsWith(`${logDir}\\`) && !path.startsWith(`${logDir}/`)) {
+    return { deleted: false, name, reason: 'invalid_path' }
+  }
+  if (!existsSync(path)) {
+    return { deleted: false, name, reason: 'not_found' }
+  }
+  if (name === logFileName()) {
+    try {
+      truncateSync(path, 0)
+      return { deleted: true, name, truncated: true, reason: 'active_file_truncated' }
+    } catch (error) {
+      return {
+        deleted: false,
+        name,
+        reason: 'truncate_failed',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  try {
+    unlinkSync(path)
+    return { deleted: true, name, truncated: false }
+  } catch (error) {
+    try {
+      truncateSync(path, 0)
+      return { deleted: true, name, truncated: true, reason: 'delete_failed_truncated' }
+    } catch {
+      return {
+        deleted: false,
+        name,
+        reason: 'delete_failed',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
   }
 }

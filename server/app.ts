@@ -21,6 +21,7 @@ import { mailBroadcastRoutes } from './modules/mailBroadcast/mailBroadcastRoutes
 import { modelRoutes } from './modules/models/modelRoutes.js'
 import { openAiCompatRoutes } from './modules/openaiCompat/openaiCompatRoutes.js'
 import { oauthRoutes } from './modules/oauth/oauthRoutes.js'
+import { promptLibraryRoutes } from './modules/promptLibrary/promptLibraryRoutes.js'
 import { promptReverseRoutes } from './modules/promptReverse/promptReverseRoutes.js'
 import { promotionRoutes } from './modules/promotions/promotionRoutes.js'
 import { rechargeRoutes } from './modules/recharge/rechargeRoutes.js'
@@ -34,6 +35,7 @@ import { taskRoutes } from './modules/tasks/taskRoutes.js'
 import { userRoutes } from './modules/users/userRoutes.js'
 import { errorMiddleware } from './shared/errorMiddleware.js'
 import { asyncHandler } from './shared/asyncHandler.js'
+import { runtimeBuildInfo } from './shared/buildInfo.js'
 
 export const app = express()
 const publicPath = join(process.cwd(), 'public')
@@ -63,7 +65,8 @@ if (env.serveStatic) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ data: { status: 'ok' } })
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ data: runtimeBuildInfo })
 })
 
 app.get('/api/service-status', asyncHandler(apiLogController.publicStatus.bind(apiLogController)))
@@ -82,6 +85,7 @@ app.use('/api/api-logs', requireAdmin, apiLogRoutes)
 app.use('/api/credit-logs', requireAdmin, creditLogRoutes)
 app.use('/api/models', modelRoutes)
 app.use('/api/promotions', promotionRoutes)
+app.use('/api/prompt-library', promptLibraryRoutes)
 app.use('/api/prompt-reverse', promptReverseRoutes)
 app.use('/api/generate', generationRoutes)
 app.use('/api/chat', siteChatRoutes)

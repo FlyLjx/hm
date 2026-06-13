@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express'
-import { listLogFiles, readLogFile, readLogFileSince } from '../../shared/fileLogger.js'
+import { deleteLogFile, listLogFiles, readLogFile, readLogFileSince } from '../../shared/fileLogger.js'
+import { AppError } from '../../shared/AppError.js'
 
 function writeSse(res: Response, event: string, data: unknown) {
   res.write(`event: ${event}\n`)
@@ -15,6 +16,17 @@ export class SystemLogController {
     const name = typeof req.query.name === 'string' ? req.query.name : undefined
     const maxBytes = Number(req.query.maxBytes || 300000)
     res.json({ data: readLogFile(name, Number.isFinite(maxBytes) ? maxBytes : 300000) })
+  }
+
+  remove(req: Request, res: Response) {
+    const name = typeof req.params.name === 'string' ? req.params.name : ''
+    const result = deleteLogFile(name)
+    if (!result.deleted) {
+      if (result.reason === 'not_found') throw new AppError(404, '日志文件不存在')
+      if (result.reason === 'invalid_name' || result.reason === 'invalid_path') throw new AppError(400, '日志文件名不合法')
+      throw new AppError(500, result.message || '删除日志文件失败')
+    }
+    res.json({ data: result })
   }
 
   stream(req: Request, res: Response) {

@@ -91,6 +91,7 @@ async function main() {
   await copyRequired('package-lock.json', 'package-lock.json')
   await copyOptional('sync-legacy-user-passwords.sh', 'sync-legacy-user-passwords.sh')
 
+  await writeBuildInfo()
   await writeFile(resolve(releaseDir, '.env.example'), envExample(), 'utf8')
   await writeFile(resolve(releaseDir, 'README_DEPLOY.md'), deployReadme(), 'utf8')
   await writeFile(resolve(releaseDir, 'start-web.sh'), startShell(), 'utf8')
@@ -103,6 +104,23 @@ async function main() {
   console.log(`Release ready: ${releaseDir}`)
   console.log(`Archive ready: ${archivePath}`)
   console.log('Upload the contents of release/web to your server, then follow README_DEPLOY.md.')
+}
+
+async function writeBuildInfo() {
+  const builtAt = new Date().toISOString()
+  let gitCommit = ''
+  try {
+    gitCommit = (await runQuiet('git', ['rev-parse', '--short', 'HEAD'])).trim()
+  } catch {
+    // Release builds can also run outside a Git checkout.
+  }
+  const buildId = `${builtAt.replace(/\D/g, '').slice(0, 14)}-${gitCommit || 'nogit'}`
+  await writeFile(resolve(releaseDir, 'build-info.json'), `${JSON.stringify({
+    buildId,
+    builtAt,
+    gitCommit,
+    generationPolicy: 'url-only-no-fallback-v2',
+  }, null, 2)}\n`, 'utf8')
 }
 
 async function createArchive() {
@@ -134,6 +152,9 @@ NODE_ENV=production
 PORT=3001
 SERVE_STATIC=true
 REQUEST_BODY_LIMIT=80mb
+GENERATION_LOG_VERBOSE=0
+SCHEDULER_LOG_VERBOSE=0
+LOG_TIME_ZONE=Asia/Shanghai
 
 # If frontend and backend are on the same domain, keep this as your domain origin.
 CORS_ORIGIN=https://your-domain.com
@@ -179,6 +200,7 @@ This folder is a production release package.
 - \`public/\`: static frontend, admin frontend, and local vendor assets.
 - \`scripts/check-release.mjs\`: startup file completeness check.
 - \`package.json\` and \`package-lock.json\`: production dependency install files.
+- \`build-info.json\`: release fingerprint exposed by \`/api/health\`.
 - \`.env.example\`: copy this to \`.env\` and fill real values.
 
 ## Deploy
@@ -243,6 +265,15 @@ npm i -g pm2
 pm2 start dist-server/index.js --name aipi-web
 pm2 save
 \`\`\`
+
+After updating and restarting, verify the running release:
+
+\`\`\`bash
+curl "http://127.0.0.1:3001/api/health?_=1"
+pm2 describe aipi-web
+\`\`\`
+
+The health response must contain the same \`buildId\` as \`build-info.json\`.
 `
 }
 

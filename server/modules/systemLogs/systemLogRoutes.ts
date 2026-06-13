@@ -17,6 +17,7 @@ systemLogRoutes.use((req, _res, next) => {
 
 systemLogRoutes.get('/', requireAdmin, systemLogController.list.bind(systemLogController))
 systemLogRoutes.get('/detail', requireAdmin, systemLogController.detail.bind(systemLogController))
+systemLogRoutes.delete('/:name', requireAdmin, systemLogController.remove.bind(systemLogController))
 systemLogRoutes.get('/stream', requireAdmin, asyncHandler(async (req, res) => {
   systemLogController.stream(req, res)
 }))

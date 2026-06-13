@@ -3,6 +3,11 @@ import { formatDate, statusItem, text } from '../format.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
+const providerTypeOptions = [
+  { label: 'Sub2API', value: 'sub2api' },
+  { label: 'Custom', value: 'custom' },
+  { label: 'New API', value: 'newapi' },
+]
 
 export const ProvidersPage = {
   setup() {
@@ -23,6 +28,7 @@ export const ProvidersPage = {
       active: rows.value.filter((row) => row.status === 'active').length,
       disabled: rows.value.filter((row) => row.status === 'disabled').length,
       sub2api: rows.value.filter((row) => row.type === 'sub2api').length,
+      newapi: rows.value.filter((row) => row.type === 'newapi').length,
     }))
 
     const filteredRows = computed(() => {
@@ -138,7 +144,7 @@ export const ProvidersPage = {
     onBeforeUnmount(() => {
       window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
-    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
+    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, providerTypeOptions, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
   },
   template: `
     <div class="page-stack">
@@ -152,10 +158,11 @@ export const ProvidersPage = {
           <div class="summary-card"><span>启用接口</span><b>{{ summary.active }}</b></div>
           <div class="summary-card"><span>禁用接口</span><b>{{ summary.disabled }}</b></div>
           <div class="summary-card"><span>Sub2API</span><b>{{ summary.sub2api }}</b></div>
+          <div class="summary-card"><span>New API</span><b>{{ summary.newapi }}</b></div>
         </div>
         <div class="filter-row">
           <a-input v-model:value="keyword" allow-clear placeholder="搜索名称 / 地址 / 类型" style="width:300px" />
-          <a-select v-model:value="typeFilter" style="width:140px"><a-select-option value="all">全部类型</a-select-option><a-select-option value="sub2api">Sub2API</a-select-option><a-select-option value="custom">Custom</a-select-option></a-select>
+          <a-select v-model:value="typeFilter" style="width:140px"><a-select-option value="all">全部类型</a-select-option><a-select-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</a-select-option></a-select>
           <a-select v-model:value="statusFilter" style="width:140px"><a-select-option value="all">全部状态</a-select-option><a-select-option value="active">启用</a-select-option><a-select-option value="disabled">禁用</a-select-option></a-select>
           <a-button @click="resetFilters">重置</a-button>
           <a-tag color="blue">筛选 {{ filteredRows.length }} 条</a-tag>
@@ -187,7 +194,7 @@ export const ProvidersPage = {
       <a-modal v-model:open="dialogVisible" :title="editing ? '编辑接口' : '新增接口'" width="760px" @ok="saveProvider">
         <div class="form-grid">
           <label><div class="muted">接口名称</div><a-input v-model:value="form.name" /></label>
-          <label><div class="muted">接口类型</div><a-select v-model:value="form.type" style="width:100%"><a-select-option value="sub2api">Sub2API</a-select-option><a-select-option value="custom">Custom</a-select-option></a-select></label>
+          <label><div class="muted">接口类型</div><a-select v-model:value="form.type" style="width:100%"><a-select-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</a-select-option></a-select></label>
           <label><div class="muted">状态</div><a-select v-model:value="form.status" style="width:100%"><a-select-option value="active">启用</a-select-option><a-select-option value="disabled">禁用</a-select-option></a-select></label>
           <label><div class="muted">用途</div><a-select v-model:value="form.capability" style="width:100%"><a-select-option value="chat_image">对话生图</a-select-option></a-select></label>
           <label class="full"><div class="muted">Base URL</div><a-input v-model:value="form.baseUrl" /></label>

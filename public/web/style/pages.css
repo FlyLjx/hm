@@ -1431,6 +1431,17 @@
   line-height: 1.8;
 }
 
+.plaza-hero-copy .plaza-sync-error {
+  max-width: 620px;
+  padding: 9px 11px;
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 251, 235, 0.78);
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .plaza-stats {
   display: flex;
   flex-wrap: wrap;
@@ -1614,6 +1625,26 @@
   gap: 7px;
   align-items: center;
   padding: 0 13px 13px;
+}
+
+.plaza-actions .result-action.primary {
+  flex: 1;
+  justify-content: center;
+}
+
+.plaza-load-more {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.plaza-load-more .ti-loader-2 {
+  animation: spin 0.9s linear infinite;
 }
 
 .promo-grid {
@@ -2960,6 +2991,27 @@
   font-weight: 700;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.lost-image-card.is-canceled {
+  border-color: rgba(245, 158, 11, 0.42);
+  background:
+    linear-gradient(135deg, rgba(255, 251, 235, 0.96), rgba(255, 255, 255, 0.92));
+  color: #9a3412;
+  box-shadow: 0 10px 24px rgba(146, 64, 14, 0.06);
+}
+
+.lost-image-card.is-canceled i {
+  background: rgba(254, 243, 199, 0.92);
+  color: #d97706;
+}
+
+.lost-image-card.is-canceled strong {
+  color: #9a3412;
+}
+
+.lost-image-card.is-canceled small {
+  color: #92400e;
 }
 
 .result-item img {
@@ -6810,6 +6862,45 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.history-cover .history-missing-image {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 18px;
+  border-radius: 0;
+  background: #f2f5f3;
+  color: #59645f;
+}
+
+.history-cover .history-missing-image i {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 9px;
+  background: #e3eae6;
+  color: #65716b;
+  font-size: 21px;
+}
+
+.history-cover .history-missing-image strong {
+  color: #37413c;
+  font-size: 14px;
+}
+
+.history-cover .history-missing-image small {
+  position: static;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #7b8680;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .history-cover span,

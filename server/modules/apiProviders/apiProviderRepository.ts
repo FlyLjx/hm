@@ -5,7 +5,7 @@ import type { ApiProvider } from './apiProviderTypes.js'
 type ApiProviderRow = RowDataPacket & {
   id: string
   name: string
-  type: 'sub2api' | 'custom'
+  type: 'sub2api' | 'custom' | 'newapi'
   capability: 'chat_image'
   base_url: string
   api_key: string

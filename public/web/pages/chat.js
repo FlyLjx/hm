@@ -151,6 +151,12 @@ export const ChatPage = {
       transparentBackground.value = format === 'png'
     })
 
+    watch(availableSizeTiers, (items) => {
+      if (items.length && !items.includes(sizeTier.value)) {
+        sizeTier.value = items[0]
+      }
+    }, { immediate: true })
+
     function autoSessionTitle(no) {
       return `当前会话 #${no}`
     }
@@ -656,13 +662,17 @@ export const ChatPage = {
     }
 
     function hideBrokenImage(event, message, index) {
-      event.target?.closest?.('.result-thumb')?.classList.add('image-load-failed')
+      event.target?.closest?.('.result-gallery-item, .result-thumb')?.classList.add('image-load-failed')
       if (!message || !Number.isInteger(index)) return
       const hiddenIndexes = new Set(message.hiddenImageIndexes || [])
       hiddenIndexes.add(index)
       message.hiddenImageIndexes = [...hiddenIndexes]
       const nextVisibleIndex = (message.images || []).findIndex((image, itemIndex) => String(image || '').trim() && !hiddenIndexes.has(itemIndex))
       message.activeImageIndex = nextVisibleIndex >= 0 ? nextVisibleIndex : 0
+    }
+
+    function allResultImagesBroken(message) {
+      return Boolean(message?.images?.length) && visibleResultIndexes(message).length === 0
     }
 
     function findSessionIdByTaskId(taskId) {
@@ -1684,6 +1694,7 @@ export const ChatPage = {
       activeResultThumbnail,
       selectResultImage,
       hideBrokenImage,
+      allResultImagesBroken,
       switchSession,
       newSession,
       deleteSession,
@@ -1801,11 +1812,21 @@ export const ChatPage = {
                   </div>
                 </div>
               </template>
-              <p v-else-if="!visibleResultIndexes(message).length && !(message.status === 'failed' && !message.images?.length)">{{ message.text }}</p>
+              <p v-else-if="!visibleResultIndexes(message).length && !allResultImagesBroken(message) && !(['failed', 'canceled'].includes(message.status) && !message.images?.length)">{{ message.text }}</p>
               <div v-if="message.status === 'failed' && !message.images?.length" class="lost-image-card">
                 <i class="ti ti-photo-off"></i>
                 <strong>生成失败</strong>
                 <small v-if="message.errorMessage">{{ cleanDisplayErrorMessage(message.errorMessage) }}</small>
+              </div>
+              <div v-if="message.status === 'canceled' && !message.images?.length" class="lost-image-card is-canceled">
+                <i class="ti ti-circle-x"></i>
+                <strong>生成已取消</strong>
+                <small>{{ cleanDisplayErrorMessage(message.errorMessage) || '后台已取消这个生成任务' }}</small>
+              </div>
+              <div v-if="allResultImagesBroken(message)" class="lost-image-card is-missing" :style="resultImageStyle(message, 0)">
+                <i class="ti ti-photo-off"></i>
+                <strong>图片跑丢了</strong>
+                <small>原图片链接已失效或已被上游清理</small>
               </div>
               <div v-if="normalizeReferenceImages(message.referenceImages || message.referenceImage).length" class="reference-preview-list">
                 <button v-for="(image, index) in normalizeReferenceImages(message.referenceImages || message.referenceImage)" :key="image.url || image.name || index" :class="['reference-preview', { 'is-omitted': image.omitted }]" type="button" :disabled="!image.url" :title="image.url ? '预览参考图' : '本地参考图未保存'" @click="image.url && $emit('preview', { url: image.url, title: image.name || '参考图' })">

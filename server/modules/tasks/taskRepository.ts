@@ -86,7 +86,6 @@ function getResultUrls(resultJson: unknown): string[] {
     payload.image,
     payload.image_base64,
     payload.imageBase64,
-    payload.partial_image_b64,
   ].filter((item): item is string => typeof item === 'string')
   const directUrls = [
     ...urls.flatMap(extractUrlsFromString),
@@ -106,7 +105,6 @@ function getResultUrls(resultJson: unknown): string[] {
     'images',
     'image',
     'final',
-    'partial',
     'choices',
     'message',
     'content',
@@ -214,17 +212,6 @@ function getTaskThumbnailUrl(taskId: string, index: number) {
   return `/api/tasks/${taskId}/thumbnails/${index}`
 }
 
-function createMaterializedResultJson(urls: string[], previousResultJson: unknown) {
-  return {
-    ...(previousResultJson && typeof previousResultJson === 'object' && !Array.isArray(previousResultJson)
-      ? previousResultJson as Record<string, unknown>
-      : {}),
-    data: urls.map((url) => ({ url })),
-    materialized: true,
-    materializedAt: new Date().toISOString(),
-  }
-}
-
 function hasTaskResultImages(task: GenerationTask) {
   return Boolean(task.resultUrls?.length || task.resultUrl)
 }
@@ -282,9 +269,10 @@ const taskHasImageResultSql = "(generation_tasks.status = 'success' OR generatio
 
 function toTask(row: GenerationTaskRow): GenerationTask {
   const resultJson = parseJson(row.result_json)
-  const resultUrls = uniqueUrls(getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, row.provider_base_url)))
+  const resultUrls = row.status === 'success'
+    ? uniqueUrls(getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, row.provider_base_url)))
+    : []
   const imageCount = resultUrls.length
-  const hasResultImages = imageCount > 0
   const imageUrls = Array.from({ length: imageCount }, (_, index) => getTaskImageUrl(row.id, index))
   const thumbnailUrls = Array.from({ length: imageCount }, (_, index) => getTaskThumbnailUrl(row.id, index))
 
@@ -311,8 +299,8 @@ function toTask(row: GenerationTaskRow): GenerationTask {
     modelCostCredits: Number(row.model_cost_credits ?? 0),
     remainingCredits: Number(row.remaining_credits),
     durationSeconds: Number(row.duration_seconds),
-    status: hasResultImages ? 'success' : row.status,
-    errorMessage: hasResultImages ? null : row.error_message,
+    status: row.status,
+    errorMessage: row.error_message,
     resultJson: undefined,
     resultUrl: imageUrls[0] ?? null,
     resultUrls: imageUrls,
@@ -739,35 +727,10 @@ export class TaskRepository {
        LIMIT 1`,
       { id },
     )
+    if (rows[0]?.status !== 'success') return null
     const resultJson = parseJson(rows[0]?.result_json)
     const urls = getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, rows[0]?.provider_base_url))
     return urls[index] ?? null
-  }
-
-  async materializeImageUrlByIndex(id: string, index: number, dataUrl: string) {
-    const [rows] = await db.query<GenerationTaskRow[]>(
-      `SELECT generation_tasks.*, api_providers.base_url AS provider_base_url
-       FROM generation_tasks
-       LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
-       WHERE generation_tasks.id = :id
-       LIMIT 1`,
-      { id },
-    )
-    if (!rows[0]) return false
-    const resultJson = parseJson(rows[0].result_json)
-    const urls = getDisplayResultUrls(resultJson).map((url) => rewriteLocalUrlWithProvider(url, rows[0]?.provider_base_url))
-    if (!urls[index]) return false
-    urls[index] = dataUrl
-    const nextResultJson = createMaterializedResultJson(urls, resultJson)
-    await db.query(
-      `UPDATE generation_tasks
-       SET result_json = :resultJson,
-           status = 'success',
-           error_message = NULL
-       WHERE id = :id`,
-      { id, resultJson: JSON.stringify(nextResultJson) },
-    )
-    return true
   }
 
   async findTasksWithRemoteResultImages(limit = 100) {

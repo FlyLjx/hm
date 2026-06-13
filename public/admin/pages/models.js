@@ -4,6 +4,16 @@ import { CrudPage } from '../components/crud-page.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
 const { message } = antd
+const modelSizeTierOptions = [
+  { label: '1K', value: '1k' },
+  { label: '2K', value: '2k' },
+  { label: '4K', value: '4k' },
+]
+
+function formatEnabledSizeTiers(value) {
+  const tiers = Array.isArray(value) && value.length ? value : ['1k', '2k', '4k']
+  return tiers.map((item) => String(item).toUpperCase()).join(' / ')
+}
 
 const modelFields = [
   { key: 'providerId', label: '服务商ID', required: true },
@@ -18,6 +28,7 @@ const modelFields = [
   { key: 'price2k', label: '2K售价', type: 'number', number: true, defaultValue: 0 },
   { key: 'price4k', label: '4K售价', type: 'number', number: true, defaultValue: 0 },
   { key: 'appendSizeToPrompt', label: '前台尺寸带入提示词', boolean: true, defaultValue: false },
+  { key: 'enabledSizeTiers', label: '可用清晰度', type: 'multiple-select', defaultValue: ['1k', '2k', '4k'], options: modelSizeTierOptions },
   { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
 ]
 
@@ -93,7 +104,7 @@ export const ModelsPage = {
       const cost2k = toNumber(model.cost2k, cost1k)
       const cost4k = toNumber(model.cost4k, cost2k)
       const displayName = String(model.displayName || model.name).trim() || model.name
-      return { providerId: providerId.value, modelName: model.name, displayName, capability: 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), priceChangePercent: 0, price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, sortOrder: 100, status: 'active' }
+      return { providerId: providerId.value, modelName: model.name, displayName, capability: 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), priceChangePercent: 0, price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, enabledSizeTiers: ['1k', '2k', '4k'], sortOrder: 100, status: 'active' }
     }
 
     async function saveSelected() {
@@ -175,7 +186,7 @@ export const ModelsPage = {
     onBeforeUnmount(() => {
       window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
-    return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, amount, statusItem, text, formatDate }
+    return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, formatEnabledSizeTiers, amount, statusItem, text, formatDate }
   },
   template: `
     <div>
@@ -183,7 +194,7 @@ export const ModelsPage = {
         <CrudPage
           title="模型管理"
           singular="模型"
-          description="维护模型名称、展示名称、成本和售价。"
+          description="维护模型名称、展示名称、成本和售价。已有历史任务的模型删除时会自动改为禁用。"
           search
           :list="adminApi.listModels"
           :create="adminApi.createModel"
@@ -198,6 +209,7 @@ export const ModelsPage = {
             { label: '1K售价', key: 'price1k', format: 'amount' },
             { label: '2K售价', key: 'price2k', format: 'amount' },
             { label: '4K售价', key: 'price4k', format: 'amount' },
+            { label: '可用清晰度', render: row => formatEnabledSizeTiers(row.enabledSizeTiers) },
             { label: '价格浮动', key: 'priceChangePercent', format: 'price-change' },
             { label: '尺寸提示词', render: row => row.appendSizeToPrompt ? '开启' : '关闭' },
             { label: '状态', key: 'status', format: 'status' },

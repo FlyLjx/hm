@@ -14,7 +14,27 @@ import { taskEvents } from '../tasks/taskEvents.js'
 import { userEvents } from '../users/userEvents.js'
 import { TaskRepository } from '../tasks/taskRepository.js'
 import type { GenerationSizeTier, GenerationTask } from '../tasks/taskTypes.js'
-import sharp from 'sharp'
+import {
+  combineImageResults,
+  extractFinalImagesFromResult,
+  extractImagesFromResult,
+  getImageExtension,
+  hasFinalImageResult,
+  hasPartialImagePayload,
+  materializeImageResult,
+  normalizeImageResult,
+  normalizeOutputFormat,
+  normalizeReferenceImageUrls,
+  omitPartialImagePayload,
+  readReferenceImage,
+  summarizeImageResult,
+  summarizeMaskImage,
+  summarizeReferenceImage,
+  summarizeReferenceImages,
+  uniqueImages,
+  type ExtractedImage,
+  type GenerationOutputFormat,
+} from './generationImages.js'
 
 type GenerateImageInput = {
   userId: string
@@ -26,7 +46,7 @@ type GenerateImageInput = {
   sizeTier: GenerationSizeTier
   size?: string
   transparentBackground?: boolean
-  outputFormat?: 'png' | 'jpeg' | 'webp'
+  outputFormat?: GenerationOutputFormat
   openaiParams?: Record<string, unknown>
   streamGenerationEnabled?: boolean
   quantity: number
@@ -38,7 +58,10 @@ const allowedImageSizes: Record<GenerationSizeTier, string[]> = {
   '2k': ['2048x2048', '2048x1152', '1152x2048', '2048x1536', '1536x2048', '2048x1360', '1360x2048'],
   '4k': ['3072x3072', '3072x1728', '1728x3072', '3072x2304', '2304x3072', '3072x2048', '2048x3072'],
 }
+const defaultEnabledSizeTiers: GenerationSizeTier[] = ['1k', '2k', '4k']
 const defaultImageQuality = 'high'
+const generationLogVerbose = process.env.GENERATION_LOG_VERBOSE === '1'
+const generationLogPreviewChars = Math.max(80, Number(process.env.GENERATION_LOG_PREVIEW_CHARS || 220))
 
 const apiLogRepository = new ApiLogRepository()
 
@@ -102,6 +125,19 @@ function validateImageSize(sizeTier: GenerationSizeTier, size?: string) {
   return normalizedSize
 }
 
+function getEnabledModelSizeTiers(model: Pick<AiModel, 'enabledSizeTiers'>): GenerationSizeTier[] {
+  const tiers = Array.isArray(model.enabledSizeTiers)
+    ? model.enabledSizeTiers.filter((item): item is GenerationSizeTier => defaultEnabledSizeTiers.includes(item))
+    : []
+  return tiers.length ? tiers : defaultEnabledSizeTiers
+}
+
+function assertModelSizeTierEnabled(model: Pick<AiModel, 'enabledSizeTiers'>, sizeTier: GenerationSizeTier) {
+  if (!getEnabledModelSizeTiers(model).includes(sizeTier)) {
+    throw new AppError(400, `当前模型未开放 ${sizeTier.toUpperCase()} 清晰度，请重新选择`)
+  }
+}
+
 function shouldUseTransparentBackground(input: Pick<GenerateImageInput, 'transparentBackground' | 'outputFormat'>) {
   return Boolean(input.transparentBackground || input.outputFormat === 'png')
 }
@@ -128,6 +164,7 @@ function buildOpenAiImageRequestBody(input: GenerateImageInput, model: AiModel, 
     prompt,
     size: input.size ?? getDefaultSize(input.sizeTier),
     n: quantity,
+    response_format: 'url',
   }
 }
 
@@ -136,27 +173,53 @@ function getOpenAiBaseUrl(provider: ApiProvider) {
   return normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`
 }
 
+function isOpenAiCompatibleProvider(provider: ApiProvider) {
+  return provider.type === 'custom' || provider.type === 'newapi'
+}
+
 function getImageEndpoint(provider: ApiProvider) {
-  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/images/generations`
+  if (isOpenAiCompatibleProvider(provider)) return `${getOpenAiBaseUrl(provider)}/images/generations`
   return `${provider.baseUrl.replace(/\/+$/, '')}/images/generations`
 }
 
 function getImageEditEndpoint(provider: ApiProvider) {
-  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/images/edits`
+  if (isOpenAiCompatibleProvider(provider)) return `${getOpenAiBaseUrl(provider)}/images/edits`
   return `${provider.baseUrl.replace(/\/+$/, '')}/images/edits`
 }
 
-function getChatCompletionsEndpoint(provider: ApiProvider) {
-  if (provider.type === 'custom') return `${getOpenAiBaseUrl(provider)}/chat/completions`
-  return `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
+function rewriteUpstreamImageUrl(provider: ApiProvider, value: string) {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.startsWith('data:image/')) return value
+  const providerUrl = new URL(provider.baseUrl)
+  const providerOrigin = `${providerUrl.protocol}//${providerUrl.host}`
+
+  if (trimmed.startsWith('/')) {
+    return `${providerOrigin}${trimmed}`
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    if (!['127.0.0.1', 'localhost', '::1', '0.0.0.0'].includes(parsed.hostname)) return value
+    parsed.protocol = providerUrl.protocol
+    parsed.host = providerUrl.host
+    return parsed.toString()
+  } catch {
+    return value
+  }
 }
 
-function getResponsesEndpoint(provider: ApiProvider) {
-  return `${getOpenAiBaseUrl(provider)}/responses`
-}
+function rewriteUpstreamResultUrls(value: unknown, provider: ApiProvider, depth = 0): unknown {
+  if (!value || depth > 10) return value
+  if (typeof value === 'string') return rewriteUpstreamImageUrl(provider, value)
+  if (Array.isArray(value)) return value.map((item) => rewriteUpstreamResultUrls(item, provider, depth + 1))
+  if (typeof value !== 'object') return value
 
-function customImageFallbackLabel(error: unknown) {
-  return error instanceof AppError ? `${error.statusCode} ${error.message}` : error instanceof Error ? error.message : String(error)
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      rewriteUpstreamResultUrls(item, provider, depth + 1),
+    ]),
+  )
 }
 
 function getSizeRatio(size?: string | null) {
@@ -181,6 +244,30 @@ function buildUpstreamPrompt(input: Pick<GenerateImageInput, 'prompt' | 'size' |
     '',
     `画面尺寸要求：比例 ${ratio ?? '按所选尺寸'}，输出尺寸 ${size}，清晰度 ${input.sizeTier.toUpperCase()}。请严格按照该比例和尺寸构图，不要生成其他画幅。`,
   ].filter(Boolean).join('\n')
+}
+
+function getStreamEventType(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  const payload = value as Record<string, unknown>
+  return [
+    payload.type,
+    payload.event,
+    payload.object,
+    payload.status,
+  ].filter((item): item is string => typeof item === 'string').join(' ').toLowerCase()
+}
+
+function isPartialStreamEvent(value: unknown) {
+  const eventType = getStreamEventType(value)
+  return /partial|preview|progress|delta|in_progress|generating|queued|submitted/.test(eventType) ||
+    hasPartialImagePayload(value)
+}
+
+function isExplicitFinalStreamEvent(value: unknown) {
+  const eventType = getStreamEventType(value)
+  return Boolean(eventType) &&
+    /completed|complete|final|done|succeeded|success/.test(eventType) &&
+    !/partial|preview|progress|delta|in_progress|generating/.test(eventType)
 }
 
 function getSizeTierFromModelName(modelName: string): GenerationSizeTier | null {
@@ -212,286 +299,154 @@ function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b)
 }
 
-function summarizeReferenceImage(value?: string) {
+function removeUndefinedFields(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
+}
+
+function compactText(value: string | null | undefined, maxChars = generationLogPreviewChars) {
   if (!value) return null
+  const text = String(value).replace(/\s+/g, ' ').trim()
   return {
-    type: value.startsWith('data:') ? 'base64' : 'url',
-    length: value.length,
+    length: text.length,
+    preview: text.length > maxChars ? `${text.slice(0, maxChars)}...` : text,
   }
 }
 
-function parseDataImage(value: string) {
-  const match = value.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
-  if (!match) return null
-  return {
-    contentType: match[1],
-    buffer: Buffer.from(match[2], 'base64'),
-  }
-}
-
-function getImageExtension(contentType: string) {
-  if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg'
-  if (contentType.includes('webp')) return 'webp'
-  if (contentType.includes('gif')) return 'gif'
-  return 'png'
-}
-
-function normalizeReferenceImageUrls(input: Pick<GenerateImageInput, 'referenceImageUrl' | 'referenceImageUrls'>) {
-  const urls = [...(input.referenceImageUrls ?? []), ...(input.referenceImageUrl ? [input.referenceImageUrl] : [])]
-    .filter((value): value is string => Boolean(value))
-  return [...new Set(urls)].slice(0, 5)
-}
-
-function summarizeReferenceImages(values?: string[]) {
-  const urls = values ?? []
-  return urls.map(summarizeReferenceImage)
-}
-
-function summarizeMaskImage(value?: string) {
-  return value ? summarizeReferenceImage(value) : null
-}
-
-function detectImageContentType(buffer: Buffer, fallback = 'image/png') {
-  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return 'image/png'
-  }
-  if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) {
-    return 'image/jpeg'
-  }
-  if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
-    return 'image/webp'
-  }
-  if (buffer.subarray(0, 6).toString('ascii').startsWith('GIF')) {
-    return 'image/gif'
-  }
-  return fallback.startsWith('image/') ? fallback : 'image/png'
-}
-
-function parseInternalTaskImageUrl(value: string) {
-  const match = value.match(/\/api\/tasks\/([^/]+)\/images\/(\d+)(?:$|[?#])/)
-  if (!match) return null
-  return {
-    taskId: decodeURIComponent(match[1]),
-    index: Number(match[2]),
-  }
-}
-
-async function readReferenceImage(value: string, taskRepository: TaskRepository) {
-  const dataImage = parseDataImage(value)
-  if (dataImage) {
-    return dataImage
-  }
-
-  const internalTaskImage = parseInternalTaskImageUrl(value)
-  if (internalTaskImage) {
-    const imageUrl = await taskRepository.findImageUrlByIndex(internalTaskImage.taskId, internalTaskImage.index)
-    if (!imageUrl) {
-      throw new AppError(404, '参考图不存在')
-    }
-    return readReferenceImage(imageUrl, taskRepository)
-  }
-
-  const response = await fetch(value)
-  if (!response.ok) {
-    throw new AppError(response.status, `参考图读取失败：${response.status}`)
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer())
-  return {
-    contentType: detectImageContentType(buffer, response.headers.get('content-type') ?? 'image/png'),
-    buffer,
-  }
-}
-
-type ExtractedImage = { b64_json?: string; url?: string }
-
-function normalizeImageUrl(value: string) {
-  const trimmed = value.trim().replace(/[),.;]+$/g, '')
-  if (!trimmed) return null
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:image/')) {
-    return trimmed
-  }
-  if (/^[A-Za-z0-9+/=\s]+$/.test(trimmed) && trimmed.length > 200) {
-    return `data:image/png;base64,${trimmed.replace(/\s/g, '')}`
-  }
-  return null
-}
-
-function imageContentTypeFromFormat(format?: string | null) {
-  const normalized = String(format || '').toLowerCase()
-  if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg'
-  if (normalized === 'webp') return 'image/webp'
-  return 'image/png'
-}
-
-function normalizeOutputFormat(format?: string | null): GenerateImageInput['outputFormat'] | null {
-  const normalized = String(format || '').toLowerCase()
-  if (normalized === 'jpg' || normalized === 'jpeg') return 'jpeg'
-  if (normalized === 'webp') return 'webp'
-  if (normalized === 'png') return 'png'
-  return null
-}
-
-async function convertImageBufferToFormat(buffer: Buffer, fallbackContentType: string, outputFormat?: string) {
-  const targetFormat = normalizeOutputFormat(outputFormat)
-  if (!targetFormat) {
-    return {
-      contentType: detectImageContentType(buffer, fallbackContentType),
-      buffer,
-    }
-  }
-
-  if (targetFormat === 'jpeg') {
-    return {
-      contentType: 'image/jpeg',
-      buffer: await sharp(buffer).jpeg({ quality: 95 }).toBuffer(),
-    }
-  }
-
-  if (targetFormat === 'webp') {
-    return {
-      contentType: 'image/webp',
-      buffer: await sharp(buffer).webp({ quality: 95 }).toBuffer(),
-    }
-  }
-
-  return {
-    contentType: 'image/png',
-    buffer: await sharp(buffer).png().toBuffer(),
-  }
-}
-
-function imageDataUrl(buffer: Buffer, contentType: string) {
-  return `data:${contentType};base64,${buffer.toString('base64')}`
-}
-
-function resolveProviderUrl(provider: ApiProvider, value: string) {
-  const trimmed = value.trim()
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:image/')) return trimmed
-  if (trimmed.startsWith('/')) {
-    return `${provider.baseUrl.replace(/\/+$/, '')}${trimmed}`
-  }
-  return trimmed
-}
-
-function extractImageUrlsFromText(value: string, provider?: ApiProvider) {
-  const candidates = [
-    ...Array.from(value.matchAll(/!\[[^\]]*]\(([^)\s]+)\)/g)).map((match) => match[1]),
-    ...Array.from(value.matchAll(/<(?:img|video|source)[^>]+\bsrc=["']([^"']+)["']/gi)).map((match) => match[1]),
-    ...Array.from(value.matchAll(/(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)/g)).map((match) => match[1]),
-    ...Array.from(value.matchAll(/(https?:\/\/[^\s<>"'`\]]+)/gi)).map((match) => match[1]),
-    ...Array.from(value.matchAll(/(^|[\s"'(])((?:\/v1\/files|\/files|\/api\/files)\/[^\s<>"')]+)/gi)).map((match) => match[2]),
-  ]
-
-  const seen = new Set<string>()
-  return candidates
-    .map((candidate) => provider ? resolveProviderUrl(provider, candidate) : candidate)
-    .map((candidate) => normalizeImageUrl(candidate))
-    .filter((candidate): candidate is string => Boolean(candidate))
-    .filter((candidate) => {
-      if (seen.has(candidate)) return false
-      seen.add(candidate)
-      return true
-    })
-}
-
-function extractImagesFromResult(value: unknown, depth = 0, outputFormat?: string): ExtractedImage[] {
+function collectPromptText(value: unknown, depth = 0): string[] {
   if (!value || depth > 8) return []
-
-  if (typeof value === 'string') {
-    return extractImageUrlsFromText(value).map((url) => ({ url }))
-  }
-
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => extractImagesFromResult(item, depth + 1, outputFormat))
-  }
-
   if (typeof value !== 'object') return []
+  if (Array.isArray(value)) return value.flatMap((item) => collectPromptText(item, depth + 1))
 
-  const payload = value as Record<string, unknown>
-  const directUrl = [
-    payload.url,
-    payload.image_url,
-    payload.imageUrl,
-    payload.output_url,
-    payload.outputUrl,
-    payload.file_url,
-    payload.fileUrl,
-  ].find((item): item is string => typeof item === 'string')
-  const normalizedUrl = directUrl ? normalizeImageUrl(directUrl) : null
-  const directUrls = [
-    payload.urls,
-    payload.image_urls,
-    payload.imageUrls,
-    payload.output_urls,
-    payload.outputUrls,
-    payload.file_urls,
-    payload.fileUrls,
-  ]
-    .filter(Array.isArray)
-    .flatMap((items) => items.filter((item): item is string => typeof item === 'string'))
-    .map((item) => normalizeImageUrl(item))
-    .filter((item): item is string => Boolean(item))
-  const directBase64 = [
-    payload.b64_json,
-    payload.b64,
-    payload.base64,
-    payload.image,
-    payload.image_base64,
-    payload.imageBase64,
-    payload.partial_image_b64,
-  ].find((item): item is string => typeof item === 'string')
-
-  const directImages: ExtractedImage[] = []
-  if (normalizedUrl) directImages.push({ url: normalizedUrl })
-  directImages.push(...directUrls.map((url) => ({ url })))
-  if (directBase64) {
-    const normalizedBase64 = normalizeImageUrl(directBase64)
-    directImages.push(
-      normalizedBase64?.startsWith('data:image/')
-        ? { url: normalizedBase64 }
-        : { url: `data:${imageContentTypeFromFormat(outputFormat)};base64,${directBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, '')}` },
-    )
+  const result: string[] = []
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase()
+    if (normalizedKey === 'prompt' && typeof item === 'string') {
+      result.push(item)
+      continue
+    }
+    if (normalizedKey === 'text' && typeof item === 'string') {
+      result.push(item)
+      continue
+    }
+    if (['url', 'image_url', 'b64_json', 'image', 'mask'].includes(normalizedKey)) {
+      continue
+    }
+    result.push(...collectPromptText(item, depth + 1))
   }
-
-  const nestedKeys = [
-    'data',
-    'result',
-    'results',
-    'output',
-    'outputs',
-    'images',
-    'image',
-    'urls',
-    'image_urls',
-    'imageUrls',
-    'output_urls',
-    'outputUrls',
-    'file_urls',
-    'fileUrls',
-    'final',
-    'partial',
-    'choices',
-    'message',
-    'content',
-  ]
-  return [
-    ...directImages,
-    ...nestedKeys.flatMap((key) => extractImagesFromResult(payload[key], depth + 1, outputFormat)),
-  ]
+  return result
 }
 
-function extractFinalImagesFromResult(value: unknown, outputFormat?: string) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return extractImagesFromResult(value, 0, outputFormat)
-  const payload = value as Record<string, unknown>
-  const finalImages = extractImagesFromResult(payload.final, 0, outputFormat)
-  if (finalImages.length) return finalImages
-  const dataImages = extractImagesFromResult(payload.data, 0, outputFormat)
-  if (dataImages.length) return dataImages
-  if (payload.stream === true) return []
-  const resultImages = extractImagesFromResult(payload.result ?? payload.results ?? payload.output ?? payload.outputs ?? payload.images, 0, outputFormat)
-  if (resultImages.length) return resultImages
-  return extractImagesFromResult(value, 0, outputFormat)
+function summarizeGenerationRequestBody(value: unknown) {
+  const sanitized = sanitizeLogValue(value)
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return sanitized
+
+  const body = sanitized as Record<string, unknown>
+  const knownKeys = new Set([
+    'model',
+    'size',
+    'n',
+    'quality',
+    'output_format',
+    'response_format',
+    'background',
+    'stream',
+    'aspect_ratio',
+    'partial_images',
+    'streamGenerationEnabled',
+    'referenceImages',
+    'referenceImage',
+    'maskImage',
+    'messages',
+    'input',
+    'prompt',
+  ])
+  const prompt = collectPromptText(body).join('\n')
+  const extraKeys = Object.keys(body).filter((key) => !knownKeys.has(key))
+  return removeUndefinedFields({
+    model: body.model,
+    size: body.size,
+    n: body.n,
+    quality: body.quality,
+    outputFormat: body.output_format,
+    responseFormat: body.response_format,
+    background: body.background,
+    stream: body.stream,
+    aspectRatio: body.aspect_ratio,
+    partialImages: body.partial_images,
+    streamGenerationEnabled: body.streamGenerationEnabled,
+    prompt: compactText(prompt),
+    referenceImages: body.referenceImages ?? body.referenceImage,
+    maskImage: body.maskImage,
+    messageCount: Array.isArray(body.messages) ? body.messages.length : undefined,
+    inputCount: Array.isArray(body.input) ? body.input.length : undefined,
+    extraKeys: extraKeys.length ? extraKeys : undefined,
+  })
+}
+
+function summarizeResponseJsonForLog(value: unknown): unknown {
+  const imageSummary = summarizeImageResult(value)
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const payload = value as Record<string, unknown>
+    const error = payload.error
+    if (error && typeof error === 'object' && !Array.isArray(error)) {
+      const errorPayload = error as Record<string, unknown>
+      return removeUndefinedFields({
+        error: removeUndefinedFields({
+          message: typeof errorPayload.message === 'string' ? compactText(errorPayload.message, 360) : errorPayload.message,
+          type: errorPayload.type,
+          code: errorPayload.code,
+          param: errorPayload.param,
+          account_email: errorPayload.account_email ? '[redacted]' : undefined,
+        }),
+      })
+    }
+    return removeUndefinedFields({
+      id: payload.id,
+      object: payload.object,
+      status: payload.status,
+      model: payload.model,
+      imageCount: imageSummary.imageCount,
+      images: imageSummary.images,
+      outputCount: Array.isArray(payload.output) ? payload.output.length : undefined,
+      dataCount: Array.isArray(payload.data) ? payload.data.length : undefined,
+    })
+  }
+  return sanitizeLogValue(value)
+}
+
+function summarizeResponseTextForLog(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    return summarizeResponseJsonForLog(JSON.parse(value) as unknown)
+  } catch {
+    return compactText(value, 500)
+  }
+}
+
+function compactGenerationLogPayload(payload: Record<string, unknown>) {
+  const sanitized = sanitizeLogValue(payload)
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return sanitized
+
+  return removeUndefinedFields(
+    Object.fromEntries(
+      Object.entries(sanitized as Record<string, unknown>).map(([key, value]) => {
+        if (key === 'body') return [key, summarizeGenerationRequestBody(value)]
+        if (key === 'responseText') return [key, summarizeResponseTextForLog(typeof value === 'string' ? value : JSON.stringify(value))]
+        if (key === 'responseJson') return [key, summarizeResponseJsonForLog(value)]
+        if (key === 'requestSummary' && value && typeof value === 'object' && !Array.isArray(value)) {
+          const summary = value as Record<string, unknown>
+          return [key, {
+            ...summary,
+            body: summarizeGenerationRequestBody(summary.body),
+          }]
+        }
+        if (['prompt', 'content', 'reason', 'errorMessage', 'message'].includes(key) && typeof value === 'string') {
+          return [key, compactText(value, key === 'prompt' ? generationLogPreviewChars : 500)]
+        }
+        return [key, value]
+      }),
+    ),
+  )
 }
 
 function summarizeValue(value: unknown, depth = 0): unknown {
@@ -515,7 +470,7 @@ function sanitizeLogValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') {
     if (value.startsWith('data:image/')) return `data:image/*;length=${value.length}`
     if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 200) return `base64:length=${value.length}`
-    return value.length > 3000 ? `${value.slice(0, 3000)}... length=${value.length}` : value
+    return value.length > 1000 ? `${value.slice(0, 1000)}... length=${value.length}` : value
   }
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeLogValue(item, depth + 1))
   if (value && typeof value === 'object') {
@@ -523,6 +478,9 @@ function sanitizeLogValue(value: unknown, depth = 0): unknown {
       Object.entries(value as Record<string, unknown>).map(([key, item]) => {
         const normalizedKey = key.toLowerCase()
         if (normalizedKey.includes('authorization') || normalizedKey.includes('api_key') || normalizedKey === 'apikey') {
+          return [key, '[redacted]']
+        }
+        if (normalizedKey === 'account_email') {
           return [key, '[redacted]']
         }
         return [key, sanitizeLogValue(item, depth + 1)]
@@ -552,7 +510,7 @@ function summarizeHeaders(headers?: HeadersInit) {
 function summarizeRequestBody(body: unknown) {
   if (typeof body === 'string') {
     try {
-      return sanitizeLogValue(JSON.parse(body) as unknown)
+      return summarizeGenerationRequestBody(JSON.parse(body) as unknown)
     } catch {
       return sanitizeLogValue(body)
     }
@@ -564,12 +522,12 @@ function summarizeRequestBody(body: unknown) {
       if (value instanceof Blob) {
         values[key].push({ type: 'file', contentType: value.type, bytes: value.size })
       } else {
-        values[key].push(sanitizeLogValue(value))
+        values[key].push(key === 'prompt' ? compactText(String(value)) : sanitizeLogValue(value))
       }
     })
-    return values
+    return summarizeGenerationRequestBody(values)
   }
-  return sanitizeLogValue(body)
+  return summarizeGenerationRequestBody(body)
 }
 
 function summarizeResponsePayload(resultJson: unknown, responseText: string, outputFormat?: string) {
@@ -577,33 +535,8 @@ function summarizeResponsePayload(resultJson: unknown, responseText: string, out
   return {
     imageCount: imageSummary.imageCount,
     images: imageSummary.images,
-    json: sanitizeLogValue(resultJson),
-    text: resultJson === null ? summarizeText(responseText) : undefined,
-  }
-}
-
-function normalizeImageResult(resultJson: unknown, outputFormat?: string) {
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
-  if (images.length === 0) return resultJson
-  return {
-    ...(resultJson && typeof resultJson === 'object' && !Array.isArray(resultJson) ? resultJson as Record<string, unknown> : {}),
-    data: images,
-  }
-}
-
-function summarizeImageResult(resultJson: unknown, outputFormat?: string) {
-  if (!resultJson || typeof resultJson !== 'object') {
-    return { imageCount: 0 }
-  }
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
-
-  return {
-    imageCount: images.length,
-    images: images.map((image) => ({
-      type: image.url ? 'url' : image.b64_json ? 'base64' : 'unknown',
-      url: image.url,
-      base64Length: image.b64_json?.length,
-    })),
+    json: summarizeResponseJsonForLog(resultJson),
+    text: resultJson === null ? summarizeResponseTextForLog(responseText) : undefined,
   }
 }
 
@@ -619,73 +552,18 @@ function extractTextResultMessage(resultJson: unknown) {
   return typeof text === 'string' ? text.trim() : ''
 }
 
-async function materializeImageResult(resultJson: unknown, outputFormat?: string) {
-  const images = uniqueImages(extractFinalImagesFromResult(resultJson, outputFormat))
-  if (images.length === 0) return resultJson
-
-  const materializedImages = await Promise.all(images.map(async (image) => {
-    try {
-      if (image.b64_json) {
-        const buffer = Buffer.from(image.b64_json.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s/g, ''), 'base64')
-        const converted = await convertImageBufferToFormat(buffer, imageContentTypeFromFormat(outputFormat), outputFormat)
-        return { url: imageDataUrl(converted.buffer, converted.contentType) }
-      }
-
-      const dataImage = image.url?.startsWith('data:image/') ? parseDataImage(image.url) : null
-      if (dataImage) {
-        const converted = await convertImageBufferToFormat(dataImage.buffer, dataImage.contentType, outputFormat)
-        return { url: imageDataUrl(converted.buffer, converted.contentType) }
-      }
-
-      if (!image.url) {
-        return image
-      }
-
-      const response = await fetch(image.url)
-      if (!response.ok) {
-        return image
-      }
-      const buffer = Buffer.from(await response.arrayBuffer())
-      const converted = await convertImageBufferToFormat(
-        buffer,
-        response.headers.get('content-type') ?? imageContentTypeFromFormat(outputFormat),
-        outputFormat,
-      )
-      return { url: imageDataUrl(converted.buffer, converted.contentType) }
-    } catch {
-      return image
-    }
-  }))
-
-  return {
-    data: uniqueImages(materializedImages),
-    stream: Boolean(resultJson && typeof resultJson === 'object' && (resultJson as { stream?: unknown }).stream),
-  }
-}
-
-function combineImageResults(results: unknown[], outputFormat?: string) {
-  return {
-    data: uniqueImages(results.flatMap((result) => extractFinalImagesFromResult(result, outputFormat))),
-    stream: results.some((result) => Boolean(result && typeof result === 'object' && (result as { stream?: unknown }).stream)),
-  }
-}
-
-function hasFinalImageResult(resultJson: unknown, outputFormat?: string) {
-  if (!resultJson || typeof resultJson !== 'object' || Array.isArray(resultJson)) {
-    return summarizeImageResult(resultJson, outputFormat).imageCount > 0
-  }
-
-  const payload = resultJson as Record<string, unknown>
-  if (payload.stream === true) {
-    return summarizeImageResult(payload.final ?? payload.data, outputFormat).imageCount > 0
-  }
-
-  return summarizeImageResult(resultJson, outputFormat).imageCount > 0
-}
-
 function summarizeText(value: string | null) {
   if (!value) return null
-  return value.length > 1000 ? `${value.slice(0, 1000)}... length=${value.length}` : value
+  return value.length > 500 ? `${value.slice(0, 500)}... length=${value.length}` : value
+}
+
+function isHtmlResponseText(value: string) {
+  const text = value.trimStart().slice(0, 80).toLowerCase()
+  return text.startsWith('<!doctype') || text.startsWith('<html')
+}
+
+function upstreamHtmlErrorMessage(prefix: string) {
+  return `${prefix}：上游返回了网页 HTML，不是图片接口 JSON。通常是接口 Base URL 填成了上游后台/首页地址，或上游没有正确暴露 /v1 接口，请检查接口配置。`
 }
 
 function extractUpstreamErrorMessage(resultJson: unknown, responseText: string) {
@@ -696,6 +574,10 @@ function extractUpstreamErrorMessage(resultJson: unknown, responseText: string) 
     }
     const message = payload.error?.message ?? payload.message
     if (typeof message === 'string' || typeof message === 'number') return String(message)
+  }
+
+  if (isHtmlResponseText(responseText)) {
+    return '上游返回了网页 HTML，不是图片接口 JSON。通常是接口 Base URL 填成了上游后台/首页地址，或上游没有正确暴露 /v1 接口，请检查接口配置。'
   }
 
   return summarizeText(responseText) ?? ''
@@ -713,9 +595,8 @@ function cleanUserFacingErrorMessage(value: string) {
     .trim()
 }
 
-function isUnsupportedImageModelError(error: unknown) {
-  if (!(error instanceof AppError)) return false
-  return /unsupported image model|supported models/i.test(error.message)
+function isContentPolicyRejectionMessage(value: string) {
+  return /内容政策|防护限制|安全政策|违规|违反|content[_\s-]?policy|policy[_\s-]?violation|safety|violate|violation/i.test(value)
 }
 
 async function readResponseJsonWithText(response: Response) {
@@ -741,7 +622,22 @@ async function readResponseJsonWithText(response: Response) {
 }
 
 function logGeneration(event: string, payload: Record<string, unknown>) {
-  console.info(`[generation:${event}]`, JSON.stringify(payload, null, 2))
+  if (!generationLogVerbose && event !== 'finished') return
+  const compactPayload = generationLogVerbose ? sanitizeLogValue(payload) : compactGenerationLogPayload(payload)
+  console.info(`[generation:${event}]`, JSON.stringify(compactPayload))
+}
+
+function getHtmlUpstreamResponseError(prefix: string, response: Response, responseText: string) {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (response.ok && (contentType.includes('text/html') || isHtmlResponseText(responseText))) {
+    return upstreamHtmlErrorMessage(prefix)
+  }
+  return null
+}
+
+function assertNotHtmlUpstreamResponse(prefix: string, response: Response, responseText: string) {
+  const message = getHtmlUpstreamResponseError(prefix, response, responseText)
+  if (message) throw new AppError(502, message)
 }
 
 function summarizeError(error: unknown): Record<string, unknown> {
@@ -868,10 +764,6 @@ async function fetchUpstream(url: string, init: RequestInit, context: Record<str
   }
 }
 
-function isStreamFallbackStatus(status: number) {
-  return [400, 404, 405, 406, 415, 422, 500, 502, 503, 504].includes(status)
-}
-
 function isRetryableUpstreamStatus(status: number) {
   return [408, 409, 425, 429, 500, 502, 503, 504].includes(status)
 }
@@ -880,94 +772,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-function extractChatDeltaContent(value: unknown) {
-  if (!value || typeof value !== 'object') return ''
-
-  const choices = (value as { choices?: unknown }).choices
-  if (!Array.isArray(choices)) return ''
-
-  return choices
-    .map((choice) => {
-      if (!choice || typeof choice !== 'object') return ''
-      const payload = choice as {
-        delta?: { content?: unknown }
-        message?: { content?: unknown }
-      }
-      const content = payload.delta?.content ?? payload.message?.content
-      return typeof content === 'string' ? content : ''
-    })
-    .join('')
-}
-
-function uniqueImages(images: ExtractedImage[]) {
-  const seen = new Set<string>()
-  return images.filter((image) => {
-    const key = image.url ?? image.b64_json
-    if (!key || seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-function hasPartialImagePayload(value: unknown, depth = 0): boolean {
-  if (!value || depth > 8) return false
-  if (Array.isArray(value)) return value.some((item) => hasPartialImagePayload(item, depth + 1))
-  if (typeof value !== 'object') return false
-
-  const payload = value as Record<string, unknown>
-  if (typeof payload.partial_image_b64 === 'string') return true
-
-  return Object.values(payload).some((item) => hasPartialImagePayload(item, depth + 1))
-}
-
-function hasFinalImagePayload(value: unknown, depth = 0): boolean {
-  if (!value || depth > 8) return false
-  if (Array.isArray(value)) return value.some((item) => hasFinalImagePayload(item, depth + 1))
-  if (typeof value !== 'object') return false
-
-  const payload = value as Record<string, unknown>
-  const finalStringKeys = [
-    'url',
-    'b64_json',
-    'image_url',
-    'imageUrl',
-    'output_url',
-    'outputUrl',
-    'file_url',
-    'fileUrl',
-  ]
-  if (finalStringKeys.some((key) => typeof payload[key] === 'string')) return true
-
-  const finalArrayKeys = [
-    'urls',
-    'image_urls',
-    'imageUrls',
-    'output_urls',
-    'outputUrls',
-    'file_urls',
-    'fileUrls',
-  ]
-  if (finalArrayKeys.some((key) => Array.isArray(payload[key]) && (payload[key] as unknown[]).some((item) => typeof item === 'string'))) {
-    return true
-  }
-
-  return Object.entries(payload)
-    .filter(([key]) => key !== 'partial_image_b64')
-    .some(([, item]) => hasFinalImagePayload(item, depth + 1))
-}
-
-function omitPartialImagePayload(value: unknown, depth = 0): unknown {
-  if (!value || depth > 8) return value
-  if (Array.isArray(value)) return value.map((item) => omitPartialImagePayload(item, depth + 1))
-  if (typeof value !== 'object') return value
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== 'partial' && key !== 'partial_image_b64')
-      .map(([key, item]) => [key, omitPartialImagePayload(item, depth + 1)]),
-  )
 }
 
 export class GenerationService {
@@ -1027,7 +831,7 @@ export class GenerationService {
       referenceImageUrls,
     }
 
-    if (provider.type === 'custom') {
+    if (provider.type === 'custom' || provider.type === 'newapi') {
       const variants = await this.modelRepository.findByProviderDisplayNameAndCapability(
         model.providerId,
         model.displayName,
@@ -1036,6 +840,7 @@ export class GenerationService {
       variants.forEach((variant) => subscriptionCandidateModelIds.add(variant.id))
       model = findBestModelVariant(variants, getSizeRatio(normalizedSize), input.sizeTier) ?? model
     }
+    assertModelSizeTierEnabled(model, input.sizeTier)
     subscriptionCandidateModelIds.add(model.id)
     await this.subscriptionService.assertModelAccess({
       userId: user.id,
@@ -1173,7 +978,6 @@ export class GenerationService {
     let status: GenerationTask['status'] = 'success'
     let errorMessage: string | null = null
     let remainingCredits = user.credits
-    let fallbackSourceError: string | null = null
 
     try {
       taskEvents.emitUpdated(await this.taskRepository.update(taskId, { status: 'processing' }))
@@ -1188,6 +992,15 @@ export class GenerationService {
       try {
         if (input.referenceImageUrls?.length) {
           resultJson = await this.callOpenAiImageEdit({
+            taskId,
+            provider,
+            model,
+            input,
+            quantity,
+          })
+        } else if (provider.type === 'newapi') {
+          resultJson = await this.callOpenAiImageJsonWithRetry({
+            taskId,
             provider,
             model,
             input,
@@ -1210,47 +1023,11 @@ export class GenerationService {
             quantity,
           })
         }
+        resultJson = rewriteUpstreamResultUrls(resultJson, provider)
         resultJson = normalizeImageResult(resultJson, input.outputFormat)
         resultJson = await materializeImageResult(resultJson, input.outputFormat)
       } catch (error) {
-        if (
-          (provider.type === 'sub2api' || provider.type === 'custom') &&
-          error instanceof AppError &&
-          error.statusCode &&
-          !isUnsupportedImageModelError(error) &&
-          isStreamFallbackStatus(error.statusCode)
-        ) {
-          logGeneration('upstream-stream-fallback', {
-            taskId,
-            providerId: provider.id,
-            providerType: provider.type,
-            statusCode: error.statusCode,
-            fallback: provider.type === 'custom' ? 'chat_completion' : input.referenceImageUrls?.length ? 'image_edit' : 'image_json',
-            reason: error.message,
-          })
-          fallbackSourceError = cleanUserFacingErrorMessage(error.message)
-          if (provider.type === 'custom') {
-            try {
-              resultJson = await this.callCustomChatImageCompletion({ taskId, provider, model, input, quantity })
-            } catch (chatError) {
-              logGeneration('upstream-custom-chat-fallback-to-responses', {
-                taskId,
-                providerId: provider.id,
-                providerType: provider.type,
-                reason: customImageFallbackLabel(chatError),
-              })
-              resultJson = await this.callCustomResponsesImageCompletion({ taskId, provider, model, input, quantity })
-            }
-          } else {
-            resultJson = input.referenceImageUrls?.length
-              ? await this.callOpenAiImageEdit({ provider, model, input, quantity })
-              : await this.callOpenAiImageJsonWithRetry({ taskId, provider, model, input, quantity })
-          }
-          resultJson = normalizeImageResult(resultJson, input.outputFormat)
-          resultJson = await materializeImageResult(resultJson, input.outputFormat)
-        } else {
-          throw error
-        }
+        throw error
       }
 
       if (hasFinalImageResult(resultJson, input.outputFormat)) {
@@ -1272,8 +1049,7 @@ export class GenerationService {
       } else {
         status = 'failed'
         const textResultMessage = cleanUserFacingErrorMessage(extractTextResultMessage(resultJson))
-        errorMessage = fallbackSourceError
-          || (textResultMessage ? `上游接口未返回图片结果：${textResultMessage}` : '上游接口未返回图片结果')
+        errorMessage = textResultMessage ? `上游接口未返回图片结果：${textResultMessage}` : '上游接口未返回图片结果'
       }
     } catch (error) {
       status = 'failed'
@@ -1283,7 +1059,16 @@ export class GenerationService {
     const durationSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3))
     const latestTask = await this.taskRepository.findById(taskId)
     if (latestTask?.status === 'canceled') {
-      logGeneration('canceled-before-final-update', { taskId })
+      logGeneration('finished', {
+        taskId,
+        status: 'canceled',
+        errorMessage: latestTask.errorMessage || '任务已取消',
+        durationSeconds,
+        costCredits: 0,
+        modelCostCredits: 0,
+        remainingCredits,
+        result: { imageCount: 0 },
+      })
       return
     }
     const finalTask = await this.taskRepository.update(taskId, {
@@ -1309,6 +1094,7 @@ export class GenerationService {
         console.warn('[bark:generation-failure-push-failed]', error instanceof Error ? error.message : String(error))
       })
     }
+    const resultSummary = summarizeImageResult(resultJson)
     logGeneration('finished', {
       taskId,
       status,
@@ -1317,17 +1103,21 @@ export class GenerationService {
       costCredits: status === 'success' ? costCredits : 0,
       modelCostCredits: status === 'success' ? modelCostCredits : 0,
       remainingCredits,
-      result: summarizeImageResult(resultJson),
+      result: {
+        imageCount: resultSummary.imageCount,
+      },
     })
   }
 
   private async callOpenAiImageJson({
+    taskId,
     provider,
     model,
     input,
     quantity,
     attempt = 1,
   }: {
+    taskId: string
     provider: ApiProvider
     model: AiModel
     input: GenerateImageInput
@@ -1337,6 +1127,7 @@ export class GenerationService {
     const requestBody = buildOpenAiImageRequestBody(input, model, quantity, provider)
     const requestStartedAt = Date.now()
     logGeneration('upstream-json-request', {
+      taskId,
       providerId: provider.id,
       providerType: provider.type,
       attempt,
@@ -1356,6 +1147,7 @@ export class GenerationService {
       },
       body: JSON.stringify(requestBody),
     }, {
+      taskId,
       providerId: provider.id,
       providerType: provider.type,
       endpoint: getImageEndpoint(provider),
@@ -1363,11 +1155,14 @@ export class GenerationService {
     })
 
     const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
+    const htmlErrorMessage = getHtmlUpstreamResponseError('上游接口调用失败', response, responseText)
     await updateApiCallLogDetails(response, {
+      status: htmlErrorMessage ? 'failed' : undefined,
       responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
-      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游接口调用失败', response.status, resultJson, responseText),
+      errorMessage: htmlErrorMessage ?? (response.ok ? null : buildUpstreamErrorMessage('上游接口调用失败', response.status, resultJson, responseText)),
     })
     logGeneration('upstream-json-response', {
+      taskId,
       providerId: provider.id,
       attempt,
       status: response.status,
@@ -1383,7 +1178,17 @@ export class GenerationService {
         : undefined,
       result: summarizeImageResult(resultJson),
     })
+    if (htmlErrorMessage) {
+      throw new AppError(502, htmlErrorMessage)
+    }
     if (!response.ok) {
+      const upstreamDetail = cleanUserFacingErrorMessage(extractUpstreamErrorMessage(resultJson, responseText))
+      if (isContentPolicyRejectionMessage(upstreamDetail)) {
+        throw new AppError(
+          400,
+          upstreamDetail ? `上游接口拒绝生成：${upstreamDetail}` : '上游接口拒绝生成：提示词可能违反内容政策',
+        )
+      }
       throw new AppError(
         response.status,
         buildUpstreamErrorMessage('上游接口调用失败', response.status, resultJson, responseText),
@@ -1399,7 +1204,7 @@ export class GenerationService {
     model,
     input,
     quantity,
-    maxAttempts = 3,
+    maxAttempts = 1,
   }: {
     taskId: string
     provider: ApiProvider
@@ -1413,6 +1218,7 @@ export class GenerationService {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         return await this.callOpenAiImageJson({
+          taskId,
           provider,
           model,
           input,
@@ -1492,39 +1298,13 @@ export class GenerationService {
     const results = await Promise.all(
       Array.from({ length: quantity }, async (_, index) => {
         const childTaskId = `${taskId}#${index + 1}`
-        let result: unknown
-        try {
-          result = await this.callOpenAiImageStream({
-            taskId: childTaskId,
-            provider,
-            model,
-            input,
-            quantity: 1,
-          })
-        } catch (error) {
-          if (
-            error instanceof AppError &&
-            error.statusCode &&
-            isStreamFallbackStatus(error.statusCode)
-          ) {
-            logGeneration('upstream-parallel-item-fallback', {
-              taskId,
-              childTaskId,
-              index,
-              statusCode: error.statusCode,
-              reason: error.message,
-            })
-            result = await this.callOpenAiImageJsonWithRetry({
-              taskId: childTaskId,
-              provider,
-              model,
-              input,
-              quantity: 1,
-            })
-          } else {
-            throw error
-          }
-        }
+        const result = await this.callOpenAiImageStream({
+          taskId: childTaskId,
+          provider,
+          model,
+          input,
+          quantity: 1,
+        })
         logGeneration('upstream-parallel-item-complete', {
           taskId,
           childTaskId,
@@ -1544,374 +1324,14 @@ export class GenerationService {
     return combinedResult
   }
 
-  private async callCustomChatImageCompletion({
-    taskId,
-    provider,
-    model,
-    input,
-    quantity,
-  }: {
-    taskId: string
-    provider: ApiProvider
-    model: AiModel
-    input: GenerateImageInput
-    quantity: number
-  }) {
-    const requestStartedAt = Date.now()
-    const content: Array<Record<string, unknown>> = []
-    let referenceImageSummary: Record<string, unknown> | null = null
-
-    const referenceImageSummaries: Array<Record<string, unknown> | null> = []
-
-    for (const referenceImageUrl of normalizeReferenceImageUrls(input)) {
-      const referenceImage = await readReferenceImage(referenceImageUrl, this.taskRepository)
-      const imageUrl = `data:${referenceImage.contentType};base64,${referenceImage.buffer.toString('base64')}`
-      content.push({
-        type: 'image_url',
-        image_url: { url: imageUrl },
-      })
-      referenceImageSummaries.push({
-        ...summarizeReferenceImage(referenceImageUrl),
-        contentType: referenceImage.contentType,
-        bytes: referenceImage.buffer.length,
-      })
-    }
-    referenceImageSummary = referenceImageSummaries.length === 1 ? referenceImageSummaries[0] : { count: referenceImageSummaries.length, items: referenceImageSummaries }
-
-    const prompt = buildUpstreamPrompt(input, model)
-    content.push({ type: 'text', text: prompt })
-
-    const requestBody = {
-      ...buildImageOutputParams(input),
-      model: model.modelName,
-      messages: [{ role: 'user', content }],
-      stream: true,
-      aspect_ratio: getSizeRatio(input.size),
-      n: quantity,
-    }
-
-    logGeneration('upstream-chat-request', {
-      taskId,
-      providerId: provider.id,
-      providerType: provider.type,
-      endpoint: getChatCompletionsEndpoint(provider),
-      body: {
-        ...requestBody,
-        messages: [{
-          role: 'user',
-          content: content.map((item) => item.type === 'image_url'
-            ? { type: 'image_url', image_url: summarizeReferenceImage(String((item.image_url as { url?: string })?.url ?? '')) }
-            : item),
-        }],
-        referenceImage: referenceImageSummary,
-        prompt,
-      },
-    })
-
-    const response = await fetchUpstream(getChatCompletionsEndpoint(provider), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${provider.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    }, {
-      taskId,
-      providerId: provider.id,
-      providerType: provider.type,
-      endpoint: getChatCompletionsEndpoint(provider),
-      phase: 'chat-completion',
-    })
-
-    logGeneration('upstream-chat-response-start', {
-      taskId,
-      providerId: provider.id,
-      status: response.status,
-      ok: response.ok,
-      durationMs: Date.now() - requestStartedAt,
-      hasBody: Boolean(response.body),
-    })
-    if (response.ok && response.body) {
-      taskEvents.emitProgress({
-        taskId,
-        stage: 'upstream',
-        message: '正在读取流式结果...',
-        detail: '上游模型已开始返回生成数据',
-        tags: ['流式', '读取', '同步'],
-      })
-    }
-
-    if (!response.ok || !response.body) {
-      const responseText = await response.text().catch(() => '')
-      const resultJson = (() => {
-        try {
-          return responseText ? JSON.parse(responseText) as unknown : null
-        } catch {
-          return null
-        }
-      })()
-      await updateApiCallLogDetails(response, {
-        status: 'failed',
-        responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
-        errorMessage: buildUpstreamErrorMessage('上游对话生图接口调用失败', response.status, resultJson, responseText),
-      })
-      logGeneration('upstream-chat-response-error', {
-        taskId,
-        providerId: provider.id,
-        status: response.status,
-        ok: response.ok,
-        responseText: summarizeText(responseText),
-      })
-      throw new AppError(
-        response.status,
-        buildUpstreamErrorMessage('上游对话生图接口调用失败', response.status, resultJson, responseText),
-      )
-    }
-
-    const contentType = response.headers.get('content-type') ?? ''
-    if (contentType.includes('application/json')) {
-      const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
-      const normalizedResult = normalizeImageResult(resultJson)
-      await updateApiCallLogDetails(response, {
-        responseSummary: summarizeResponsePayload(normalizedResult, responseText, input.outputFormat),
-        errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游对话生图接口调用失败', response.status, resultJson, responseText),
-      })
-      logGeneration('upstream-chat-json-response', {
-        taskId,
-        providerId: provider.id,
-        status: response.status,
-        ok: response.ok,
-        durationMs: Date.now() - requestStartedAt,
-        responseText: summarizeImageResult(normalizedResult).imageCount === 0 ? summarizeText(responseText) : undefined,
-        responseJson: summarizeImageResult(normalizedResult).imageCount === 0 ? summarizeValue(resultJson) : undefined,
-        result: summarizeImageResult(normalizedResult),
-      })
-      return normalizedResult
-    }
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let collectedContent = ''
-    let lastImage: ExtractedImage | null = null
-    let lastPersistAt = 0
-
-    const handleEventData = async (eventData: string) => {
-      if (!eventData || eventData === '[DONE]') return
-
-      let eventJson: unknown = null
-      try {
-        eventJson = JSON.parse(eventData) as unknown
-      } catch {
-        collectedContent += eventData
-      }
-
-      if (eventJson) {
-        const contentDelta = extractChatDeltaContent(eventJson)
-        if (contentDelta) collectedContent += contentDelta
-
-        const directImage = extractImagesFromResult(eventJson)
-        if (directImage[0]) lastImage = directImage[0]
-      }
-
-      const textImages = extractImageUrlsFromText(collectedContent, provider).map((url) => ({ url }))
-      if (textImages.at(-1)) lastImage = textImages.at(-1) ?? lastImage
-
-      if (lastImage) {
-        const now = Date.now()
-        if (now - lastPersistAt > 1000) {
-          lastPersistAt = now
-          logGeneration('upstream-chat-partial', {
-            taskId,
-            result: summarizeImageResult({ partial: lastImage, stream: true }),
-          })
-          taskEvents.emitProgress({
-            taskId,
-            stage: 'partial',
-            message: '正在渲染高清图...',
-            detail: '已收到预览结果，正在同步高清图像',
-            tags: ['预览', '高清', '同步'],
-          })
-        }
-      }
-    }
-
-    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += decoder.decode(chunk, { stream: true })
-      const parts = buffer.split(/\r?\n\r?\n/)
-      buffer = parts.pop() ?? ''
-
-      for (const part of parts) {
-        const eventData = part
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.replace(/^data:\s?/, ''))
-          .join('\n')
-          .trim()
-        await handleEventData(eventData)
-      }
-    }
-
-    const tail = buffer.trim()
-    if (tail) {
-      const eventData = tail.startsWith('data:')
-        ? tail
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.replace(/^data:\s?/, ''))
-            .join('\n')
-            .trim()
-        : tail
-      await handleEventData(eventData)
-    }
-
-    const images = uniqueImages([
-      ...extractImageUrlsFromText(collectedContent, provider).map((url) => ({ url })),
-      ...(lastImage ? [lastImage] : []),
-    ])
-    const streamResult = {
-      data: images,
-      final: images.at(-1) ?? null,
-      content: collectedContent,
-      stream: true,
-    }
-    await updateApiCallLogDetails(response, {
-      responseSummary: {
-        stream: true,
-        content: summarizeText(collectedContent),
-        ...summarizeImageResult(streamResult, input.outputFormat),
-      },
-      errorMessage: null,
-    })
-    taskEvents.emitProgress({
-      taskId,
-      stage: 'finalizing',
-      message: '正在整理最终结果...',
-      detail: '图片已经生成，正在保存结果',
-      tags: ['保存', '扣费', '完成'],
-    })
-    logGeneration('upstream-chat-complete', {
-      taskId,
-      durationMs: Date.now() - requestStartedAt,
-      content: summarizeText(collectedContent),
-      result: summarizeImageResult(streamResult),
-    })
-    return streamResult
-  }
-
-  private async callCustomResponsesImageCompletion({
-    taskId,
-    provider,
-    model,
-    input,
-    quantity,
-  }: {
-    taskId: string
-    provider: ApiProvider
-    model: AiModel
-    input: GenerateImageInput
-    quantity: number
-  }) {
-    const requestStartedAt = Date.now()
-    const content: Array<Record<string, unknown>> = []
-    const referenceImageSummaries: Array<Record<string, unknown> | null> = []
-
-    for (const referenceImageUrl of normalizeReferenceImageUrls(input)) {
-      const referenceImage = await readReferenceImage(referenceImageUrl, this.taskRepository)
-      const imageUrl = `data:${referenceImage.contentType};base64,${referenceImage.buffer.toString('base64')}`
-      content.push({
-        type: 'input_image',
-        image_url: imageUrl,
-      })
-      referenceImageSummaries.push({
-        ...summarizeReferenceImage(referenceImageUrl),
-        contentType: referenceImage.contentType,
-        bytes: referenceImage.buffer.length,
-      })
-    }
-
-    const prompt = buildUpstreamPrompt(input, model)
-    content.push({ type: 'input_text', text: prompt })
-    const requestBody = {
-      ...buildImageOutputParams(input),
-      model: model.modelName,
-      input: [{
-        role: 'user',
-        content,
-      }],
-      stream: false,
-      aspect_ratio: getSizeRatio(input.size),
-      n: quantity,
-    }
-
-    logGeneration('upstream-responses-request', {
-      taskId,
-      providerId: provider.id,
-      providerType: provider.type,
-      endpoint: getResponsesEndpoint(provider),
-      body: {
-        ...requestBody,
-        input: [{
-          role: 'user',
-          content: content.map((item) => item.type === 'input_image'
-            ? { type: 'input_image', image_url: summarizeReferenceImage(String(item.image_url ?? '')) }
-            : item),
-        }],
-        referenceImages: referenceImageSummaries,
-        prompt,
-      },
-    })
-
-    const response = await fetchUpstream(getResponsesEndpoint(provider), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${provider.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    }, {
-      taskId,
-      providerId: provider.id,
-      providerType: provider.type,
-      endpoint: getResponsesEndpoint(provider),
-      phase: 'responses-image',
-    })
-
-    const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
-    const normalizedResult = normalizeImageResult(resultJson)
-    await updateApiCallLogDetails(response, {
-      responseSummary: summarizeResponsePayload(normalizedResult, responseText, input.outputFormat),
-      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游 Responses 生图接口调用失败', response.status, resultJson, responseText),
-    })
-    logGeneration('upstream-responses-response', {
-      taskId,
-      providerId: provider.id,
-      status: response.status,
-      ok: response.ok,
-      durationMs: Date.now() - requestStartedAt,
-      responseText: response.ok && summarizeImageResult(normalizedResult).imageCount === 0
-        ? summarizeText(responseText)
-        : response.ok
-          ? undefined
-          : summarizeText(responseText),
-      result: summarizeImageResult(normalizedResult),
-    })
-
-    if (!response.ok) {
-      throw new AppError(
-        response.status,
-        buildUpstreamErrorMessage('上游 Responses 生图接口调用失败', response.status, resultJson, responseText),
-      )
-    }
-
-    return normalizedResult
-  }
-
   private async callOpenAiImageEdit({
+    taskId,
     provider,
     model,
     input,
     quantity,
   }: {
+    taskId: string
     provider: ApiProvider
     model: AiModel
     input: GenerateImageInput
@@ -1939,8 +1359,9 @@ export class GenerationService {
     formData.append('prompt', prompt)
     formData.append('size', input.size ?? getDefaultSize(input.sizeTier))
     formData.append('n', String(quantity))
+    formData.append('response_format', 'url')
     for (const [key, value] of Object.entries(buildImageOutputParams(input))) {
-      if (value !== undefined && value !== null && !['model', 'prompt', 'size', 'n', 'image'].includes(key)) {
+      if (value !== undefined && value !== null && !['model', 'prompt', 'size', 'n', 'image', 'response_format'].includes(key)) {
         formData.append(key, String(value))
       }
     }
@@ -1960,6 +1381,7 @@ export class GenerationService {
     }
 
     logGeneration('upstream-edit-request', {
+      taskId,
       providerId: provider.id,
       providerType: provider.type,
       endpoint: getImageEditEndpoint(provider),
@@ -1992,6 +1414,7 @@ export class GenerationService {
       },
       body: formData,
     }, {
+      taskId,
       providerId: provider.id,
       providerType: provider.type,
       endpoint: getImageEditEndpoint(provider),
@@ -2001,11 +1424,14 @@ export class GenerationService {
     })
 
     const { json: resultJson, text: responseText } = await readResponseJsonWithText(response)
+    const htmlErrorMessage = getHtmlUpstreamResponseError('上游图片编辑接口调用失败', response, responseText)
     await updateApiCallLogDetails(response, {
+      status: htmlErrorMessage ? 'failed' : undefined,
       responseSummary: summarizeResponsePayload(resultJson, responseText, input.outputFormat),
-      errorMessage: response.ok ? null : buildUpstreamErrorMessage('上游图片编辑接口调用失败', response.status, resultJson, responseText),
+      errorMessage: htmlErrorMessage ?? (response.ok ? null : buildUpstreamErrorMessage('上游图片编辑接口调用失败', response.status, resultJson, responseText)),
     })
     logGeneration('upstream-edit-response', {
+      taskId,
       providerId: provider.id,
       status: response.status,
       ok: response.ok,
@@ -2014,6 +1440,9 @@ export class GenerationService {
       result: summarizeImageResult(resultJson),
     })
 
+    if (htmlErrorMessage) {
+      throw new AppError(502, htmlErrorMessage)
+    }
     if (!response.ok) {
       throw new AppError(
         response.status,
@@ -2040,7 +1469,6 @@ export class GenerationService {
     const requestBody = {
       ...buildOpenAiImageRequestBody(input, model, quantity, provider),
       stream: true,
-      partial_images: 2,
     }
     const requestStartedAt = Date.now()
     logGeneration('upstream-stream-request', {
@@ -2114,14 +1542,40 @@ export class GenerationService {
       )
     }
 
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('text/html')) {
+      const responseText = await response.text().catch(() => '')
+      const htmlErrorMessage = getHtmlUpstreamResponseError('上游流式接口调用失败', response, responseText)
+        ?? upstreamHtmlErrorMessage('上游流式接口调用失败')
+      await updateApiCallLogDetails(response, {
+        status: 'failed',
+        responseSummary: summarizeResponsePayload(null, responseText, input.outputFormat),
+        errorMessage: htmlErrorMessage,
+      })
+      logGeneration('upstream-stream-html-response', {
+        taskId,
+        providerId: provider.id,
+        status: response.status,
+        ok: response.ok,
+        responseText: summarizeText(responseText),
+      })
+      throw new AppError(502, htmlErrorMessage)
+    }
+
     const decoder = new TextDecoder()
     let buffer = ''
     let partialImage: { b64_json?: string; url?: string } | null = null
     let finalImages: ExtractedImage[] = []
+    let candidateImages: ExtractedImage[] = []
+    let sawDoneEvent = false
     let lastPersistAt = 0
 
     const handleEventData = (eventData: string) => {
-      if (!eventData || eventData === '[DONE]') return
+      if (!eventData) return
+      if (eventData === '[DONE]') {
+        sawDoneEvent = true
+        return
+      }
 
       let eventJson: unknown
       try {
@@ -2134,19 +1588,20 @@ export class GenerationService {
         return
       }
 
-      const eventType = (eventJson as { type?: string }).type ?? ''
-      const isFinalEvent = /completed|final|done/i.test(eventType) || hasFinalImagePayload(eventJson)
-      const isPartialEvent = hasPartialImagePayload(eventJson)
-      const finalEventImages = isFinalEvent
+      const isPartialEvent = isPartialStreamEvent(eventJson)
+      const isExplicitFinalEvent = isExplicitFinalStreamEvent(eventJson)
+      const eventType = getStreamEventType(eventJson)
+      const finalEventImages = isExplicitFinalEvent
         ? uniqueImages(extractImagesFromResult(omitPartialImagePayload(eventJson), 0, input.outputFormat))
         : []
       const partialEventImages = isPartialEvent
         ? uniqueImages(extractImagesFromResult({ partial: (eventJson as Record<string, unknown>).partial ?? eventJson }, 0, input.outputFormat))
         : uniqueImages(extractImagesFromResult(eventJson, 0, input.outputFormat))
+      const candidateEventImages = !isPartialEvent && !isExplicitFinalEvent ? partialEventImages : []
 
       if (finalEventImages.length === 0 && partialEventImages.length === 0) return
 
-      if (isFinalEvent && !isPartialEvent) {
+      if (isExplicitFinalEvent && !isPartialEvent) {
         finalImages = uniqueImages([...finalImages, ...finalEventImages])
         logGeneration('upstream-stream-final', {
           taskId,
@@ -2156,12 +1611,19 @@ export class GenerationService {
         return
       }
 
-      if (isFinalEvent) {
+      if (isExplicitFinalEvent) {
         finalImages = uniqueImages([...finalImages, ...finalEventImages])
         logGeneration('upstream-stream-final', {
           taskId,
           eventType,
           result: summarizeImageResult({ final: finalImages, data: finalImages }, input.outputFormat),
+        })
+      } else if (candidateEventImages.length) {
+        candidateImages = uniqueImages(candidateEventImages)
+        logGeneration('upstream-stream-candidate', {
+          taskId,
+          eventType,
+          result: summarizeImageResult({ data: candidateImages }, input.outputFormat),
         })
       } else {
         partialImage = partialEventImages.at(-1) ?? partialImage
@@ -2215,6 +1677,14 @@ export class GenerationService {
     }
 
     finalImages = uniqueImages(finalImages)
+    if (finalImages.length === 0 && candidateImages.length > 0) {
+      finalImages = uniqueImages(candidateImages)
+      logGeneration('upstream-stream-final-from-candidate', {
+        taskId,
+        sawDoneEvent,
+        result: summarizeImageResult({ final: finalImages, data: finalImages }, input.outputFormat),
+      })
+    }
 
     const streamResult = {
       data: finalImages,

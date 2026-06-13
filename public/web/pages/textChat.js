@@ -8,6 +8,11 @@ const freeChatModelName = 'GPT-5.5'
 const maxVisionImages = 3
 const maxVisionImageBytes = 5 * 1024 * 1024
 const textChatSystemPrompt = '你是 AIπ 的文字和图片理解助手。回答要清晰、直接；当内容适合对比、清单、参数、步骤或结构化信息时，优先使用 Markdown 表格、列表和代码块。代码块请使用标准三反引号 Markdown。'
+const quickPrompts = [
+  '帮我把这段广告文案优化得更吸引人',
+  '帮我整理一份门店海报设计需求',
+  '根据这张图提取可用于生图的提示词',
+]
 
 function createSession() {
   const now = Date.now()
@@ -289,6 +294,14 @@ export const TextChatPage = {
       visionImages.value = visionImages.value.filter((_, itemIndex) => itemIndex !== index)
     }
 
+    function useQuickPrompt(text) {
+      inputText.value = text
+      nextTick(() => {
+        const textarea = document.querySelector('.text-chat-composer-input textarea')
+        textarea?.focus?.()
+      })
+    }
+
     async function readChatStream(response, assistantMessage) {
       if (!response.ok || !response.body) {
         const contentType = response.headers.get('content-type') || ''
@@ -447,6 +460,7 @@ export const TextChatPage = {
       visionImages,
       fileInput,
       maxVisionImages,
+      quickPrompts,
       chatThread,
       freeChatModelName,
       sessions,
@@ -464,6 +478,7 @@ export const TextChatPage = {
       handleVisionFile,
       removeVisionImage,
       handleThreadClick,
+      useQuickPrompt,
     }
   },
   template: `
@@ -478,6 +493,7 @@ export const TextChatPage = {
         </div>
         <el-button class="new-session-button" type="primary" title="新建聊天" aria-label="新建聊天" @click="newSession">
           <i class="ti ti-plus"></i>
+          <span class="new-session-button-text">新建聊天</span>
         </el-button>
         <div class="session-strip">
           <div class="session-list">
@@ -501,14 +517,18 @@ export const TextChatPage = {
       </aside>
 
       <section class="chat-panel">
-        <header class="chat-header">
-          <div>
-            <small>Text model</small>
-            <strong>{{ freeChatModelName }}</strong>
+        <header class="chat-header text-chat-header">
+          <div class="text-chat-title">
+            <i class="ti ti-message-chatbot"></i>
+            <div>
+              <small>AIπ Chat</small>
+              <strong>对话聊天</strong>
+            </div>
           </div>
           <div class="chat-specs">
+            <span>{{ freeChatModelName }}</span>
             <span>免费</span>
-            <span>不扣额度</span>
+            <span>图片理解</span>
           </div>
         </header>
 
@@ -517,6 +537,9 @@ export const TextChatPage = {
             <i class="ti ti-message-chatbot"></i>
             <strong>开始一次文字对话</strong>
             <p>可以用来写提示词、改文案、做方案，也可以让模型帮你整理生图思路。</p>
+            <div class="text-chat-quick-prompts">
+              <button v-for="item in quickPrompts" :key="item" type="button" @click="useQuickPrompt(item)">{{ item }}</button>
+            </div>
           </div>
           <div v-for="message in messages" :key="message.id" :class="['message', message.role, { error: message.error }]">
             <div class="avatar">{{ message.role === 'user' ? '我' : 'AIπ' }}</div>

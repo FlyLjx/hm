@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { RowDataPacket } from 'mysql2'
+import type { ResultSetHeader, RowDataPacket } from 'mysql2'
 import { db } from '../../config/db.js'
 import type { ApiCallLog, CreateApiCallLogInput } from './apiLogTypes.js'
 
@@ -80,6 +80,11 @@ const logSummaryMaxArrayItems = 20
 const logSummaryMaxObjectKeys = 80
 const logSummaryMaxTextLength = 3000
 const detailSummarySqlLimit = 200000
+const successLogRetentionDays = 7
+const failedLogRetentionDays = 30
+const monitorLogRetentionDays = 14
+const autoCleanupIntervalMs = 6 * 60 * 60 * 1000
+let lastAutoCleanupAt = 0
 
 function omittedImage(length: number) {
   return `[image-base64-omitted length=${length}]`
@@ -195,14 +200,84 @@ function sanitizeLogSummary(value: unknown, depth = 0): unknown {
   return value
 }
 
-function stringifyLogSummary(value: unknown) {
-  if (value === undefined) return null
-  return JSON.stringify(sanitizeLogSummary(value))
+const compactFieldNames = new Set([
+  'taskId',
+  'userId',
+  'modelId',
+  'model',
+  'size',
+  'sizeTier',
+  'quantity',
+  'n',
+  'outputFormat',
+  'output_format',
+  'responseFormat',
+  'response_format',
+  'stream',
+  'transparentBackground',
+  'status',
+  'statusCode',
+  'imageCount',
+  'costCredits',
+  'remainingCredits',
+  'providerId',
+  'providerType',
+  'endpoint',
+  'phase',
+  'route',
+])
+
+function compactSuccessfulSummary(value: unknown, kind: 'request' | 'response') {
+  const sanitized = sanitizeLogSummary(value)
+  const fields: Record<string, unknown> = { compact: true, kind }
+
+  const visit = (item: unknown, depth = 0) => {
+    if (!item || depth > 5) return
+    if (Array.isArray(item)) {
+      item.slice(0, 10).forEach((entry) => visit(entry, depth + 1))
+      return
+    }
+    if (typeof item !== 'object') return
+
+    Object.entries(item as Record<string, unknown>).forEach(([key, entry]) => {
+      if (compactFieldNames.has(key) && fields[key] === undefined && typeof entry !== 'object') {
+        fields[key] = entry
+      }
+      if ((key === 'prompt' || key === 'text' || key === 'content') && typeof entry === 'string' && fields.promptLength === undefined) {
+        fields.promptLength = entry.length
+      }
+      if ((key === 'referenceImages' || key === 'referenceImageUrls') && Array.isArray(entry) && fields.referenceImageCount === undefined) {
+        fields.referenceImageCount = entry.length
+      }
+      if (key === 'images' && Array.isArray(entry) && fields.imageCount === undefined) {
+        fields.imageCount = entry.length
+      }
+      if (key === 'headers') return
+      visit(entry, depth + 1)
+    })
+  }
+
+  visit(sanitized)
+  return fields
+}
+
+function stringifyStoredLogSummary(input: {
+  status: 'success' | 'failed'
+  value: unknown
+  kind: 'request' | 'response'
+  errorMessage?: string | null
+}) {
+  if (input.value === undefined) return null
+  const shouldCompact = input.status === 'success' && !input.errorMessage
+  return JSON.stringify(shouldCompact
+    ? compactSuccessfulSummary(input.value, input.kind)
+    : sanitizeLogSummary(input.value))
 }
 
 export class ApiLogRepository {
   async create(input: CreateApiCallLogInput) {
     const id = randomUUID()
+    const status = input.status
     await db.query(
       `INSERT INTO api_call_logs
         (id, direction, task_id, user_id, api_key_id, api_key_name, provider_id, provider_type, endpoint, phase, method, status, status_code, duration_ms, request_summary, response_summary, error_message)
@@ -220,14 +295,15 @@ export class ApiLogRepository {
         endpoint: input.endpoint,
         phase: input.phase,
         method: input.method,
-        status: input.status,
+        status,
         statusCode: input.statusCode ?? null,
         durationMs: Math.max(0, Math.round(input.durationMs)),
-        requestSummary: stringifyLogSummary(input.requestSummary),
-        responseSummary: stringifyLogSummary(input.responseSummary),
+        requestSummary: stringifyStoredLogSummary({ status, value: input.requestSummary, kind: 'request', errorMessage: input.errorMessage }),
+        responseSummary: stringifyStoredLogSummary({ status, value: input.responseSummary, kind: 'response', errorMessage: input.errorMessage }),
         errorMessage: input.errorMessage?.slice(0, 1000) ?? null,
       },
     )
+    this.cleanupExpiredIfDue()
     return id
   }
 
@@ -248,7 +324,13 @@ export class ApiLogRepository {
       const value = input[key as keyof typeof input]
       fields.push(`${column} = ?`)
       if (key === 'requestSummary' || key === 'responseSummary') {
-        values.push(stringifyLogSummary(value))
+        const successLike = input.status === 'success' || (input.status === undefined && input.errorMessage === null)
+        values.push(stringifyStoredLogSummary({
+          status: successLike ? 'success' : 'failed',
+          value,
+          kind: key === 'requestSummary' ? 'request' : 'response',
+          errorMessage: input.errorMessage,
+        }))
       } else if (key === 'durationMs') {
         values.push(Math.max(0, Math.round(Number(value || 0))))
       } else if (key === 'errorMessage') {
@@ -260,6 +342,43 @@ export class ApiLogRepository {
 
     if (fields.length === 0) return
     await db.query(`UPDATE api_call_logs SET ${fields.join(', ')} WHERE id = ?`, [...values, id])
+  }
+
+  private cleanupExpiredIfDue() {
+    const now = Date.now()
+    if (now - lastAutoCleanupAt < autoCleanupIntervalMs) return
+    lastAutoCleanupAt = now
+    this.cleanupExpired().catch((error) => {
+      console.warn('[api-log:cleanup-failed]', error instanceof Error ? error.message : String(error))
+    })
+  }
+
+  retentionPolicy() {
+    return {
+      successDays: successLogRetentionDays,
+      failedDays: failedLogRetentionDays,
+      monitorDays: monitorLogRetentionDays,
+    }
+  }
+
+  async cleanupExpired() {
+    const [result] = await db.query<ResultSetHeader>(
+      `DELETE FROM api_call_logs
+       WHERE
+        (phase = :monitorPhase AND created_at < DATE_SUB(NOW(), INTERVAL :monitorDays DAY))
+        OR (phase <> :monitorPhase AND status = 'success' AND created_at < DATE_SUB(NOW(), INTERVAL :successDays DAY))
+        OR (phase <> :monitorPhase AND status = 'failed' AND created_at < DATE_SUB(NOW(), INTERVAL :failedDays DAY))`,
+      {
+        monitorPhase: publicMonitorPhase,
+        monitorDays: monitorLogRetentionDays,
+        successDays: successLogRetentionDays,
+        failedDays: failedLogRetentionDays,
+      },
+    )
+    return {
+      deletedCount: result.affectedRows ?? 0,
+      policy: this.retentionPolicy(),
+    }
   }
 
   async findById(id: string) {

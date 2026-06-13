@@ -40,10 +40,6 @@ function imageExtension(contentType: string) {
   return 'png'
 }
 
-function imageDataUrl(buffer: Buffer, contentType: string) {
-  return `data:${contentType};base64,${buffer.toString('base64')}`
-}
-
 function escapeExcelCell(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -314,14 +310,6 @@ export class TaskService {
 
     const buffer = Buffer.from(await response.arrayBuffer())
     const contentType = detectImageContentType(buffer, response.headers.get('content-type') ?? 'image/png')
-    await this.taskRepository.materializeImageUrlByIndex(id, index, imageDataUrl(buffer, contentType)).catch((error) => {
-      console.warn('[task:image-materialize-failed]', {
-        taskId: id,
-        index,
-        imageUrl,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      })
-    })
     return {
       contentType,
       buffer,
@@ -339,19 +327,29 @@ export class TaskService {
 
   async getTaskThumbnail(id: string, index: number) {
     const image = await this.getTaskImage(id, index)
-    const buffer = await sharp(image.buffer)
-      .resize({
-        width: 360,
-        height: 360,
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .webp({ quality: 72 })
-      .toBuffer()
+    try {
+      const buffer = await sharp(image.buffer)
+        .resize({
+          width: 360,
+          height: 360,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 72 })
+        .toBuffer()
 
-    return {
-      contentType: 'image/webp',
-      buffer,
+      return {
+        contentType: 'image/webp',
+        buffer,
+      }
+    } catch (error) {
+      console.warn('[task:thumbnail-fallback]', {
+        taskId: id,
+        index,
+        contentType: image.contentType,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      return image
     }
   }
 

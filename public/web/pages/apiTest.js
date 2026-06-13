@@ -9,7 +9,6 @@ function stringifyJson(value) {
 function readImageUrl(item) {
   if (!item || typeof item !== 'object') return ''
   if (typeof item.url === 'string') return item.url
-  if (typeof item.b64_json === 'string') return `data:image/png;base64,${item.b64_json}`
   return ''
 }
 
@@ -324,7 +323,6 @@ export const ApiTestPage = {
                 <span>返回格式</span>
                 <el-select v-model="form.responseFormat" style="width:100%">
                   <el-option label="url" value="url" />
-                  <el-option label="b64_json" value="b64_json" />
                 </el-select>
               </label>
               <label v-if="form.endpoint === '/v1/images/edits'" class="full">
