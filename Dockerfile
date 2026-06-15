@@ -23,9 +23,12 @@ WORKDIR /app
 ENV PORT=3001 \
   SERVE_STATIC=true \
   PUBLIC_DIR=public \
-  LOG_DIR=logs
+  LOG_DIR=logs \
+  TZ=Asia/Shanghai
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates tzdata \
+  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+  && echo $TZ > /etc/timezone \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /app/logs
 

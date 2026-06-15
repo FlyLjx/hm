@@ -27,6 +27,7 @@ PORT=3001
 SERVE_STATIC=true
 PUBLIC_DIR=public
 LOG_DIR=logs
+TZ=Asia/Shanghai
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_USER=数据库用户
@@ -64,6 +65,7 @@ http://127.0.0.1:3001
 - `.env` 通过 compose 的 `env_file` 注入，不会打进镜像。
 - `public` 会在镜像构建时从 `apps/web/src` 和 `apps/admin/src` 同步生成。
 - `logs` 建议单独挂载，方便看运行日志。
+- 镜像和 Compose 默认使用 `Asia/Shanghai`，日志时间会按中国时区输出。
 - 不要把 Windows 本机路径放进 Linux Docker 的 `.env`，例如 `E:/...`、`C:/...`。这些要改成容器内路径，或者先删掉不用的配置项。
 
 ## 常用命令
