@@ -59,7 +59,7 @@ docker compose up -d --build
 4. 宝塔网站反向代理到：
 
 ```text
-http://127.0.0.1:3001
+http://127.0.0.1:6985
 ```
 
 同时开启 WebSocket 支持。
@@ -71,12 +71,13 @@ http://127.0.0.1:3001
 1. 新建项目，项目路径选择上传后的项目目录。
 2. Compose 文件选择 `docker-compose.yml`。
 3. 点击构建/启动。
-4. 网站反代到 `127.0.0.1:3001`。
+4. 网站反代到 `127.0.0.1:6985`。
 
 ## 说明
 
 - `.env` 通过 compose 的 `env_file` 注入，不会打进镜像。
 - `public` 会在镜像构建时从 `apps/web/src` 和 `apps/admin/src` 同步生成。
+- Compose 默认暴露外部端口 `6985`，容器内部仍监听 `3001`。
 - `logs` 建议单独挂载，方便看运行日志。
 - 镜像和 Compose 默认使用 `Asia/Shanghai`，日志时间会按中国时区输出。
 - 不要把 Windows 本机路径放进 Linux Docker 的 `.env`，例如 `E:/...`、`C:/...`。这些要改成容器内路径，或者先删掉不用的配置项。
