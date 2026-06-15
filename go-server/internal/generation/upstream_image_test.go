@@ -81,6 +81,40 @@ func TestCallImageJSONRewritesLocalhostImageURLToProviderOrigin(t *testing.T) {
 	}
 }
 
+func TestCallImageJSONSendsEditImageURLFields(t *testing.T) {
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/images/edits" {
+			t.Fatalf("unexpected endpoint path: %s", req.URL.Path)
+		}
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": "https://cdn.example.test/edited.png"}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	input := testImageRequest(server.URL)
+	input.Operation = "edit"
+	input.ReferenceImageURLs = []string{"https://cdn.example.test/source.png"}
+	if _, err := service.callImageJSON(context.Background(), input, 1); err != nil {
+		t.Fatalf("callImageJSON returned error: %v", err)
+	}
+	if received["image_url"] != "https://cdn.example.test/source.png" {
+		t.Fatalf("expected image_url field, got %#v", received["image_url"])
+	}
+	if received["image"] != "https://cdn.example.test/source.png" {
+		t.Fatalf("expected image field, got %#v", received["image"])
+	}
+	urls, ok := received["image_urls"].([]any)
+	if !ok || len(urls) != 1 || urls[0] != "https://cdn.example.test/source.png" {
+		t.Fatalf("expected image_urls array, got %#v", received["image_urls"])
+	}
+}
+
 func TestCallImageJSONReturnsUpstreamPolicyErrorWithoutFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

@@ -31,17 +31,25 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	}
 	if len(input.ReferenceImageURLs) > 0 {
 		items := make([]map[string]string, 0, len(input.ReferenceImageURLs))
+		urls := make([]string, 0, len(input.ReferenceImageURLs))
 		for _, url := range input.ReferenceImageURLs {
 			if strings.TrimSpace(url) == "" {
 				continue
 			}
-			items = append(items, map[string]string{"url": strings.TrimSpace(url)})
+			cleanURL := strings.TrimSpace(url)
+			urls = append(urls, cleanURL)
+			items = append(items, map[string]string{"url": cleanURL})
 		}
 		if len(items) > 0 {
 			body["referenceImages"] = items
 			body["referenceImage"] = map[string]any{
 				"count": len(items),
 				"items": items,
+			}
+			if input.Operation == "edit" {
+				body["image_url"] = urls[0]
+				body["image"] = urls[0]
+				body["image_urls"] = urls
 			}
 		}
 	}
