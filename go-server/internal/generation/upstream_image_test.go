@@ -205,6 +205,41 @@ func TestCallImageGenerationSendsQuantityAsSingleNRequest(t *testing.T) {
 	}
 }
 
+func TestCallImageGenerationBatchesQuantityByUpstreamLimit(t *testing.T) {
+	receivedN := []int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var received map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		n := int(received["n"].(float64))
+		receivedN = append(receivedN, n)
+		data := make([]map[string]string, 0, n)
+		for index := 0; index < n; index++ {
+			data = append(data, map[string]string{"url": fmt.Sprintf("https://cdn.example.test/batch-%d-%d.png", len(receivedN), index+1)})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	input := testImageRequest(server.URL)
+	input.Quantity = 10
+	result, err := service.callImageGeneration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("callImageGeneration returned error: %v", err)
+	}
+	wantN := []int{4, 4, 2}
+	if fmt.Sprint(receivedN) != fmt.Sprint(wantN) {
+		t.Fatalf("expected upstream n batches %v, got %v", wantN, receivedN)
+	}
+	images := ExtractImages(result)
+	if len(images) != input.Quantity {
+		t.Fatalf("expected %d aggregated images, got %#v", input.Quantity, images)
+	}
+}
+
 type errUnexpectedResult struct{}
 
 func (e errUnexpectedResult) Error() string {
