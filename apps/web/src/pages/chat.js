@@ -609,6 +609,7 @@ export const ChatPage = {
         hiddenImageIndexes,
         downloadTokens: createDownloadTokens(images.length, previous?.downloadTokens),
         imageAspectRatios: previous?.imageAspectRatios,
+        galleryExpanded: previous?.galleryExpanded === true,
         favoriteEnabled: task.favoriteEnabled,
         publicStatus: task.publicStatus,
         displayNote: task.displayNote,
@@ -682,6 +683,33 @@ export const ChatPage = {
 
     function selectResultImage(message, index) {
       message.activeImageIndex = index
+    }
+
+    function openResultImage(message, index) {
+      selectResultImage(message, index)
+      if (!isResultGalleryExpanded(message)) toggleResultGallery(message)
+    }
+
+    function isResultGalleryExpanded(message) {
+      return message?.galleryExpanded === true
+    }
+
+    function toggleResultGallery(message) {
+      message.galleryExpanded = !message.galleryExpanded
+    }
+
+    function resultGalleryStackStyle(message, index) {
+      const visibleIndexes = visibleResultIndexes(message)
+      const foldedIndex = visibleIndexes.indexOf(index)
+      const safeIndex = Math.max(0, foldedIndex)
+      const offset = Math.min(safeIndex, 4)
+      const rotate = [-1.6, 1.2, -0.9, 1.8, -1.1][offset] || 0
+      return {
+        ...resultImageStyle(message, index),
+        '--stack-offset': `${offset * 10}px`,
+        '--stack-rotate': `${rotate}deg`,
+        '--stack-z': String(20 - offset),
+      }
     }
 
     function hideBrokenImage(event, message, index) {
@@ -1709,6 +1737,10 @@ export const ChatPage = {
       activeResultImage,
       activeResultThumbnail,
       selectResultImage,
+      openResultImage,
+      isResultGalleryExpanded,
+      toggleResultGallery,
+      resultGalleryStackStyle,
       hideBrokenImage,
       allResultImagesBroken,
       switchSession,
@@ -1899,16 +1931,36 @@ export const ChatPage = {
                   </span>
                 </button>
               </div>
-              <div v-if="visibleResultIndexes(message).length" class="result-stack">
-                <div class="result-gallery">
+              <div v-if="visibleResultIndexes(message).length" :class="['result-stack', { 'is-expanded': isResultGalleryExpanded(message), 'is-folded': !isResultGalleryExpanded(message) }]">
+                <div class="result-stage">
+                  <button
+                    class="result-main-card"
+                    type="button"
+                    :style="resultImageStyle(message, activeResultIndex(message))"
+                    title="双击放大当前图片"
+                    @click="toggleResultGallery(message)"
+                    @dblclick="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果 ' + (activeResultIndex(message) + 1) })"
+                  >
+                    <img :src="activeResultThumbnail(message)" :alt="'生成结果 ' + (activeResultIndex(message) + 1)" @load="(event) => rememberResultImageRatio(event, message, activeResultIndex(message))" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" />
+                    <span class="result-main-badge">{{ activeResultIndex(message) + 1 }}</span>
+                    <span v-if="visibleResultIndexes(message).length > 1" class="result-fold-hint">
+                      <i class="ti ti-stack-2"></i>
+                      {{ isResultGalleryExpanded(message) ? '点击收起' : '点击展开 ' + visibleResultIndexes(message).length + ' 张' }}
+                    </span>
+                  </button>
+                  <div v-if="visibleResultIndexes(message).length > 1 && !isResultGalleryExpanded(message)" class="result-fold-peek" aria-hidden="true">
+                    <i v-for="(_, peekIndex) in visibleResultIndexes(message).slice(1, 4)" :key="peekIndex" :style="{ '--peek': peekIndex + 1 }"></i>
+                  </div>
+                </div>
+                <div v-if="visibleResultIndexes(message).length > 1" class="result-gallery">
                   <button
                     v-for="index in visibleResultIndexes(message)"
                     :key="message.images[index] || index"
                     :class="['result-gallery-item', { active: activeResultIndex(message) === index }]"
-                    :style="resultImageStyle(message, index)"
+                    :style="resultGalleryStackStyle(message, index)"
                     type="button"
                     :aria-label="'查看生成结果 ' + (index + 1)"
-                    @click="selectResultImage(message, index)"
+                    @click="openResultImage(message, index)"
                     @dblclick="$emit('preview', { url: resolveOriginalImageUrl(message.images[index]), title: '生成结果 ' + (index + 1) })"
                   >
                     <img :src="message.thumbnails?.[index] || message.images?.[index]" :alt="'生成结果 ' + (index + 1)" @load="(event) => rememberResultImageRatio(event, message, index)" @error="(event) => hideBrokenImage(event, message, index)" />
