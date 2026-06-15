@@ -46,6 +46,7 @@ docker compose up -d --build
 如果服务器访问 Docker/Go 依赖源较慢或失败，可以临时给构建过程加代理：
 
 ```bash
+export GOPROXY="https://goproxy.cn,direct"
 export HTTP_PROXY="http://192.168.1.5:7897"
 export HTTPS_PROXY="http://192.168.1.5:7897"
 export http_proxy="http://192.168.1.5:7897"
@@ -55,6 +56,7 @@ docker compose up -d --build
 ```
 
 如果是 SOCKS5 代理，把地址改成 `socks5h://192.168.1.5:7897`。代理软件需要开启允许局域网连接。
+如果 Go 依赖卡在 `proxy.golang.org`，可以只保留 `GOPROXY=https://goproxy.cn,direct` 后重新构建。
 
 4. 宝塔网站反向代理到：
 
