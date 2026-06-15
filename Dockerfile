@@ -3,6 +3,12 @@ FROM golang:1.26.4-bookworm AS build
 WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
 
 COPY go-server/go.mod go-server/go.sum ./go-server/
 WORKDIR /src/go-server
@@ -20,6 +26,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o
 FROM debian:bookworm-slim
 
 WORKDIR /app
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
 ENV PORT=3001 \
   SERVE_STATIC=true \
   PUBLIC_DIR=public \
