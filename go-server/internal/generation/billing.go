@@ -1,0 +1,108 @@
+package generation
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"aipi-go/internal/users"
+)
+
+func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuccessInput) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var credits float64
+	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, input.UserID).Scan(&credits); err != nil {
+		return err
+	}
+	if credits < input.CostCredits {
+		return errors.New("用户积分不足")
+	}
+	remaining := credits - input.CostCredits
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits = ? WHERE id = ?`, remaining, input.UserID); err != nil {
+		return err
+	}
+	if input.CostCredits > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+			VALUES (?, ?, 'deduct', ?, ?, ?)
+		`, newID(), input.UserID, input.CostCredits, remaining, input.Remark); err != nil {
+			return err
+		}
+	}
+	resultBytes, _ := json.Marshal(input.Result)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE generation_tasks
+		SET status = 'success',
+			cost_credits = ?,
+			model_cost_credits = ?,
+			remaining_credits = ?,
+			duration_seconds = ?,
+			result_json = ?,
+			error_message = NULL
+		WHERE id = ?
+	`, input.CostCredits, input.ModelCostCredits, remaining, input.DurationSeconds, string(resultBytes), input.TaskID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if s.userHub != nil {
+		if user, err := users.NewRepository(s.db).FindByID(context.Background(), input.UserID); err == nil {
+			s.userHub.PublishUser(user)
+		}
+	}
+	return nil
+}
+
+type BillingSuccessInput struct {
+	TaskID           string
+	UserID           string
+	CostCredits      float64
+	ModelCostCredits float64
+	DurationSeconds  float64
+	Remark           string
+	Result           any
+}
+
+func taskCost(sizeTier string, quantity int, modelPrice1k float64, modelPrice2k float64, modelPrice4k float64) float64 {
+	unit := modelPrice1k
+	if sizeTier == "2k" {
+		unit = modelPrice2k
+	}
+	if sizeTier == "4k" {
+		unit = modelPrice4k
+	}
+	return unit * float64(quantity)
+}
+
+func taskModelCost(sizeTier string, quantity int, modelCost1k float64, modelCost2k float64, modelCost4k float64) float64 {
+	unit := modelCost1k
+	if sizeTier == "2k" {
+		unit = modelCost2k
+	}
+	if sizeTier == "4k" {
+		unit = modelCost4k
+	}
+	return unit * float64(quantity)
+}
+
+func newID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	value := hex.EncodeToString(bytes[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", value[0:8], value[8:12], value[12:16], value[16:20], value[20:32])
+}

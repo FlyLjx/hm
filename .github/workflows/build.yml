@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go-server/go.mod
+          cache-dependency-path: go-server/go.sum
+
+      - name: Sync UI
+        run: |
+          rm -rf public/web public/admin
+          mkdir -p public/web public/admin
+          cp -a apps/web/src/. public/web/
+          cp -a apps/admin/src/. public/admin/
+
+      - name: Test Go
+        working-directory: go-server
+        run: go test ./...
+
+      - name: Build Linux binary
+        working-directory: go-server
+        run: |
+          mkdir -p ../release
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ../release/aipi-go ./cmd/aipi-go
+
+      - name: Check release files
+        shell: bash
+        run: |
+          test -f release/aipi-go
+          test -f public/web/index.html
+          test -f public/admin/index.html
+          test -f public/vendor/vue/vue.global.prod.min.js
+
+      - name: Build Docker image
+        run: docker build -t aipi-go:ci .
+
+      - name: Package release
+        run: |
+          tar -czf aipi-linux-amd64.tar.gz release/aipi-go public Dockerfile docker-compose.yml docs/docker-deploy.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aipi-linux-amd64
+          path: aipi-linux-amd64.tar.gz

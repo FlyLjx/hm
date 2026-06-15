@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="AIπ">
+  <defs>
+    <linearGradient id="aipi-logo-bg" x1="8" y1="6" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6ee77f"/>
+      <stop offset="0.52" stop-color="#47c978"/>
+      <stop offset="1" stop-color="#16a35b"/>
+    </linearGradient>
+    <filter id="aipi-logo-shadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#16a35b" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#aipi-logo-bg)" filter="url(#aipi-logo-shadow)"/>
+  <path d="M13 15.5C13 13.6 14.6 12 16.5 12h31C49.4 12 51 13.6 51 15.5v33C51 50.4 49.4 52 47.5 52h-31C14.6 52 13 50.4 13 48.5v-33Z" fill="white" opacity="0.08"/>
+  <text x="32" y="39" text-anchor="middle" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="22" font-weight="900" fill="#fff">AIπ</text>
+</svg>

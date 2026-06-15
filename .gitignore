@@ -2,6 +2,12 @@ node_modules/
 dist-server/
 release/
 logs/
+.tmp/
+.continue/
+.codex-screenshots/
+.vendor/
+design-qa.md
+txt.md
 .env
 .env.*
 !.env.example

@@ -1,0 +1,14 @@
+services:
+  aipi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aipi-go:latest
+    container_name: aipi-go
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./logs:/app/logs
