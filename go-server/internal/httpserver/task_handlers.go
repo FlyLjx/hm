@@ -94,8 +94,8 @@ func (r *Router) estimateTaskDuration(w http.ResponseWriter, req *http.Request) 
 	if quantity < 1 {
 		quantity = 1
 	}
-	if quantity > 8 {
-		quantity = 8
+	if quantity > 10 {
+		quantity = 10
 	}
 	sizeTier := strings.ToLower(strings.TrimSpace(req.URL.Query().Get("sizeTier")))
 	baseSeconds := 35

@@ -90,8 +90,8 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	if input.UserID == "" || input.ModelID == "" || input.Prompt == "" {
 		return nil, newAppError(http.StatusBadRequest, "缺少用户、模型或提示词")
 	}
-	if input.Quantity < 1 || input.Quantity > 8 {
-		return nil, newAppError(http.StatusBadRequest, "生成数量必须在 1 到 8 之间")
+	if input.Quantity < 1 || input.Quantity > 10 {
+		return nil, newAppError(http.StatusBadRequest, "生成数量必须在 1 到 10 之间")
 	}
 	if input.SizeTier != "1k" && input.SizeTier != "2k" && input.SizeTier != "4k" {
 		return nil, newAppError(http.StatusBadRequest, "清晰度参数不正确")

@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
@@ -164,53 +164,35 @@ func TestCallImageJSONConcurrentURLOnlyResponses(t *testing.T) {
 	}
 }
 
-func TestCallImageGenerationAggregatesQuantityConcurrently(t *testing.T) {
+func TestCallImageGenerationSendsQuantityAsSingleNRequest(t *testing.T) {
 	var requestCount int64
-	var maxInFlight int64
-	var inFlight int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		current := atomic.AddInt64(&inFlight, 1)
-		for {
-			maximum := atomic.LoadInt64(&maxInFlight)
-			if current <= maximum || atomic.CompareAndSwapInt64(&maxInFlight, maximum, current) {
-				break
-			}
-		}
-		defer atomic.AddInt64(&inFlight, -1)
-
-		index := atomic.AddInt64(&requestCount, 1)
+		atomic.AddInt64(&requestCount, 1)
 		var received map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
 			t.Errorf("decode request: %v", err)
 			return
 		}
-		if received["n"] != float64(1) {
-			t.Errorf("each upstream request should request exactly one image, got %#v", received["n"])
+		if received["n"] != float64(4) {
+			t.Errorf("upstream request should pass n=4, got %#v", received["n"])
 		}
-		time.Sleep(120 * time.Millisecond)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]string{{"url": "https://cdn.example.test/batch-" + string(rune('a'+index-1)) + ".png"}},
-		})
+		data := make([]map[string]string, 0, 4)
+		for index := 0; index < 4; index++ {
+			data = append(data, map[string]string{"url": fmt.Sprintf("https://cdn.example.test/batch-%d.png", index+1)})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	}))
 	defer server.Close()
 
 	service := &Service{logger: slog.Default()}
 	input := testImageRequest(server.URL)
 	input.Quantity = 4
-	startedAt := time.Now()
 	result, err := service.callImageGeneration(context.Background(), input)
 	if err != nil {
 		t.Fatalf("callImageGeneration returned error: %v", err)
 	}
-	elapsed := time.Since(startedAt)
-	if requestCount != int64(input.Quantity) {
-		t.Fatalf("expected %d upstream requests, got %d", input.Quantity, requestCount)
-	}
-	if maxInFlight < 2 {
-		t.Fatalf("expected concurrent upstream requests, max in flight was %d", maxInFlight)
-	}
-	if elapsed >= 420*time.Millisecond {
-		t.Fatalf("generation calls appear serialized, elapsed=%s", elapsed)
+	if requestCount != 1 {
+		t.Fatalf("expected 1 upstream request, got %d", requestCount)
 	}
 	images := ExtractImages(result)
 	if len(images) != input.Quantity {

@@ -1,6 +1,6 @@
 export const ratioOptions = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']
 export const sizeTierOptions = ['1k', '2k', '4k']
-export const quantityOptions = [1, 2, 3, 4]
+export const quantityOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 export const sizeMap = {
   '1:1': { '1k': '1024x1024', '2k': '2048x2048', '4k': '3072x3072' },

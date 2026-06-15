@@ -126,8 +126,8 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "缺少模型或提示词", "invalid_request_error")
 		return
 	}
-	if input.N < 1 || input.N > 8 {
-		writeOpenAIError(w, http.StatusBadRequest, "生成数量必须在 1 到 8 之间", "invalid_request_error")
+	if input.N < 1 || input.N > 10 {
+		writeOpenAIError(w, http.StatusBadRequest, "生成数量必须在 1 到 10 之间", "invalid_request_error")
 		return
 	}
 
