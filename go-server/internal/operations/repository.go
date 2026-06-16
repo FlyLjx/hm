@@ -260,13 +260,13 @@ func (r *Repository) financeCostModels(ctx context.Context, start time.Time) ([]
 }
 
 type financeTrendRow struct {
-	day         string
-	paidOrders  int
-	paidAmount  float64
+	day          string
+	paidOrders   int
+	paidAmount   float64
 	successTasks int
-	images      int
-	taskRevenue float64
-	modelCost   float64
+	images       int
+	taskRevenue  float64
+	modelCost    float64
 }
 
 func (r *Repository) financeCostTrends(ctx context.Context, start time.Time, days int) ([]map[string]any, error) {
@@ -691,11 +691,47 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 	return items, total, rows.Err()
 }
 
-func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[string]any, error) {
+func (r *Repository) InviteSummary(ctx context.Context, userID string, rewardCredits float64) (map[string]any, error) {
 	var count int
 	var reward float64
 	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(reward_credits),0) FROM user_invites WHERE inviter_id=?`, userID).Scan(&count, &reward)
-	return map[string]any{"inviteCount": count, "rewardCredits": reward}, nil
+	return map[string]any{"inviteCount": count, "total": count, "rewardCredits": rewardCredits, "totalRewardCredits": reward}, nil
+}
+
+func (r *Repository) RewardInvite(ctx context.Context, inviterID string, inviteeID string, reward float64, ip string) error {
+	if strings.TrimSpace(inviterID) == "" || strings.TrimSpace(inviteeID) == "" || inviterID == inviteeID || reward <= 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var inviterCredits float64
+	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? AND status='active' FOR UPDATE`, inviterID).Scan(&inviterCredits); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_invites WHERE invitee_id=?`, inviteeID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing > 0 {
+		return tx.Commit()
+	}
+	next := inviterCredits + reward
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, inviterID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip) VALUES (?, ?, ?, ?, ?)`, newOperationID(), inviterID, inviteeID, reward, ip); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, '邀请好友奖励')`, newOperationID(), inviterID, reward, next); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) DeleteInvite(ctx context.Context, id string) (bool, error) {

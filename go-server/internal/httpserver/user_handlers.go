@@ -10,6 +10,8 @@ import (
 
 	"aipi-go/internal/apikeys"
 	"aipi-go/internal/auth"
+	"aipi-go/internal/operations"
+	"aipi-go/internal/settings"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
@@ -466,9 +468,10 @@ func (r *Router) registerUser(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool) {
 	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		Role      string `json:"role"`
+		InviterID string `json:"inviterId"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -503,6 +506,15 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if !admin {
+		if values, err := settings.NewRepository(r.db).Get(ctx); err == nil {
+			inviteEnabled, _ := values["inviteEnabled"].(bool)
+			inviteReward, _ := values["inviteRewardCredits"].(float64)
+			if inviteEnabled && inviteReward > 0 {
+				_ = operations.NewRepository(r.db).RewardInvite(ctx, strings.TrimSpace(input.InviterID), user.ID, inviteReward, requestIP(req))
+			}
+		}
 	}
 	token, _ := r.tokens.CreateUserToken(user.ID)
 	if admin {

@@ -502,7 +502,13 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 	userID := strings.TrimSpace(req.URL.Query().Get("userId"))
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	data, err := operations.NewRepository(r.db).InviteSummary(ctx, userID)
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	reward, _ := values["inviteRewardCredits"].(float64)
+	data, err := operations.NewRepository(r.db).InviteSummary(ctx, userID, reward)
 	if err != nil {
 		writeError(w, err)
 		return

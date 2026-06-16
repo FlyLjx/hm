@@ -700,7 +700,7 @@ export const RootApp = {
     }
 
     function inviteMessageTemplates() {
-      const reward = formatAmount(inviteState.summary?.rewardCredits || 0)
+      const reward = formatAmount(inviteState.summary?.rewardCredits || settings.value?.inviteRewardCredits || 0)
       const discount = formatAmount(activityStatus.value?.discountPercent || 0)
       const today = Number(activityStatus.value?.todayImages || 0)
       const nextRule = activityStatus.value?.nextRule

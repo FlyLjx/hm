@@ -126,7 +126,7 @@ export const SettingsPage = {
       ] },
       { title: '支付与邮件', fields: [
         { key: 'alipayAppId', label: '支付宝 App ID' }, { key: 'alipayGateway', label: '支付宝网关', type: 'url' }, { key: 'alipayPrivateKey', label: '应用私钥', type: 'textarea' }, { key: 'alipayPublicKey', label: '支付宝公钥', type: 'textarea' },
-        { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host' }, { key: 'emailPort', label: 'SMTP Port', type: 'number' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean' }, { key: 'emailUser', label: '邮箱账号' }, { key: 'emailPassword', label: '邮箱密码', type: 'password' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址' },
+        { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host' }, { key: 'emailPort', label: 'SMTP Port', type: 'number' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean' }, { key: 'emailUser', label: '邮箱账号' }, { key: 'emailPassword', label: '邮箱密码/授权码', type: 'password' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址' },
       ] },
       { title: '通知告警', fields: [
         { key: 'barkEnabled', label: '开启 Bark 推送', type: 'boolean' },

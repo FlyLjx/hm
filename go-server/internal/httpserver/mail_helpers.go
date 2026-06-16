@@ -83,7 +83,7 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string)
 		}
 		defer client.Close()
 		if err := client.Auth(auth); err != nil {
-			return newAppError(502, "邮件登录失败："+err.Error())
+			return newAppError(502, smtpAuthErrorMessage(settings, err))
 		}
 		return smtpSend(client, fromAddress, to, message)
 	}
@@ -93,11 +93,25 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string)
 	}
 	defer client.Close()
 	if err := client.StartTLS(&tls.Config{ServerName: settings.Host, MinVersion: tls.VersionTLS12}); err == nil {
-		_ = client.Auth(auth)
+		if authErr := client.Auth(auth); authErr != nil {
+			return newAppError(502, smtpAuthErrorMessage(settings, authErr))
+		}
 	} else if authErr := client.Auth(auth); authErr != nil {
-		return newAppError(502, "邮件登录失败："+authErr.Error())
+		return newAppError(502, smtpAuthErrorMessage(settings, authErr))
 	}
 	return smtpSend(client, fromAddress, to, message)
+}
+
+func smtpAuthErrorMessage(settings smtpSettings, err error) string {
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	host := strings.ToLower(settings.Host)
+	if strings.Contains(detail, "535") || strings.Contains(host, "qq.com") {
+		return "邮件登录失败：SMTP 账号或授权码不正确，或邮箱未开启 SMTP 服务。QQ 邮箱请在邮箱设置中开启 POP3/SMTP，并使用生成的“授权码”，不要填写 QQ 登录密码。原始错误：" + detail
+	}
+	return "邮件登录失败：" + detail
 }
 
 func smtpSend(client *smtp.Client, from string, to string, message []byte) error {
