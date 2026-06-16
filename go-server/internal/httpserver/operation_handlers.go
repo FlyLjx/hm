@@ -139,6 +139,9 @@ func (r *Router) productCollection(w http.ResponseWriter, req *http.Request, pub
 			writeError(w, err)
 			return
 		}
+		if public {
+			w.Header().Set("Cache-Control", "public, max-age=30")
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": items})
 	case http.MethodPost:
 		if public {
@@ -221,6 +224,9 @@ func (r *Router) planCollection(w http.ResponseWriter, req *http.Request, public
 		if err != nil {
 			writeError(w, err)
 			return
+		}
+		if public {
+			w.Header().Set("Cache-Control", "public, max-age=30")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": items})
 	case http.MethodPost:

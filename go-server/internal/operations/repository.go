@@ -29,14 +29,43 @@ type PageInput struct {
 
 func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	result := map[string]any{}
+	totalUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	activeUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users WHERE status='active'`)
+	if err != nil {
+		return nil, err
+	}
 	todayUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users WHERE created_at >= CURDATE()`)
 	if err != nil {
 		return nil, err
 	}
-	todayOrders, err := r.count(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE created_at >= CURDATE()`)
+	orderTotals := map[string]int{"all": 0, "paid": 0, "pending": 0, "closed": 0, "failed": 0}
+	orderRows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM recharge_orders GROUP BY status`)
 	if err != nil {
 		return nil, err
 	}
+	for orderRows.Next() {
+		var status string
+		var total int
+		if err := orderRows.Scan(&status, &total); err != nil {
+			orderRows.Close()
+			return nil, err
+		}
+		orderTotals["all"] += total
+		if _, ok := orderTotals[status]; ok {
+			orderTotals[status] = total
+		}
+	}
+	if err := orderRows.Close(); err != nil {
+		return nil, err
+	}
+	if err := orderRows.Err(); err != nil {
+		return nil, err
+	}
+	todayOrders := 0
+	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE created_at >= CURDATE()`).Scan(&todayOrders)
 	var todayPaidAmount float64
 	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid' AND paid_at >= CURDATE()`).Scan(&todayPaidAmount)
 	var todayTasks, todayRunning, todayFailed int
@@ -54,6 +83,45 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	disabledProviders, _ := r.count(ctx, `SELECT COUNT(*) FROM api_providers WHERE status='disabled'`)
 	activeModels, _ := r.count(ctx, `SELECT COUNT(*) FROM ai_models WHERE capability='chat_image' AND status='active'`)
 	disabledModels, _ := r.count(ctx, `SELECT COUNT(*) FROM ai_models WHERE capability='chat_image' AND status='disabled'`)
+	taskStats := map[string]any{
+		"total": 0, "queued": 0, "pending": 0, "processing": 0,
+		"success": 0, "failed": 0, "canceled": 0,
+		"totalImages": 0, "totalCredits": 0,
+	}
+	taskStatRows, err := r.db.QueryContext(ctx, `
+		SELECT
+			status,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN cost_credits ELSE 0 END), 0) AS total_credits
+		FROM generation_tasks
+		GROUP BY status
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for taskStatRows.Next() {
+		var status string
+		var total int
+		var images int
+		var credits float64
+		if err := taskStatRows.Scan(&status, &total, &images, &credits); err != nil {
+			taskStatRows.Close()
+			return nil, err
+		}
+		taskStats["total"] = taskStats["total"].(int) + total
+		taskStats["totalImages"] = taskStats["totalImages"].(int) + images
+		taskStats["totalCredits"] = taskStats["totalCredits"].(float64) + credits
+		if _, ok := taskStats[status]; ok {
+			taskStats[status] = total
+		}
+	}
+	if err := taskStatRows.Close(); err != nil {
+		return nil, err
+	}
+	if err := taskStatRows.Err(); err != nil {
+		return nil, err
+	}
 	var lastTask sql.NullTime
 	_ = r.db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM generation_tasks`).Scan(&lastTask)
 	lastTaskValue := any(nil)
@@ -64,6 +132,11 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		"users": todayUsers, "orders": todayOrders, "paidAmount": todayPaidAmount,
 		"tasks": todayTasks, "runningTasks": todayRunning, "failedTasks": todayFailed,
 	}
+	result["users"] = map[string]any{
+		"total": totalUsers, "active": activeUsers,
+	}
+	result["orders"] = orderTotals
+	result["taskStats"] = taskStats
 	result["pending"] = map[string]any{
 		"pendingOrders": pendingOrders, "runningTasks": runningTasks,
 		"recentFailedTasks": recentFailed, "privateImages": privateImages,

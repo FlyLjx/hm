@@ -32,6 +32,8 @@ type DatabaseConfig struct {
 	User         string
 	Password     string
 	Name         string
+	MaxOpenConns int
+	MaxIdleConns int
 }
 
 func Load() Config {
@@ -52,6 +54,8 @@ func Load() Config {
 			User:         envString("MYSQL_USER", "root"),
 			Password:     envString("MYSQL_PASSWORD", ""),
 			Name:         envString("MYSQL_DATABASE", "aipi"),
+			MaxOpenConns: envInt("MYSQL_MAX_OPEN_CONNS", 80),
+			MaxIdleConns: envInt("MYSQL_MAX_IDLE_CONNS", 40),
 		},
 	}
 }

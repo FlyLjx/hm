@@ -62,6 +62,26 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup' AFTER content"); err != nil {
 		return err
 	}
+	indexes := []struct {
+		name      string
+		statement string
+	}{
+		{"idx_generation_tasks_status_created_at", `CREATE INDEX idx_generation_tasks_status_created_at ON generation_tasks (status, created_at)`},
+		{"idx_generation_tasks_user_id_created_at", `CREATE INDEX idx_generation_tasks_user_id_created_at ON generation_tasks (user_id, created_at)`},
+		{"idx_generation_tasks_public_status_display_enabled_created_at", `CREATE INDEX idx_generation_tasks_public_status_display_enabled_created_at ON generation_tasks (public_status, display_enabled, created_at)`},
+		{"idx_recharge_orders_status_created_at", `CREATE INDEX idx_recharge_orders_status_created_at ON recharge_orders (status, created_at)`},
+		{"idx_recharge_orders_user_id_created_at", `CREATE INDEX idx_recharge_orders_user_id_created_at ON recharge_orders (user_id, created_at)`},
+		{"idx_credit_logs_user_id_created_at", `CREATE INDEX idx_credit_logs_user_id_created_at ON credit_logs (user_id, created_at)`},
+		{"idx_credit_logs_type_created_at", `CREATE INDEX idx_credit_logs_type_created_at ON credit_logs (type, created_at)`},
+		{"idx_user_checkins_user_id_checkin_date", `CREATE INDEX idx_user_checkins_user_id_checkin_date ON user_checkins (user_id, checkin_date)`},
+		{"idx_user_invites_invitee_id", `CREATE INDEX idx_user_invites_invitee_id ON user_invites (invitee_id)`},
+		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
+	}
+	for _, index := range indexes {
+		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -81,5 +101,23 @@ func addColumnIfMissing(ctx context.Context, db *sql.DB, table string, column st
 		return nil
 	}
 	_, err = db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition)
+	return err
+}
+
+func addIndexIfMissing(ctx context.Context, db *sql.DB, indexName string, statement string) error {
+	var exists int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE()
+			AND INDEX_NAME = ?
+	`, indexName).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if exists > 0 {
+		return nil
+	}
+	_, err = db.ExecContext(ctx, statement)
 	return err
 }

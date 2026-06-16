@@ -26,6 +26,11 @@ func (r *Router) publicAnnouncements(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if strings.TrimSpace(req.URL.Query().Get("userId")) == "" {
+		w.Header().Set("Cache-Control", "public, max-age=15")
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=10")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
@@ -231,6 +236,7 @@ func (r *Router) publicPromotions(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "public, max-age=30")
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 

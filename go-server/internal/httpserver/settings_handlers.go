@@ -192,6 +192,7 @@ func (r *Router) getSettings(w http.ResponseWriter, req *http.Request, publicOnl
 	}
 	if publicOnly {
 		data = settings.Public(data)
+		w.Header().Set("Cache-Control", "public, max-age=15")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }

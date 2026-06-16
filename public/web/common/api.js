@@ -77,6 +77,7 @@ export const clientApi = {
   updateApiKeyStatus: (id, keyId, input) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteApiKey: (id, keyId) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
 
+  getHomeBootstrap: (userId) => request(`/api/home/bootstrap${query({ userId })}`),
   getSettings: () => request('/api/settings/public'),
   listAnnouncements: (userId) => request(`/api/announcements/public${query({ userId })}`),
   signAnnouncement: (id, userId) => request(`/api/announcements/${encodeURIComponent(id)}/sign`, { method: 'POST', body: JSON.stringify({ userId }) }),

@@ -216,7 +216,6 @@ export const RootApp = {
       try {
         const response = await clientApi.getCurrentUser(currentUser.value.id)
         updateCurrentUser(response.data)
-        await loadActivityStatus()
       } catch {
         logout()
       } finally {
@@ -364,27 +363,31 @@ export const RootApp = {
 
     async function loadBaseData() {
       try {
-        const response = await clientApi.getSettings()
-        settings.value = response.data
-        siteName.value = response.data.siteName || 'AIπ'
-        logoText.value = response.data.logoText || siteName.value
-        creditName.value = response.data.creditName || '积分'
+        const response = await clientApi.getHomeBootstrap(currentUser.value?.id)
+        const data = response.data || {}
+        settings.value = data.settings || settings.value
+        siteName.value = settings.value?.siteName || siteName.value || 'AIπ'
+        logoText.value = settings.value?.logoText || logoText.value || siteName.value
+        creditName.value = settings.value?.creditName || creditName.value || '积分'
+        activityStatus.value = data.activityStatus || null
+        announcements.value = (data.announcements || [])
+          .filter((item) => item.status === 'active')
+          .filter((item) => !localReceipts().has(receiptKey(item)))
+        promotions.value = data.promotions || []
+        subscriptionPlans.value = data.subscriptionPlans || []
         document.title = `${siteName.value} 生图工作台`
       } catch {}
 
-      clientApi.listPromotions().then((response) => {
-        promotions.value = response.data || []
-      }).catch(() => {
-        promotions.value = []
-      })
-
-      clientApi.listSubscriptionPlans().then((response) => {
-        subscriptionPlans.value = response.data || []
-      }).catch(() => {
-        subscriptionPlans.value = []
-      })
-
-      loadAnnouncements()
+      if (!settings.value) {
+        try {
+          const response = await clientApi.getSettings()
+          settings.value = response.data
+          siteName.value = response.data.siteName || 'AIπ'
+          logoText.value = response.data.logoText || siteName.value
+          creditName.value = response.data.creditName || '积分'
+          document.title = `${siteName.value} 生图工作台`
+        } catch {}
+      }
     }
 
     async function loadAnnouncements() {
@@ -764,8 +767,10 @@ export const RootApp = {
     watch(() => activePage.value, (page) => {
       document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
     }, { immediate: true })
-    watch(() => currentUser.value?.id, loadAnnouncements)
-    watch(() => currentUser.value?.id, loadActivityStatus)
+    watch(() => currentUser.value?.id, () => {
+      loadAnnouncements()
+      loadActivityStatus()
+    })
     watch(rechargeOpen, (open) => {
       if (!open) stopRechargePolling()
     })

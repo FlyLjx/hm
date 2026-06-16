@@ -3,22 +3,18 @@ import { amount, formatCurrency, formatDate, statusItem } from '../format.js'
 
 const { computed, onBeforeUnmount, onMounted, ref } = Vue
 const { message } = antd
-const dashboardRefreshIntervalMs = 10000
+const dashboardRefreshIntervalMs = 30000
 
 export const DashboardPage = {
   props: { settings: Object },
   setup(props) {
     const loading = ref(false)
     const lastUpdated = ref('')
-    const users = ref([])
     const orders = ref([])
     const tasks = ref([])
-    const taskStats = ref(null)
     const dashboard = ref(null)
-    const orderTotals = ref({ all: 0, paid: 0, pending: 0, closed: 0, failed: 0 })
     const creditName = computed(() => props.settings?.creditName || '积分')
-    const stats = computed(() => taskStats.value || { total: 0, queued: 0, pending: 0, processing: 0, success: 0, failed: 0, canceled: 0, totalImages: 0, totalCredits: 0 })
-    const activeUsers = computed(() => users.value.filter((user) => user.status === 'active').length)
+    const stats = computed(() => dashboard.value?.taskStats || { total: 0, queued: 0, pending: 0, processing: 0, success: 0, failed: 0, canceled: 0, totalImages: 0, totalCredits: 0 })
     const taskSuccessRate = computed(() => stats.value.total ? Math.round((stats.value.success / stats.value.total) * 100) : 0)
     const today = computed(() => dashboard.value?.today || {})
     const pending = computed(() => dashboard.value?.pending || {})
@@ -32,8 +28,8 @@ export const DashboardPage = {
       { label: '未公开作品', value: amount(pending.value.privateImages || 0), note: '成功但未公开展示', tone: Number(pending.value.privateImages || 0) ? 'violet' : 'slate', icon: 'ti-photo-off' },
     ])
     const platformMetrics = computed(() => [
-      { label: '用户总数', value: amount(users.value.length), note: `启用 ${activeUsers.value} 人`, icon: 'ti-users', tone: 'blue' },
-      { label: '订单总数', value: amount(orderTotals.value.all), note: `已支付 ${orderTotals.value.paid} 单`, icon: 'ti-shopping-cart', tone: 'green' },
+      { label: '用户总数', value: amount(dashboard.value?.users?.total || 0), note: `启用 ${dashboard.value?.users?.active || 0} 人`, icon: 'ti-users', tone: 'blue' },
+      { label: '订单总数', value: amount(dashboard.value?.orders?.all || 0), note: `已支付 ${dashboard.value?.orders?.paid || 0} 单`, icon: 'ti-shopping-cart', tone: 'green' },
       { label: '任务成功率', value: `${taskSuccessRate.value}%`, note: `成功 ${stats.value.success} / 总计 ${stats.value.total}`, icon: 'ti-chart-dots', tone: taskSuccessRate.value >= 90 ? 'green' : 'orange' },
       { label: `消耗${creditName.value}`, value: amount(stats.value.totalCredits), note: `生成 ${stats.value.totalImages} 张图片`, icon: 'ti-coins', tone: 'violet' },
       { label: '接口服务商', value: amount(system.value.activeProviders || 0), note: `禁用 ${system.value.disabledProviders || 0} 个`, icon: 'ti-plug-connected', tone: Number(system.value.disabledProviders || 0) ? 'orange' : 'green' },
@@ -61,29 +57,14 @@ export const DashboardPage = {
       loading.value = true
       try {
         const limit = 8
-        const [dashboardRes, usersRes, ordersRes, tasksRes, statsRes, paid, pending, closed, failed] = await Promise.all([
+        const [dashboardRes, ordersRes, tasksRes] = await Promise.all([
           adminApi.getDashboard().catch(() => ({ data: null })),
-          adminApi.listUsers(),
           adminApi.listRechargeOrders({ page: 1, pageSize: limit, status: 'all' }),
           adminApi.listTasks({ page: 1, pageSize: limit }),
-          adminApi.getTaskStats(),
-          adminApi.listRechargeOrders({ page: 1, pageSize: 1, status: 'paid' }),
-          adminApi.listRechargeOrders({ page: 1, pageSize: 1, status: 'pending' }),
-          adminApi.listRechargeOrders({ page: 1, pageSize: 1, status: 'closed' }),
-          adminApi.listRechargeOrders({ page: 1, pageSize: 1, status: 'failed' }),
         ])
         dashboard.value = dashboardRes.data
-        users.value = usersRes.data || []
         orders.value = ordersRes.data || []
         tasks.value = tasksRes.data || []
-        taskStats.value = statsRes.data
-        orderTotals.value = {
-          all: ordersRes.pagination?.total || 0,
-          paid: paid.pagination?.total || 0,
-          pending: pending.pagination?.total || 0,
-          closed: closed.pagination?.total || 0,
-          failed: failed.pagination?.total || 0,
-        }
         lastUpdated.value = new Date().toISOString()
       } catch (error) {
         message.error(error instanceof Error ? error.message : '加载控制台失败')
@@ -104,12 +85,9 @@ export const DashboardPage = {
     return {
       loading,
       lastUpdated,
-      users,
       orders,
       tasks,
       stats,
-      orderTotals,
-      activeUsers,
       taskSuccessRate,
       orderColumns,
       taskColumns,
