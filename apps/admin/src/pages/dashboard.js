@@ -3,6 +3,7 @@ import { amount, formatCurrency, formatDate, statusItem } from '../format.js'
 
 const { computed, onBeforeUnmount, onMounted, ref } = Vue
 const { message } = antd
+const dashboardRefreshIntervalMs = 10000
 
 export const DashboardPage = {
   props: { settings: Object },
@@ -53,6 +54,7 @@ export const DashboardPage = {
       { title: '状态', key: 'status', width: 90 },
       { title: '时间', key: 'time', width: 150 },
     ]
+    let refreshTimer = null
 
     async function load() {
       if (loading.value) return
@@ -92,10 +94,12 @@ export const DashboardPage = {
 
     onMounted(() => {
       load()
-      window.addEventListener('admin:auto-refresh', load)
+      refreshTimer = window.setInterval(() => {
+        if (!document.hidden) load()
+      }, dashboardRefreshIntervalMs)
     })
     onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', load)
+      if (refreshTimer) clearInterval(refreshTimer)
     })
     return {
       loading,

@@ -12,10 +12,8 @@ import { SettingsPage } from './pages/settings.js'
 import { MailBroadcastPage } from './pages/mail-broadcast.js'
 import { SystemLogsPage } from './pages/system-logs.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
+const { computed, onMounted, reactive, ref } = Vue
 const { message } = antd
-const adminAutoRefreshEvent = 'admin:auto-refresh'
-const adminAutoRefreshIntervalMs = 10000
 
 const menuGroups = [
   { title: '数据总览', items: [{ id: 'console', label: '控制台中心', desc: '订单与任务概览', icon: 'ti-layout-dashboard', component: DashboardPage }] },
@@ -78,8 +76,6 @@ const App = {
     const activeGroup = computed(() => menuGroups.find((group) => group.items.some((item) => item.id === activeMenuId.value)))
     const activeComponent = computed(() => activeRoute.value.component)
     const activeProps = computed(() => activeRoute.value.props || {})
-    let autoRefreshTimer = null
-
     function navigate(id) {
       activeId.value = id
       window.location.hash = `#/${id}`
@@ -92,27 +88,6 @@ const App = {
 
     function closeMobileMenu() {
       mobileMenuOpen.value = false
-    }
-
-    function dispatchAutoRefresh() {
-      if (!authed.value || document.hidden) return
-      if (activeId.value !== 'settings') refreshSettings()
-      window.dispatchEvent(new CustomEvent(adminAutoRefreshEvent, { detail: { routeId: activeId.value } }))
-    }
-
-    function startAutoRefresh() {
-      stopAutoRefresh()
-      autoRefreshTimer = window.setInterval(dispatchAutoRefresh, adminAutoRefreshIntervalMs)
-    }
-
-    function stopAutoRefresh() {
-      if (!autoRefreshTimer) return
-      clearInterval(autoRefreshTimer)
-      autoRefreshTimer = null
-    }
-
-    function handleVisibilityChange() {
-      if (!document.hidden) dispatchAutoRefresh()
     }
 
     async function refreshSettings() {
@@ -147,7 +122,6 @@ const App = {
         adminUser.value = response.data.user
         authed.value = true
         await refreshSettings()
-        startAutoRefresh()
       } catch (error) {
         message.error(error instanceof Error ? error.message : '登录失败')
       } finally {
@@ -160,7 +134,6 @@ const App = {
       authed.value = false
       adminUser.value = null
       mobileMenuOpen.value = false
-      stopAutoRefresh()
     }
 
     onMounted(() => {
@@ -173,15 +146,7 @@ const App = {
       window.addEventListener('admin:unauthorized', () => {
         authed.value = false
         adminUser.value = null
-        stopAutoRefresh()
       })
-      document.addEventListener('visibilitychange', handleVisibilityChange)
-      if (authed.value) startAutoRefresh()
-    })
-
-    onBeforeUnmount(() => {
-      stopAutoRefresh()
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
     })
 
     return { menuGroups, settings, authed, authChecking, loginLoading, loginForm, activeId, activeMenuId, mobileMenuOpen, activeRoute, activeGroup, activeComponent, activeProps, navigate, toggleMobileMenu, closeMobileMenu, login, logout, refreshSettings }
@@ -224,7 +189,6 @@ const App = {
             </div>
           </div>
           <div class="toolbar">
-            <a-tag color="blue">数据自动刷新 10s</a-tag>
             <a-button href="/" target="_blank">返回前台</a-button>
             <a-button @click="logout">退出登录</a-button>
           </div>

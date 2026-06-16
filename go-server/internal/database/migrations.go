@@ -59,6 +59,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL AFTER size"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup' AFTER content"); err != nil {
+		return err
+	}
 	return nil
 }
 

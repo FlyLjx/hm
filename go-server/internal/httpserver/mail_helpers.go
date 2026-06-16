@@ -11,6 +11,7 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type smtpSettings struct {
@@ -24,6 +25,13 @@ type smtpSettings struct {
 	FromAddress string
 	SiteName    string
 }
+
+type mailAction struct {
+	Text string
+	URL  string
+}
+
+const smtpDialTimeout = 15 * time.Second
 
 func (s smtpSettings) validate() error {
 	if !s.Enabled {
@@ -49,7 +57,7 @@ func smtpSettingsFromMap(values map[string]any) smtpSettings {
 	}
 }
 
-func sendSMTPMail(settings smtpSettings, to string, subject string, text string) error {
+func sendSMTPMail(settings smtpSettings, to string, subject string, text string, actions ...mailAction) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}
@@ -70,16 +78,15 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string)
 	}
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	auth := smtp.PlainAuth("", settings.User, settings.Password, settings.Host)
-	message := buildMailMessage(fromName, fromAddress, to, subject, text)
+	action := mailAction{}
+	if len(actions) > 0 {
+		action = actions[0]
+	}
+	message := buildMailMessage(fromName, fromAddress, to, subject, text, action)
 	if settings.Secure {
-		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: settings.Host, MinVersion: tls.VersionTLS12})
+		client, err := smtpDialTLS(settings, addr)
 		if err != nil {
-			return newAppError(502, "邮件服务器连接失败："+err.Error())
-		}
-		defer conn.Close()
-		client, err := smtp.NewClient(conn, settings.Host)
-		if err != nil {
-			return newAppError(502, "邮件客户端初始化失败："+err.Error())
+			return err
 		}
 		defer client.Close()
 		if err := client.Auth(auth); err != nil {
@@ -87,9 +94,9 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string)
 		}
 		return smtpSend(client, fromAddress, to, message)
 	}
-	client, err := smtp.Dial(addr)
+	client, err := smtpDialPlain(settings, addr)
 	if err != nil {
-		return newAppError(502, "邮件服务器连接失败："+err.Error())
+		return err
 	}
 	defer client.Close()
 	if err := client.StartTLS(&tls.Config{ServerName: settings.Host, MinVersion: tls.VersionTLS12}); err == nil {
@@ -100,6 +107,33 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string)
 		return newAppError(502, smtpAuthErrorMessage(settings, authErr))
 	}
 	return smtpSend(client, fromAddress, to, message)
+}
+
+func smtpDialTLS(settings smtpSettings, addr string) (*smtp.Client, error) {
+	dialer := &net.Dialer{Timeout: smtpDialTimeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp4", addr, &tls.Config{ServerName: settings.Host, MinVersion: tls.VersionTLS12})
+	if err != nil {
+		return nil, newAppError(502, "邮件服务器连接失败（"+addr+"，IPv4）："+err.Error())
+	}
+	client, err := smtp.NewClient(conn, settings.Host)
+	if err != nil {
+		_ = conn.Close()
+		return nil, newAppError(502, "邮件客户端初始化失败："+err.Error())
+	}
+	return client, nil
+}
+
+func smtpDialPlain(settings smtpSettings, addr string) (*smtp.Client, error) {
+	conn, err := net.DialTimeout("tcp4", addr, smtpDialTimeout)
+	if err != nil {
+		return nil, newAppError(502, "邮件服务器连接失败（"+addr+"，IPv4）："+err.Error())
+	}
+	client, err := smtp.NewClient(conn, settings.Host)
+	if err != nil {
+		_ = conn.Close()
+		return nil, newAppError(502, "邮件客户端初始化失败："+err.Error())
+	}
+	return client, nil
 }
 
 func smtpAuthErrorMessage(settings smtpSettings, err error) string {
@@ -135,11 +169,11 @@ func smtpSend(client *smtp.Client, from string, to string, message []byte) error
 	return client.Quit()
 }
 
-func buildMailMessage(fromName string, fromAddress string, to string, subject string, text string) []byte {
+func buildMailMessage(fromName string, fromAddress string, to string, subject string, text string, action mailAction) []byte {
 	boundary := "aipi-mail-" + newID()
 	encodedSubject := mime.QEncoding.Encode("utf-8", subject)
 	encodedFromName := mime.QEncoding.Encode("utf-8", fromName)
-	htmlBody := `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;line-height:1.8;color:#172033;white-space:pre-wrap;">` + html.EscapeString(text) + `</div>`
+	htmlBody := buildMailHTML(fromName, subject, text, action)
 	var buffer bytes.Buffer
 	buffer.WriteString("From: " + encodedFromName + " <" + fromAddress + ">\r\n")
 	buffer.WriteString("To: " + to + "\r\n")
@@ -150,6 +184,55 @@ func buildMailMessage(fromName string, fromAddress string, to string, subject st
 	writeMailPart(&buffer, boundary, "text/html; charset=utf-8", htmlBody)
 	buffer.WriteString("--" + boundary + "--\r\n")
 	return buffer.Bytes()
+}
+
+func buildMailHTML(fromName string, subject string, text string, action mailAction) string {
+	brand := strings.TrimSpace(fromName)
+	if brand == "" {
+		brand = "AIπ"
+	}
+	actionHTML := ""
+	copyLinkHTML := ""
+	actionURL := strings.TrimSpace(action.URL)
+	if actionURL != "" {
+		actionText := strings.TrimSpace(action.Text)
+		if actionText == "" {
+			actionText = "立即查看"
+		}
+		escapedURL := html.EscapeString(actionURL)
+		actionHTML = `<a href="` + escapedURL + `" style="display:inline-block;margin-top:24px;padding:12px 20px;border-radius:999px;background:#167947;color:#ffffff;text-decoration:none;font-weight:800;">` + html.EscapeString(actionText) + `</a>`
+		copyLinkHTML = `<div style="margin-top:18px;padding:14px;border-radius:14px;background:#f3faf5;border:1px solid #d9eadf;">
+                  <div style="margin-bottom:8px;color:#567064;font-size:12px;font-weight:700;">如果按钮无法打开，请复制以下链接到浏览器访问：</div>
+                  <div style="color:#126238;font-size:13px;line-height:1.6;word-break:break-all;">` + escapedURL + `</div>
+                </div>`
+	}
+	return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f3f7f4;font-family:Arial,'Microsoft YaHei',sans-serif;color:#172033;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7f4;padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:22px;overflow:hidden;border:1px solid #dfeee5;box-shadow:0 18px 48px rgba(21,91,54,.10);">
+            <tr>
+              <td style="padding:26px 28px 8px;background:linear-gradient(135deg,#f8fff9,#e7f7ed);">
+                <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#dff5e8;color:#126238;font-size:12px;font-weight:800;letter-spacing:.04em;">` + html.EscapeString(brand) + ` 通知</div>
+                <h1 style="margin:18px 0 0;color:#14231b;font-size:26px;line-height:1.28;font-weight:900;">` + html.EscapeString(subject) + `</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 30px;">
+                <div style="font-size:15px;line-height:1.9;white-space:pre-wrap;color:#26352d;">` + html.EscapeString(text) + `</div>
+                ` + actionHTML + `
+                ` + copyLinkHTML + `
+                <div style="margin-top:30px;padding-top:16px;border-top:1px solid #e2eee7;color:#7a8980;font-size:12px;line-height:1.7;">这是一封来自 ` + html.EscapeString(brand) + ` 的服务通知邮件，请勿直接回复。</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
 }
 
 func writeMailPart(buffer *bytes.Buffer, boundary string, contentType string, body string) {

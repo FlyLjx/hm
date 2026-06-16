@@ -79,6 +79,8 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 	var input struct {
 		Subject    string   `json:"subject"`
 		Content    string   `json:"content"`
+		ActionText string   `json:"actionText"`
+		ActionURL  string   `json:"actionUrl"`
 		Target     string   `json:"target"`
 		TargetType string   `json:"targetType"`
 		UserIDs    []string `json:"userIds"`
@@ -134,7 +136,7 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 	success := 0
 	failures := []map[string]string{}
 	for _, email := range recipients {
-		if err := sendSMTPMail(smtpConfig, email, input.Subject, input.Content); err != nil {
+		if err := sendSMTPMail(smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
 			failures = append(failures, formatMailFailure(email, err))
 			continue
 		}

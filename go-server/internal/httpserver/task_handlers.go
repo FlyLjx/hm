@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"html"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,6 +14,9 @@ import (
 	"time"
 
 	"aipi-go/internal/tasks"
+
+	_ "image/gif"
+	_ "image/png"
 )
 
 func (r *Router) taskByID(w http.ResponseWriter, req *http.Request) {
@@ -21,7 +26,7 @@ func (r *Router) taskByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if strings.Contains(path, "/thumbnails/") {
-		r.taskImage(w, req, strings.Replace(path, "/thumbnails/", "/images/", 1))
+		r.taskThumbnail(w, req, strings.Replace(path, "/thumbnails/", "/images/", 1))
 		return
 	}
 	if strings.HasSuffix(path, "/cancel") {
@@ -659,6 +664,100 @@ func (r *Router) taskImage(w http.ResponseWriter, req *http.Request, path string
 		return
 	}
 	http.Redirect(w, req, imageURL, http.StatusFound)
+}
+
+func (r *Router) taskThumbnail(w http.ResponseWriter, req *http.Request, path string) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[1] != "images" {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	index, err := strconv.Atoi(parts[2])
+	if err != nil {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+	defer cancel()
+	imageURL, err := tasks.NewRepository(r.db).ImageURLByIndex(ctx, parts[0], index)
+	if errors.Is(err, sql.ErrNoRows) || imageURL == "" {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := r.proxyCompressedThumbnail(w, req, ctx, imageURL); err != nil {
+		http.Redirect(w, req, imageURL, http.StatusFound)
+	}
+}
+
+func (r *Router) proxyCompressedThumbnail(w http.ResponseWriter, req *http.Request, ctx context.Context, imageURL string) error {
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(upstreamReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("upstream image unavailable")
+	}
+	source, _, err := image.Decode(io.LimitReader(resp.Body, 24*1024*1024))
+	if err != nil {
+		return err
+	}
+	maxSide := queryInt(req, "w", 720)
+	if maxSide < 160 {
+		maxSide = 160
+	}
+	if maxSide > 1600 {
+		maxSide = 1600
+	}
+	quality := queryInt(req, "q", 72)
+	if quality < 40 {
+		quality = 40
+	}
+	if quality > 92 {
+		quality = 92
+	}
+	output := resizeImageNearest(source, maxSide)
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+	w.Header().Set("X-Aipi-Thumbnail", "compressed")
+	return jpeg.Encode(w, output, &jpeg.Options{Quality: quality})
+}
+
+func resizeImageNearest(source image.Image, maxSide int) image.Image {
+	bounds := source.Bounds()
+	sourceWidth := bounds.Dx()
+	sourceHeight := bounds.Dy()
+	if sourceWidth <= 0 || sourceHeight <= 0 || maxInt(sourceWidth, sourceHeight) <= maxSide {
+		return source
+	}
+	targetWidth := maxSide
+	targetHeight := maxSide
+	if sourceWidth >= sourceHeight {
+		targetHeight = maxInt(1, sourceHeight*maxSide/sourceWidth)
+	} else {
+		targetWidth = maxInt(1, sourceWidth*maxSide/sourceHeight)
+	}
+	target := image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+	for y := 0; y < targetHeight; y++ {
+		sourceY := bounds.Min.Y + y*sourceHeight/targetHeight
+		for x := 0; x < targetWidth; x++ {
+			sourceX := bounds.Min.X + x*sourceWidth/targetWidth
+			target.Set(x, y, source.At(sourceX, sourceY))
+		}
+	}
+	return target
 }
 
 func (r *Router) proxyTaskImageDownload(w http.ResponseWriter, req *http.Request, imageURL string) {

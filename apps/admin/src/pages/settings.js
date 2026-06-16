@@ -126,7 +126,7 @@ export const SettingsPage = {
       ] },
       { title: '支付与邮件', fields: [
         { key: 'alipayAppId', label: '支付宝 App ID' }, { key: 'alipayGateway', label: '支付宝网关', type: 'url' }, { key: 'alipayPrivateKey', label: '应用私钥', type: 'textarea' }, { key: 'alipayPublicKey', label: '支付宝公钥', type: 'textarea' },
-        { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host' }, { key: 'emailPort', label: 'SMTP Port', type: 'number' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean' }, { key: 'emailUser', label: '邮箱账号' }, { key: 'emailPassword', label: '邮箱密码/授权码', type: 'password' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址' },
+        { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host', help: 'Gmail: smtp.gmail.com；QQ邮箱: smtp.qq.com' }, { key: 'emailPort', label: 'SMTP Port', type: 'number', help: 'SSL/TLS 通常用 465；STARTTLS 通常用 587' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean', help: '465 端口请开启；587 端口通常关闭后走 STARTTLS' }, { key: 'emailUser', label: '邮箱账号', help: '填写完整邮箱地址，例如 name@gmail.com 或 name@qq.com' }, { key: 'emailPassword', label: '邮箱密码/授权码', type: 'password', help: 'Gmail 请填写应用专用密码；QQ 邮箱请填写 SMTP 授权码，不是登录密码' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址', help: '建议与邮箱账号保持一致，避免被 SMTP 服务拒绝' },
       ] },
       { title: '通知告警', fields: [
         { key: 'barkEnabled', label: '开启 Bark 推送', type: 'boolean' },
@@ -172,6 +172,21 @@ export const SettingsPage = {
         minImages: last ? Number(last.minImages || 0) + 10 : 10,
         discountPercent: last ? Math.min(99, Number(last.discountPercent || 0) + 10) : 10,
       })
+    }
+
+    function applySmtpPreset(provider) {
+      form.emailEnabled = true
+      if (provider === 'gmail') {
+        form.emailHost = 'smtp.gmail.com'
+        form.emailPort = 465
+        form.emailSecure = true
+        message.success('已填入 Gmail SMTP 参数，请继续填写邮箱账号和应用专用密码')
+        return
+      }
+      form.emailHost = 'smtp.qq.com'
+      form.emailPort = 465
+      form.emailSecure = true
+      message.success('已填入 QQ 邮箱 SMTP 参数，请继续填写邮箱账号和 SMTP 授权码')
     }
 
     function removeActivityRule(index) {
@@ -220,7 +235,7 @@ export const SettingsPage = {
       }
     }
 
-    return { activityRules, addActivityRule, form, groups, readFieldValue, removeActivityRule, statusItems, settingsVisible, submit, testEmail, testBark }
+    return { activityRules, addActivityRule, applySmtpPreset, form, groups, readFieldValue, removeActivityRule, statusItems, settingsVisible, submit, testEmail, testBark }
   },
   template: `
     <div class="settings-page">
@@ -248,7 +263,13 @@ export const SettingsPage = {
         destroy-on-close
       >
         <section v-for="group in groups" :key="group.title" class="drawer-form-section">
-          <div class="drawer-form-section-title">{{ group.title }}</div>
+          <div class="drawer-form-section-title">
+            <span>{{ group.title }}</span>
+            <span v-if="group.title === '支付与邮件'" class="settings-preset-actions">
+              <a-button size="small" @click="applySmtpPreset('qq')">QQ邮箱</a-button>
+              <a-button size="small" @click="applySmtpPreset('gmail')">Gmail</a-button>
+            </span>
+          </div>
           <div class="form-grid drawer-form-grid">
             <label v-for="field in group.fields" :key="field.key" :class="{ full: field.type === 'textarea' || field.type === 'activity-rules' }">
               <div class="muted" style="margin-bottom:6px">{{ field.label }}</div>
@@ -270,6 +291,7 @@ export const SettingsPage = {
               <a-select v-else-if="field.type === 'select'" v-model:value="form[field.key]" style="width:100%"><a-select-option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</a-select-option></a-select>
               <a-switch v-else-if="field.type === 'boolean'" v-model:checked="form[field.key]" checked-children="开" un-checked-children="关" />
               <a-input v-else v-model:value="form[field.key]" :type="field.type || 'text'" />
+              <small v-if="field.help" class="settings-field-help">{{ field.help }}</small>
             </label>
           </div>
         </section>

@@ -408,7 +408,7 @@ export const RootApp = {
       if (!item) return
       try {
         announcementSigning.value = true
-        if (currentUser.value) {
+        if (currentUser.value && (item.displayMode || 'popup') === 'popup') {
           await clientApi.signAnnouncement(item.id, currentUser.value.id)
         }
         saveReceipt(item)

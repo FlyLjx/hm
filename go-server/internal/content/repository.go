@@ -37,7 +37,7 @@ func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, us
 					  AND target_users.user_id = ?
 				))
 			  )
-			  AND (? = '' OR NOT EXISTS (
+			  AND (COALESCE(announcements.display_mode, 'popup') <> 'popup' OR ? = '' OR NOT EXISTS (
 				SELECT 1 FROM announcement_receipts
 				WHERE announcement_receipts.announcement_id = announcements.id
 				  AND announcement_receipts.user_id = ?
