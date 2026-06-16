@@ -52,6 +52,7 @@ export const RootApp = {
     const previewImage = ref(null)
     const announcements = ref([])
     const promotions = ref([])
+    const activityStatus = ref(null)
     const subscriptionPlans = ref([])
     const announcementSigning = ref(false)
     const userRefreshing = ref(false)
@@ -93,7 +94,7 @@ export const RootApp = {
     const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
     const secondaryNavItems = computed(() => navItems.filter((item) => !primaryNavItems.value.some((primary) => primary.id === item.id)))
     const isSecondaryNavActive = computed(() => secondaryNavItems.value.some((item) => item.id === activePage.value))
-    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
+    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'history'].includes(item.id)))
     const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
     const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
@@ -182,6 +183,7 @@ export const RootApp = {
     function logout() {
       clearCurrentUser()
       currentUser.value = null
+      activityStatus.value = null
       userSynced.value = true
       accountMenuOpen.value = false
       mobileMenuOpen.value = false
@@ -214,6 +216,7 @@ export const RootApp = {
       try {
         const response = await clientApi.getCurrentUser(currentUser.value.id)
         updateCurrentUser(response.data)
+        await loadActivityStatus()
       } catch {
         logout()
       } finally {
@@ -245,6 +248,19 @@ export const RootApp = {
     function updateCurrentUser(user) {
       currentUser.value = saveCurrentUser(user)
       userSynced.value = true
+    }
+
+    async function loadActivityStatus() {
+      if (!currentUser.value?.id) {
+        activityStatus.value = null
+        return
+      }
+      try {
+        const response = await clientApi.getIncentiveStatus(currentUser.value.id)
+        activityStatus.value = response.data || null
+      } catch {
+        activityStatus.value = null
+      }
     }
 
     async function loadOAuthClient() {
@@ -676,6 +692,45 @@ export const RootApp = {
       notifySuccess('邀请链接已复制')
     }
 
+    function inviteLink() {
+      if (!currentUser.value?.id) return location.origin
+      const url = new URL(location.origin)
+      url.searchParams.set('invite', currentUser.value.id)
+      return url.toString()
+    }
+
+    function inviteMessageTemplates() {
+      const reward = formatAmount(inviteState.summary?.rewardCredits || 0)
+      const discount = formatAmount(activityStatus.value?.discountPercent || 0)
+      const today = Number(activityStatus.value?.todayImages || 0)
+      const nextRule = activityStatus.value?.nextRule
+      const gap = nextRule ? Math.max(0, Number(nextRule.minImages || 0) - today) : 0
+      const activityLine = discount > 0
+        ? `现在全站活动已解锁 ${discount}% 生图优惠`
+        : nextRule
+          ? `现在全站今日已生成 ${today} 张，再冲 ${gap} 张全员解锁 ${formatAmount(nextRule.discountPercent)}% 优惠`
+          : '现在有全站生图活动，大家一起生成越多，活动档位越高'
+      return [
+        {
+          title: '微信群简短版',
+          text: `${siteName.value} 最近有全站生图活动，${activityLine}。用我的链接注册体验，我还能拿 ${reward} ${creditName.value} 邀请奖励：${inviteLink()}`,
+        },
+        {
+          title: '朋友圈种草版',
+          text: `发现一个挺好用的 AI 生图工具：${siteName.value}。可以对话生图、参考图改图、下载高清图。现在是全站共同冲档活动，生成量越高全员价格越低，想试的走这个链接：${inviteLink()}`,
+        },
+        {
+          title: '客户转化版',
+          text: `如果你需要做门店海报、产品图、活动宣传图，可以试试 ${siteName.value}。目前有全站生图优惠活动，注册后就能参与，链接在这：${inviteLink()}`,
+        },
+      ]
+    }
+
+    async function copyInviteMessage(template) {
+      await navigator.clipboard.writeText(template.text)
+      notifySuccess(`${template.title} 已复制`)
+    }
+
     async function copySupportValue(value) {
       if (!value) return
       await navigator.clipboard.writeText(value)
@@ -710,6 +765,7 @@ export const RootApp = {
       document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
     }, { immediate: true })
     watch(() => currentUser.value?.id, loadAnnouncements)
+    watch(() => currentUser.value?.id, loadActivityStatus)
     watch(rechargeOpen, (open) => {
       if (!open) stopRechargePolling()
     })
@@ -774,6 +830,7 @@ export const RootApp = {
       mobileMenuOpen,
       navMoreOpen,
       promotions,
+      activityStatus,
       subscriptionPlans,
       navItems,
       primaryNavItems,
@@ -796,6 +853,8 @@ export const RootApp = {
       playCheckinRoll,
       openInvite,
       copyInviteLink,
+      copyInviteMessage,
+      inviteMessageTemplates,
       copySupportValue,
       rechargeStatusText,
       submitAuth,
@@ -963,7 +1022,7 @@ export const RootApp = {
           </section>
         </main>
         <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
-          <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
+          <home-page v-if="activePage === 'home'" :activity-status="activityStatus" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @invite="openInvite" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
           <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
           <text-chat-page v-if="activePage === 'text-chat'" :credit-name="creditName" :current-user="currentUser" @login="loginOpen = true" @user-updated="updateCurrentUser" />
           <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
@@ -1302,6 +1361,17 @@ export const RootApp = {
           <div class="invite-tip">
             <i class="ti ti-link"></i>
             <span>邀请链接会自动带上你的用户标识，好友注册成功后会统计到这里。</span>
+          </div>
+          <div class="invite-message-panel">
+            <div class="invite-message-head">
+              <span>群发话术</span>
+              <small>复制后可直接发到微信群、朋友圈或客户群</small>
+            </div>
+            <button v-for="template in inviteMessageTemplates()" :key="template.title" class="invite-message-card" type="button" @click="copyInviteMessage(template)">
+              <strong>{{ template.title }}</strong>
+              <p>{{ template.text }}</p>
+              <em>一键复制</em>
+            </button>
           </div>
           <el-button class="invite-submit" type="primary" @click="copyInviteLink">复制邀请链接</el-button>
         </div>

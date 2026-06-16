@@ -26,6 +26,13 @@ const defaultSettings = {
   checkinRewards: '0.1,0.2,0.3,0.5,0.8,1',
   inviteEnabled: true,
   inviteRewardCredits: 1,
+  incentiveEnabled: false,
+  incentiveName: '全站生图活动',
+  incentiveStartAt: '',
+  incentiveEndAt: '',
+  incentiveNewUserDays: 0,
+  incentiveMinUnitPrice: 0.001,
+  incentiveRules: '[{"minImages":10,"discountPercent":10},{"minImages":30,"discountPercent":20},{"minImages":60,"discountPercent":30}]',
   taskTimeoutMinutes: 3,
   streamGenerationEnabled: false,
   promptModerationEnabled: true,
@@ -57,11 +64,33 @@ const defaultSettings = {
   barkNotifyProviderFailure: true,
 }
 
+function parseActivityRules(raw) {
+  try {
+    const rules = JSON.parse(String(raw || '[]'))
+    return Array.isArray(rules) ? cleanActivityRules(rules) : []
+  } catch {
+    return []
+  }
+}
+
+function cleanActivityRules(rules) {
+  return (Array.isArray(rules) ? rules : [])
+    .map((rule) => ({ minImages: toNumber(rule.minImages, 0), discountPercent: toNumber(rule.discountPercent, 0) }))
+    .filter((rule) => rule.minImages >= 0 && rule.discountPercent > 0)
+    .sort((a, b) => a.minImages - b.minImages)
+}
+
+function activityRulesText(raw) {
+  const rules = parseActivityRules(raw)
+  return rules.length ? rules.map((rule) => `满 ${rule.minImages} 张 / ${rule.discountPercent}%`).join('，') : '-'
+}
+
 export const SettingsPage = {
   props: { settings: Object },
   emits: ['refresh-settings'],
   setup(props, { emit }) {
     const form = reactive({ ...defaultSettings, ...(props.settings || {}) })
+    const activityRules = ref(parseActivityRules(form.incentiveRules))
     const settingsVisible = ref(false)
     const groups = [
       { title: '站点与注册', fields: [
@@ -77,6 +106,14 @@ export const SettingsPage = {
       { title: '充值与运营', fields: [
         { key: 'rechargeEnabled', label: '开启充值', type: 'boolean' }, { key: 'rechargeRate', label: '充值比例', type: 'number' }, { key: 'rechargeMinAmount', label: '最低充值金额', type: 'number' }, { key: 'rechargePresets', label: '充值预设' },
         { key: 'checkinEnabled', label: '开启签到', type: 'boolean' }, { key: 'checkinRewards', label: '签到奖励池' }, { key: 'inviteEnabled', label: '开启邀请', type: 'boolean' }, { key: 'inviteRewardCredits', label: '邀请奖励额度', type: 'number' }, { key: 'taskTimeoutMinutes', label: '任务超时分钟', type: 'number' },
+      ] },
+      { title: '全站生图活动', fields: [
+        { key: 'incentiveEnabled', label: '开启活动', type: 'boolean' },
+        { key: 'incentiveName', label: '活动名称' },
+        { key: 'incentiveStartAt', label: '开始时间', placeholder: '2026-06-15 00:00:00' },
+        { key: 'incentiveEndAt', label: '结束时间', placeholder: '2026-06-30 23:59:59' },
+        { key: 'incentiveMinUnitPrice', label: '最低单张价格', type: 'number' },
+        { key: 'incentiveRules', label: '活动阶梯', type: 'activity-rules' },
       ] },
       { title: '生成策略', fields: [
         { key: 'streamGenerationEnabled', label: '启用流式生图', type: 'boolean' },
@@ -106,20 +143,45 @@ export const SettingsPage = {
       ['当前站点', form.siteName || 'AIπ'],
       ['注册状态', form.registerMode === 'closed' ? '关闭注册' : '开放注册'],
       ['充值功能', form.rechargeEnabled ? '已开启' : '已关闭'],
+      ['生图活动', form.incentiveEnabled ? '已开启' : '已关闭'],
       ['生图模式', form.streamGenerationEnabled ? '流式' : '普通'],
       ['Bark 推送', form.barkEnabled ? '已开启' : '已关闭'],
       ['任务超时', `${toNumber(form.taskTimeoutMinutes, 3)} 分钟`],
     ])
-    watch(() => props.settings, (next) => Object.assign(form, defaultSettings, next || {}), { deep: true })
+    watch(() => props.settings, (next) => {
+      Object.assign(form, defaultSettings, next || {})
+      activityRules.value = parseActivityRules(form.incentiveRules)
+    }, { deep: true })
 
     function normalizeInput() {
       const input = { ...form }
       input.announcementEnabled = true
-      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification', 'barkEnabled', 'barkNotifyGenerationFailure', 'barkNotifyTaskTimeout', 'barkNotifyProviderFailure'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
-      ;['rechargeRate', 'rechargeMinAmount', 'inviteRewardCredits', 'taskTimeoutMinutes', 'emailPort', 'registerRewardCredits'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
+      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'incentiveEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification', 'barkEnabled', 'barkNotifyGenerationFailure', 'barkNotifyTaskTimeout', 'barkNotifyProviderFailure'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
+      ;['rechargeRate', 'rechargeMinAmount', 'inviteRewardCredits', 'taskTimeoutMinutes', 'emailPort', 'registerRewardCredits', 'incentiveNewUserDays', 'incentiveMinUnitPrice'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
+      input.incentiveMinUnitPrice = Math.max(0.001, input.incentiveMinUnitPrice)
+      input.incentiveNewUserDays = 0
+      input.incentiveRules = JSON.stringify(cleanActivityRules(activityRules.value))
       input.frontendUrl = input.frontendUrl || window.location.origin
       input.backendUrl = input.backendUrl || window.location.origin
       return input
+    }
+
+    function addActivityRule() {
+      const last = activityRules.value[activityRules.value.length - 1]
+      activityRules.value.push({
+        minImages: last ? Number(last.minImages || 0) + 10 : 10,
+        discountPercent: last ? Math.min(99, Number(last.discountPercent || 0) + 10) : 10,
+      })
+    }
+
+    function removeActivityRule(index) {
+      activityRules.value.splice(index, 1)
+    }
+
+    function readFieldValue(field) {
+      if (field.type === 'boolean') return form[field.key] ? '开启' : '关闭'
+      if (field.type === 'activity-rules') return activityRulesText(form[field.key])
+      return form[field.key] || '-'
     }
 
     async function submit() {
@@ -158,7 +220,7 @@ export const SettingsPage = {
       }
     }
 
-    return { form, groups, statusItems, settingsVisible, submit, testEmail, testBark }
+    return { activityRules, addActivityRule, form, groups, readFieldValue, removeActivityRule, statusItems, settingsVisible, submit, testEmail, testBark }
   },
   template: `
     <div class="settings-page">
@@ -174,8 +236,7 @@ export const SettingsPage = {
         <div class="settings-read-grid">
           <div v-for="field in group.fields" :key="field.key" class="settings-read-item">
             <span>{{ field.label }}</span>
-            <b v-if="field.type === 'boolean'">{{ form[field.key] ? '开启' : '关闭' }}</b>
-            <b v-else>{{ form[field.key] || '-' }}</b>
+            <b>{{ readFieldValue(field) }}</b>
           </div>
         </div>
       </section>
@@ -189,9 +250,23 @@ export const SettingsPage = {
         <section v-for="group in groups" :key="group.title" class="drawer-form-section">
           <div class="drawer-form-section-title">{{ group.title }}</div>
           <div class="form-grid drawer-form-grid">
-            <label v-for="field in group.fields" :key="field.key" :class="{ full: field.type === 'textarea' }">
+            <label v-for="field in group.fields" :key="field.key" :class="{ full: field.type === 'textarea' || field.type === 'activity-rules' }">
               <div class="muted" style="margin-bottom:6px">{{ field.label }}</div>
               <a-textarea v-if="field.type === 'textarea'" v-model:value="form[field.key]" :rows="4" />
+              <div v-else-if="field.type === 'activity-rules'" class="activity-rule-editor">
+                <div class="activity-rule-head">
+                  <span>达到张数</span>
+                  <span>优惠比例</span>
+                  <span></span>
+                </div>
+                <div v-for="(rule, index) in activityRules" :key="index" class="activity-rule-row">
+                  <a-input-number v-model:value="rule.minImages" :min="0" :precision="0" addon-before="满" addon-after="张" style="width:100%" />
+                  <a-input-number v-model:value="rule.discountPercent" :min="1" :max="99" :precision="0" addon-after="%" style="width:100%" />
+                  <a-button danger type="text" @click="removeActivityRule(index)">删除</a-button>
+                </div>
+                <div v-if="!activityRules.length" class="activity-rule-empty">还没有阶梯规则，添加后前台会按今日生图数量自动计算优惠。</div>
+                <a-button type="dashed" block @click="addActivityRule"><i class="ti ti-plus"></i> 添加阶梯</a-button>
+              </div>
               <a-select v-else-if="field.type === 'select'" v-model:value="form[field.key]" style="width:100%"><a-select-option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</a-select-option></a-select>
               <a-switch v-else-if="field.type === 'boolean'" v-model:checked="form[field.key]" checked-children="开" un-checked-children="关" />
               <a-input v-else v-model:value="form[field.key]" :type="field.type || 'text'" />

@@ -19,6 +19,7 @@ const generatingStatuses = ['waiting', 'queued', 'pending', 'running', 'processi
 const orphanWaitingExpireMs = 3 * 60 * 1000
 const maxReferenceImages = 10
 const maxReferenceImageBytes = 5 * 1024 * 1024
+const slowModelDurationMs = 10000
 const maskBrushRgb = '22, 163, 91'
 const maskPreviewColor = '#16a35b'
 const nonPassiveTouchListener = { passive: false }
@@ -121,6 +122,7 @@ export const ChatPage = {
   emits: ['login', 'preview', 'user-updated'],
   setup(props, { emit }) {
     const models = ref([])
+    const providerStatuses = ref({})
     const modelId = ref('')
     const ratio = ref('1:1')
     const sizeTier = ref('2k')
@@ -129,6 +131,7 @@ export const ChatPage = {
     const transparentBackground = ref(false)
     const prompt = ref('')
     const messages = ref([])
+    const incentiveStatus = ref(null)
     const sessions = ref([createSession(1)])
     const activeSessionId = ref(sessions.value[0].id)
     const referenceImages = ref([])
@@ -143,6 +146,7 @@ export const ChatPage = {
     const perspectiveCanvas = ref(null)
     const perspectiveOverlayCanvas = ref(null)
     let perspectiveDragListening = false
+    let providerStatusTimer = null
     const unsubscribers = new Map()
     const failedTaskNotices = new Set()
     const storageKey = computed(() => props.currentUser?.id ? `${chatStoragePrefix}:${props.currentUser.id}` : '')
@@ -154,7 +158,19 @@ export const ChatPage = {
     const subscriptionDiscountPercent = computed(() => Number(props.currentUser?.subscription?.discountPercent || 0))
     const hasSubscriptionDiscount = computed(() => modelHasSubscriptionDiscount(selectedModel.value))
     const originalEstimatedCost = computed(() => getModelVariantPrice(selectedModel.value, ratio.value, sizeTier.value) * quantity.value)
-    const estimatedCost = computed(() => discountedPrice(originalEstimatedCost.value))
+    const estimatedCost = computed(() => incentiveTotalCost.value)
+    const incentivePrice = computed(() => {
+      const model = selectedModel.value
+      if (!model) return 0
+      const unit = getModelVariantPrice(model, ratio.value, sizeTier.value)
+      const discount = Number(incentiveStatus.value?.discountPercent || 0)
+      const subscriptionDiscount = Number(props.currentUser?.subscription?.discountPercent || 0)
+      const best = Math.max(discount, subscriptionDiscount)
+      const minUnit = Number(incentiveStatus.value?.minUnitPrice || 0.001)
+      if (best <= 0) return unit
+      return Math.max(minUnit, Number((unit * (1 - best / 100)).toFixed(4)))
+    })
+    const incentiveTotalCost = computed(() => incentivePrice.value * quantity.value)
     const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || sessions.value[0])
     const orderedSessions = computed(() => [...sessions.value].sort((a, b) => (a.no || 0) - (b.no || 0)))
     const activeSessionLoading = computed(() => messages.value.some((message) => isGeneratingStatus(message.status)))
@@ -500,8 +516,38 @@ export const ChatPage = {
 
     function modelUnitPrice(model) {
       const price = modelUnitOriginalPrice(model)
-      if (!modelHasSubscriptionDiscount(model)) return price
-      return Number((price * (1 - subscriptionDiscountPercent.value / 100)).toFixed(4))
+      const incentiveDiscount = Number(incentiveStatus.value?.discountPercent || 0)
+      const subscriptionDiscount = modelHasSubscriptionDiscount(model) ? subscriptionDiscountPercent.value : 0
+      const bestDiscount = Math.max(incentiveDiscount, subscriptionDiscount)
+      if (bestDiscount <= 0) return price
+      const minUnit = Number(incentiveStatus.value?.minUnitPrice || 0.001)
+      return Math.max(minUnit, Number((price * (1 - bestDiscount / 100)).toFixed(4)))
+    }
+
+    function hasIncentiveDiscount() {
+      return Boolean(incentiveStatus.value?.active && Number(incentiveStatus.value?.discountPercent || 0) > 0)
+    }
+
+    function hasAnyDiscount(model = selectedModel.value) {
+      return modelUnitPrice(model) < modelUnitOriginalPrice(model)
+    }
+
+    function priceBadgeText(model = selectedModel.value) {
+      const incentiveDiscount = Number(incentiveStatus.value?.discountPercent || 0)
+      const subscriptionDiscount = modelHasSubscriptionDiscount(model) ? subscriptionDiscountPercent.value : 0
+      if (incentiveDiscount >= subscriptionDiscount && incentiveDiscount > 0) return `活动 ${formatAmount(incentiveDiscount)}%`
+      if (subscriptionDiscount > 0) return '会员价'
+      return ''
+    }
+
+    function incentiveSummaryText() {
+      const item = incentiveStatus.value
+      if (!item?.active) return ''
+      const today = Number(item.todayImages || 0)
+      const discount = Number(item.discountPercent || 0)
+      if (discount > 0) return `全站今日已生成 ${today} 张，活动价 ${formatAmount(discount)}% 优惠`
+      if (item.nextRule) return `全站今日已生成 ${today} 张，满 ${item.nextRule.minImages} 张享 ${formatAmount(item.nextRule.discountPercent)}% 活动优惠`
+      return `全站今日已生成 ${today} 张`
     }
 
     function modelPriceChange(model) {
@@ -509,6 +555,55 @@ export const ChatPage = {
       if (value > 0) return { type: 'up', text: `涨 ${formatAmount(value)}%` }
       if (value < 0) return { type: 'down', text: `降 ${formatAmount(Math.abs(value))}%` }
       return { type: 'flat', text: '持平' }
+    }
+
+    function recentHistoryStats(provider) {
+      const items = (provider?.history || []).filter((item) => item?.status && item.status !== 'unknown').slice(-60)
+      const total = items.length
+      const success = items.filter((item) => item.status === 'success').length
+      return { total, success, successRate: total ? (success / total) * 100 : 0 }
+    }
+
+    function modelProviderStatus(model) {
+      return providerStatuses.value?.[model?.providerId || ''] || null
+    }
+
+    function modelLinkState(model) {
+      const provider = modelProviderStatus(model)
+      if (!provider) return { level: 'unknown', text: '待监控' }
+      if (provider.providerStatus === 'disabled') return { level: 'disabled', text: '已停用' }
+      const stats = recentHistoryStats(provider)
+      if (!stats.total) return { level: 'unknown', text: '待监控' }
+      const durationMs = Number(provider.lastDurationMs || provider.avgDurationMs || 0)
+      if (provider.lastStatus === 'success') {
+        if (durationMs >= slowModelDurationMs) return { level: 'warning', text: '延迟高' }
+        return { level: 'online', text: '已连接' }
+      }
+      return { level: 'error', text: '连接异常' }
+    }
+
+    function formatModelDuration(value) {
+      const ms = Math.round(Number(value || 0))
+      if (!ms) return '暂无耗时'
+      if (ms < 1000) return `${ms}ms`
+      return `${(ms / 1000).toFixed(2)}s`
+    }
+
+    function modelRecentDuration(model) {
+      const provider = modelProviderStatus(model)
+      return formatModelDuration(provider?.lastDurationMs || provider?.avgDurationMs)
+    }
+
+    function modelLinkTitle(model) {
+      const state = modelLinkState(model)
+      const duration = modelRecentDuration(model)
+      return `连接状态：${state.text}，最近耗时：${duration}`
+    }
+
+    function modelSelectLabel(model) {
+      if (!model) return ''
+      const state = modelLinkState(model)
+      return `${getModelLabel(model)} · ${state.text} · ${modelRecentDuration(model)}`
     }
 
     function ratioIconStyle(value) {
@@ -713,7 +808,7 @@ export const ChatPage = {
     }
 
     function hideBrokenImage(event, message, index) {
-      event.target?.closest?.('.result-gallery-item, .result-thumb')?.classList.add('image-load-failed')
+      event.target?.closest?.('.result-main-card, .result-gallery-item, .result-thumb')?.classList.add('image-load-failed')
       if (!message || !Number.isInteger(index)) return
       const hiddenIndexes = new Set(message.hiddenImageIndexes || [])
       hiddenIndexes.add(index)
@@ -786,6 +881,7 @@ export const ChatPage = {
           clientApi.getCurrentUser(props.currentUser.id).then((response) => {
             emit('user-updated', response.data)
           }).catch(() => {})
+          void loadIncentiveStatus()
         }
       }
     }
@@ -1655,6 +1751,29 @@ export const ChatPage = {
       }
     }
 
+    async function loadProviderStatuses() {
+      try {
+        const response = await clientApi.getServiceStatus()
+        const providers = response.data?.providers || []
+        providerStatuses.value = Object.fromEntries(providers.map((provider) => [provider.providerId, provider]))
+      } catch {
+        providerStatuses.value = {}
+      }
+    }
+
+    async function loadIncentiveStatus() {
+      if (!props.currentUser?.id) {
+        incentiveStatus.value = null
+        return
+      }
+      try {
+        const response = await clientApi.getIncentiveStatus(props.currentUser.id)
+        incentiveStatus.value = response.data || null
+      } catch {
+        incentiveStatus.value = null
+      }
+    }
+
     onMounted(async () => {
       window.addEventListener('paste', handlePasteReferenceImage)
       loadState()
@@ -1672,9 +1791,13 @@ export const ChatPage = {
       } catch (error) {
         ElementPlus.ElMessage.error(error.message || '模型加载失败')
       }
+      await loadProviderStatuses()
+      await loadIncentiveStatus()
+      providerStatusTimer = setInterval(loadProviderStatuses, 60000)
     })
     onBeforeUnmount(() => {
       window.removeEventListener('paste', handlePasteReferenceImage)
+      if (providerStatusTimer) clearInterval(providerStatusTimer)
       removePerspectiveDragListeners()
       for (const unsubscribe of unsubscribers.values()) unsubscribe()
       unsubscribers.clear()
@@ -1682,9 +1805,11 @@ export const ChatPage = {
     watch([messages, prompt, referenceImages], syncActiveSession, { deep: true })
     watch(() => props.currentUser?.id || '', () => {
       loadState()
+      void loadIncentiveStatus()
     })
     return {
       models,
+      providerStatuses,
       modelId,
       ratio,
       sizeTier,
@@ -1719,13 +1844,22 @@ export const ChatPage = {
       outputSize,
       estimatedCost,
       originalEstimatedCost,
+      incentiveStatus,
       activeSession,
       hasSubscriptionDiscount,
       subscriptionDiscountPercent,
       modelHasSubscriptionDiscount,
       modelUnitOriginalPrice,
       modelUnitPrice,
+      hasIncentiveDiscount,
+      hasAnyDiscount,
+      priceBadgeText,
+      incentiveSummaryText,
       modelPriceChange,
+      modelLinkState,
+      modelRecentDuration,
+      modelLinkTitle,
+      modelSelectLabel,
       getModelLabel,
       getModelVariantPrice,
       isGeneratingStatus,
@@ -1941,7 +2075,7 @@ export const ChatPage = {
                     @click="toggleResultGallery(message)"
                     @dblclick="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果 ' + (activeResultIndex(message) + 1) })"
                   >
-                    <img :src="activeResultThumbnail(message)" :alt="'生成结果 ' + (activeResultIndex(message) + 1)" @load="(event) => rememberResultImageRatio(event, message, activeResultIndex(message))" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" />
+                    <img :src="activeResultImage(message)" :alt="'生成结果 ' + (activeResultIndex(message) + 1)" @load="(event) => rememberResultImageRatio(event, message, activeResultIndex(message))" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" />
                     <span class="result-main-badge">{{ activeResultIndex(message) + 1 }}</span>
                     <span v-if="visibleResultIndexes(message).length > 1" class="result-fold-hint">
                       <i class="ti ti-stack-2"></i>
@@ -2002,27 +2136,34 @@ export const ChatPage = {
           <div class="composer-grid">
             <div class="composer-field composer-model">
               <span>模型</span>
-              <el-select v-model="modelId" placeholder="选择模型" popper-class="composer-select-popper model-select-popper">
+              <el-select v-model="modelId" :class="selectedModel ? 'model-select-link is-' + modelLinkState(selectedModel).level : ''" placeholder="选择模型" popper-class="composer-select-popper model-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected model-selected">
                     <i class="ti ti-robot composer-select-icon"></i>
-                    {{ label }}
+                    <span>{{ label }}</span>
                   </span>
                 </template>
-                <el-option v-for="model in chatModels" :key="model.id" :label="getModelLabel(model)" :value="model.id">
-                  <span class="composer-option model-option">
+                <el-option v-for="model in chatModels" :key="model.id" :label="modelSelectLabel(model)" :value="model.id">
+                  <span class="composer-option model-option" :title="modelLinkTitle(model)">
                     <i class="ti ti-robot composer-select-icon"></i>
                     <span class="model-option-copy">
                       <span class="model-option-main">{{ getModelLabel(model) }}</span>
-                      <small class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</small>
+                      <span class="model-option-meta">
+                        <small class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</small>
+                        <small :class="['model-option-link', 'is-' + modelLinkState(model).level]">
+                          <i></i>{{ modelLinkState(model).text }}
+                        </small>
+                      </span>
                     </span>
                     <span class="model-option-price">
-                      <template v-if="modelHasSubscriptionDiscount(model)">
+                      <template v-if="hasAnyDiscount(model)">
+                        <em>{{ priceBadgeText(model) }}</em>
                         <del>{{ formatAmount(modelUnitOriginalPrice(model)) }}</del>
                         <b>{{ formatAmount(modelUnitPrice(model)) }}</b>
                       </template>
                       <template v-else>{{ formatAmount(modelUnitOriginalPrice(model)) }}</template>
                       {{ creditName }}
+                      <small>{{ modelRecentDuration(model) }}</small>
                     </span>
                   </span>
                 </el-option>
@@ -2104,17 +2245,22 @@ export const ChatPage = {
                 <el-switch v-model="transparentBackground" :disabled="outputFormat === 'png'" active-text="开" inactive-text="关" />
               </label>
             </div>
-            <span class="cost-chip">
-              <i class="ti ti-coins"></i>
-              <template v-if="hasSubscriptionDiscount">
-                <em>会员价</em>
-                <del>{{ formatAmount(originalEstimatedCost) }}</del>
-                <strong>{{ formatAmount(estimatedCost) }}</strong>
-                {{ creditName }}
-              </template>
-              <template v-else>
-                扣费 {{ formatAmount(estimatedCost) }} {{ creditName }}
-              </template>
+            <span class="cost-chip" :class="{ 'cost-chip-discount': hasAnyDiscount(selectedModel) }">
+              <span class="cost-chip-main">
+                <i class="ti ti-coins"></i>
+                <template v-if="hasAnyDiscount(selectedModel)">
+                  <em>{{ priceBadgeText(selectedModel) }}</em>
+                  <span class="cost-chip-prices">
+                    <del>{{ formatAmount(originalEstimatedCost) }}</del>
+                    <strong>{{ formatAmount(estimatedCost) }}</strong>
+                    <span class="cost-chip-unit">{{ creditName }}</span>
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="cost-chip-plain">扣费 <strong>{{ formatAmount(estimatedCost) }}</strong> {{ creditName }}</span>
+                </template>
+              </span>
+              <small v-if="incentiveSummaryText()" class="cost-chip-note">{{ incentiveSummaryText() }}</small>
             </span>
           </div>
           <div v-if="referenceImages.length" class="composer-reference-card">

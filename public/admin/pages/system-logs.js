@@ -2,7 +2,7 @@ import { API_BASE_URL, adminApi, getAdminToken } from '../api.js'
 import { formatDate } from '../format.js'
 
 const { computed, nextTick, onBeforeUnmount, onMounted, ref } = Vue
-const { message } = antd
+const { message, Modal } = antd
 
 function fileSize(value) {
   const size = Number(value || 0)
@@ -183,29 +183,37 @@ export const SystemLogsPage = {
     async function deleteActiveFile() {
       const name = activeName.value || detail.value?.name
       if (!name) return
-      if (!window.confirm(`确定删除日志文件「${name}」？删除后不可恢复。`)) return
-      deleting.value = true
-      closeStream()
-      try {
-        const response = await adminApi.deleteSystemLog(name)
-        const truncated = response?.data?.truncated
-        message.success(truncated ? '当前日志已清空' : '日志文件已删除')
-        activeName.value = ''
-        detail.value = null
-        await loadFiles()
-        if (files.value[0]) {
-          activeName.value = files.value[0].name
-          const response = await adminApi.getSystemLog({ name: activeName.value, maxBytes: 500000 })
-          detail.value = response.data
-          scrollLogToBottom()
-          startStream()
-        }
-      } catch (error) {
-        message.error(error instanceof Error ? error.message : '删除日志文件失败')
-        await load()
-      } finally {
-        deleting.value = false
-      }
+      Modal.confirm({
+        title: '删除日志文件？',
+        content: `确定删除日志文件「${name}」？删除后不可恢复。`,
+        okText: '删除',
+        okType: 'danger',
+        cancelText: '取消',
+        async onOk() {
+          deleting.value = true
+          closeStream()
+          try {
+            const response = await adminApi.deleteSystemLog(name)
+            const truncated = response?.data?.truncated
+            message.success(truncated ? '当前日志已清空' : '日志文件已删除')
+            activeName.value = ''
+            detail.value = null
+            await loadFiles()
+            if (files.value[0]) {
+              activeName.value = files.value[0].name
+              const response = await adminApi.getSystemLog({ name: activeName.value, maxBytes: 500000 })
+              detail.value = response.data
+              scrollLogToBottom()
+              startStream()
+            }
+          } catch (error) {
+            message.error(error instanceof Error ? error.message : '删除日志文件失败')
+            await load()
+          } finally {
+            deleting.value = false
+          }
+        },
+      })
     }
 
     onMounted(load)

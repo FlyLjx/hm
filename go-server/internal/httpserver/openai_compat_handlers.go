@@ -147,7 +147,12 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "当前模型未开放 "+strings.ToUpper(sizeTier)+" 清晰度", "invalid_request_error")
 		return
 	}
-	price := modelPriceForTier(*model, sizeTier) * float64(input.N)
+	unitPrice, _, err := r.imageUnitPrice(ctx, auth.User.ID, *model, sizeTier)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
+		return
+	}
+	price := unitPrice * float64(input.N)
 	if auth.User.Credits < price {
 		writeOpenAIError(w, http.StatusPaymentRequired, "用户积分不足", "insufficient_quota")
 		return
@@ -487,6 +492,13 @@ func decodeCompatJSON(req *http.Request, target any) error {
 }
 
 func absoluteURL(req *http.Request, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "data:") {
+		return path
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	scheme := "http"
 	if req.TLS != nil {
 		scheme = "https"

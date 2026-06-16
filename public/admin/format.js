@@ -1,4 +1,4 @@
-export function formatAmount(value, digits = 2) {
+export function formatAmount(value, digits = 3) {
   const number = Number(value || 0)
   return number.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: digits })
 }

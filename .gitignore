@@ -2,6 +2,7 @@ node_modules/
 dist-server/
 release/
 logs/
+go-server/tmp/
 .tmp/
 .continue/
 .codex-screenshots/

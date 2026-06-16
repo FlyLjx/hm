@@ -24,7 +24,7 @@ export const OperationsPage = {
     ]
     const announcementFields = computed(() => [
       { key: 'title', label: '标题', required: true },
-      { key: 'content', label: '内容（Markdown）', type: 'textarea', rows: 12, preview: 'markdown', required: true, full: true },
+      { key: 'content', label: '内容（Markdown）', type: 'textarea', rows: 12, preview: 'markdown', required: true, full: true, aiGenerate: adminApi.generateAnnouncement },
       { key: 'displayMode', label: '展示方式', type: 'select', defaultValue: 'popup', options: [{ label: '弹窗公告', value: 'popup' }, { label: '首页横幅', value: 'home' }, { label: '顶部通知条', value: 'topbar' }] },
       { key: 'targetType', label: '展示范围', type: 'select', defaultValue: 'all', options: [{ label: '全部用户', value: 'all' }, { label: '指定用户', value: 'specific' }] },
       { key: 'userIds', label: '指定用户', type: 'multiple-select', options: userOptions.value, placeholder: '搜索邮箱或用户ID，可多选', full: true },

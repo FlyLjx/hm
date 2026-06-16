@@ -2,7 +2,7 @@ import { adminApi } from '../api.js'
 import { formatDate } from '../format.js'
 
 const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
-const { message } = antd
+const { message, Modal } = antd
 
 function duration(value) {
   const ms = Math.round(Number(value || 0))
@@ -89,19 +89,27 @@ export const ApiLogsPage = {
     }
 
     async function cleanupLogs() {
-      if (!window.confirm('清理超过保留周期的 API 日志？成功日志会更早清理。')) return
-      cleanupLoading.value = true
-      try {
-        const response = await adminApi.cleanupApiLogs()
-        const result = response.data || {}
-        message.success(`已清理 ${result.deletedCount || 0} 条旧日志`)
-        page.value = 1
-        await load()
-      } catch (error) {
-        message.error(error instanceof Error ? error.message : '清理 API 日志失败')
-      } finally {
-        cleanupLoading.value = false
-      }
+      Modal.confirm({
+        title: '清理 API 日志？',
+        content: '将清理超过保留周期的 API 日志，成功日志会更早清理。',
+        okText: '清理',
+        okType: 'danger',
+        cancelText: '取消',
+        async onOk() {
+          cleanupLoading.value = true
+          try {
+            const response = await adminApi.cleanupApiLogs()
+            const result = response.data || {}
+            message.success(`已清理 ${result.deletedCount || 0} 条旧日志`)
+            page.value = 1
+            await load()
+          } catch (error) {
+            message.error(error instanceof Error ? error.message : '清理 API 日志失败')
+          } finally {
+            cleanupLoading.value = false
+          }
+        },
+      })
     }
 
     function handleAutoRefresh() {

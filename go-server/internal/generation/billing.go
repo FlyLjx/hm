@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"aipi-go/internal/pricing"
 	"aipi-go/internal/users"
 )
 
@@ -75,6 +76,10 @@ type BillingSuccessInput struct {
 }
 
 func taskCost(sizeTier string, quantity int, modelPrice1k float64, modelPrice2k float64, modelPrice4k float64) float64 {
+	return taskUnitPrice(sizeTier, modelPrice1k, modelPrice2k, modelPrice4k) * float64(quantity)
+}
+
+func taskUnitPrice(sizeTier string, modelPrice1k float64, modelPrice2k float64, modelPrice4k float64) float64 {
 	unit := modelPrice1k
 	if sizeTier == "2k" {
 		unit = modelPrice2k
@@ -82,7 +87,7 @@ func taskCost(sizeTier string, quantity int, modelPrice1k float64, modelPrice2k 
 	if sizeTier == "4k" {
 		unit = modelPrice4k
 	}
-	return unit * float64(quantity)
+	return unit
 }
 
 func taskModelCost(sizeTier string, quantity int, modelCost1k float64, modelCost2k float64, modelCost4k float64) float64 {
@@ -94,6 +99,20 @@ func taskModelCost(sizeTier string, quantity int, modelCost1k float64, modelCost
 		unit = modelCost4k
 	}
 	return unit * float64(quantity)
+}
+
+func billingRemark(base string, incentive pricing.Result, discount float64, source string) string {
+	if discount <= 0 {
+		return base
+	}
+	if source == "subscription" {
+		return base + " / 会员折扣"
+	}
+	name := incentive.PlanName
+	if name == "" {
+		name = "全站生图活动"
+	}
+	return base + " / " + name + " / 活动折扣"
 }
 
 func newID() string {

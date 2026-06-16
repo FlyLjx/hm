@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"aipi-go/internal/pricing"
+	"aipi-go/internal/settings"
 )
 
 func (s *Service) Process(ctx context.Context, taskID string) error {
@@ -80,7 +83,25 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		)
 		return err
 	}
-	costCredits := taskCost(task.SizeTier, task.Quantity, model.Price1K, model.Price2K, model.Price4K)
+	baseUnitPrice := taskUnitPrice(task.SizeTier, model.Price1K, model.Price2K, model.Price4K)
+	incentive, err := s.pricingIncentive(ctx, task.UserID)
+	if err != nil {
+		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		if failed != nil && s.hub != nil {
+			s.hub.PublishTask(*failed)
+		}
+		return err
+	}
+	subscriptionDiscount, err := pricing.CurrentSubscriptionDiscount(ctx, s.db, task.UserID)
+	if err != nil {
+		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		if failed != nil && s.hub != nil {
+			s.hub.PublishTask(*failed)
+		}
+		return err
+	}
+	unitPrice, appliedDiscount, discountSource := pricing.ApplyUnitPrice(baseUnitPrice, incentive, subscriptionDiscount)
+	costCredits := unitPrice * float64(task.Quantity)
 	modelCostCredits := taskModelCost(task.SizeTier, task.Quantity, model.Cost1K, model.Cost2K, model.Cost4K)
 	if err := s.finishSuccessWithBilling(ctx, BillingSuccessInput{
 		TaskID:           taskID,
@@ -88,7 +109,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		CostCredits:      costCredits,
 		ModelCostCredits: modelCostCredits,
 		DurationSeconds:  time.Since(startedAt).Seconds(),
-		Remark:           "图片生成：" + model.DisplayName,
+		Remark:           billingRemark("图片生成："+model.DisplayName, incentive, appliedDiscount, discountSource),
 		Result:           result,
 	}); err != nil {
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
@@ -115,6 +136,14 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"imageCount", len(ExtractImages(result)),
 	)
 	return nil
+}
+
+func (s *Service) pricingIncentive(ctx context.Context, userID string) (pricing.Result, error) {
+	values, err := settings.NewRepository(s.db).Get(ctx)
+	if err != nil {
+		return pricing.Result{}, err
+	}
+	return pricing.Evaluate(ctx, s.db, values, userID, time.Now())
 }
 
 func taskOutputFormat(format string, transparent bool) string {

@@ -59,7 +59,12 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusBadRequest, "聊天模型接口未启用"))
 		return
 	}
-	body := map[string]any{"model": model.ModelName, "messages": input.Messages, "stream": input.Stream}
+	messages, err := inlineChatMessageImages(req.Context(), req, input.Messages)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	body := map[string]any{"model": model.ModelName, "messages": messages, "stream": input.Stream}
 	if input.Stream {
 		r.siteChatStream(w, req, *provider, body, user.Credits)
 		return
@@ -84,6 +89,54 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 			"remainingCredits": user.Credits,
 		},
 	})
+}
+
+func inlineChatMessageImages(ctx context.Context, req *http.Request, messages []map[string]any) ([]map[string]any, error) {
+	output := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		next := map[string]any{}
+		for key, value := range message {
+			next[key] = value
+		}
+		content, ok := next["content"].([]any)
+		if !ok {
+			output = append(output, next)
+			continue
+		}
+		parts := make([]any, 0, len(content))
+		for _, part := range content {
+			item, ok := part.(map[string]any)
+			if !ok {
+				parts = append(parts, part)
+				continue
+			}
+			nextPart := map[string]any{}
+			for key, value := range item {
+				nextPart[key] = value
+			}
+			if strings.EqualFold(strings.TrimSpace(stringValue(nextPart["type"])), "image_url") {
+				if imageURL, ok := nextPart["image_url"].(map[string]any); ok {
+					nextImageURL := map[string]any{}
+					for key, value := range imageURL {
+						nextImageURL[key] = value
+					}
+					url := strings.TrimSpace(stringValue(nextImageURL["url"]))
+					if url != "" && !strings.HasPrefix(url, "data:image/") {
+						dataURL, err := readImageAsDataURL(ctx, absoluteURL(req, url))
+						if err != nil {
+							return nil, err
+						}
+						nextImageURL["url"] = dataURL
+					}
+					nextPart["image_url"] = nextImageURL
+				}
+			}
+			parts = append(parts, nextPart)
+		}
+		next["content"] = parts
+		output = append(output, next)
+	}
+	return output, nil
 }
 
 func (r *Router) siteChatStream(w http.ResponseWriter, req *http.Request, provider providers.Provider, body map[string]any, remainingCredits float64) {

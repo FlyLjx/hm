@@ -2383,9 +2383,10 @@
 
 .composer-grid .cost-chip {
   display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: center;
-  gap: 6px;
+  gap: 2px;
   align-self: center;
   min-width: 178px;
   min-height: 42px;
@@ -2401,20 +2402,43 @@
   box-shadow: 0 10px 24px rgba(114, 75, 0, 0.08);
 }
 
+.composer-grid .cost-chip .cost-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
 .composer-grid .cost-chip i {
   font-size: 16px;
+  flex-shrink: 0;
+}
+
+.composer-grid .cost-chip .cost-chip-prices {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
 }
 
 .composer-grid .cost-chip em {
-  font-style: normal;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(199, 145, 38, 0.16);
   color: #9a6700;
-  opacity: 0.92;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
 }
 
 .composer-grid .cost-chip del {
   color: #b8a06b;
   font-size: 12px;
-  text-decoration-thickness: 2px;
+  font-weight: 700;
+  text-decoration-thickness: 1.5px;
 }
 
 .composer-grid .cost-chip strong {
@@ -2422,6 +2446,18 @@
   font-size: 16px;
   line-height: 1;
   text-shadow: none;
+}
+
+.composer-grid .cost-chip .cost-chip-unit {
+  color: #a87c2a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.composer-grid .cost-chip .cost-chip-plain {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
 }
 
 .chat-thread {

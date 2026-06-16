@@ -84,6 +84,7 @@ export const clientApi = {
 
   listModels: () => request('/api/models?dedupe=display'),
   getServiceStatus: () => request('/api/service-status'),
+  getIncentiveStatus: (userId) => request(`/api/pricing/activity${query({ userId })}`),
   reversePrompt: (input) => request('/api/prompt-reverse', { method: 'POST', body: JSON.stringify(input) }),
   completeChat: (input) => request('/api/chat/completions', { method: 'POST', body: JSON.stringify(input) }),
   completeChatStream: async (input) => {
@@ -109,6 +110,7 @@ export const clientApi = {
       throw new Error('生成通道连接失败，请确认前台通过后端地址访问，并刷新后重试')
     }
   },
+  getTask: (id) => request(`/api/tasks/${encodeURIComponent(id)}`),
   listPublicDisplayTasks: () => request('/api/tasks/public-display'),
   listFavoriteTasks: (input) => request(`/api/tasks/favorites${query(input)}`),
   listHistoryTasks: (input) => request(`/api/tasks/history${query(input)}`),

@@ -125,6 +125,7 @@ export const adminApi = {
   deleteInvite: (id) => request(`/api/invites/${pathId(id)}`, { method: 'DELETE' }),
 
   listAnnouncements: () => request('/api/announcements'),
+  generateAnnouncement: (input) => request('/api/announcements/generate', json('POST', input)),
   createAnnouncement: (input) => request('/api/announcements', json('POST', input)),
   updateAnnouncement: (id, input) => request(`/api/announcements/${pathId(id)}`, json('PATCH', input)),
   deleteAnnouncement: (id) => request(`/api/announcements/${pathId(id)}`, { method: 'DELETE' }),

@@ -416,6 +416,7 @@ export const TextChatPage = {
         const response = await clientApi.completeChatStream({
           userId: props.currentUser.id,
           messages: messagePayload(),
+          stream: true,
         })
         await readChatStream(response, assistantMessage)
         session.updatedAt = Date.now()

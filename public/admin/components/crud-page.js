@@ -117,6 +117,8 @@ export const CrudPage = {
     const pagination = ref(null)
     const editing = ref(undefined)
     const form = reactive({})
+    const aiDrafts = reactive({})
+    const aiGenerating = reactive({})
 
     const filteredRows = computed(() => {
       if (props.paginated) return rows.value
@@ -183,6 +185,11 @@ export const CrudPage = {
 
     function closeForm() {
       editing.value = undefined
+    }
+
+    function aiState(field) {
+      if (!aiDrafts[field.key]) aiDrafts[field.key] = { prompt: '' }
+      return aiDrafts[field.key]
     }
 
     function resetFilterState() {
@@ -321,9 +328,49 @@ export const CrudPage = {
     }
 
     function applyMarkdownTemplate(field, template) {
-      if (form[field.key] && !window.confirm('当前内容会被模板替换，确定继续吗？')) return
+      if (form[field.key]) {
+        Modal.confirm({
+          title: '替换当前内容？',
+          content: '当前内容会被模板替换，确定继续吗？',
+          okText: '替换',
+          cancelText: '取消',
+          onOk() {
+            if ('title' in form) form.title = template.title
+            form[field.key] = template.content
+          },
+        })
+        return
+      }
       if ('title' in form) form.title = template.title
       form[field.key] = template.content
+    }
+
+    async function generateFieldDraft(field) {
+      if (typeof field.aiGenerate !== 'function') return
+      const state = aiState(field)
+      const prompt = String(state.prompt || '').trim()
+      if (!prompt) {
+        message.warning('先输入公告主题或要点')
+        return
+      }
+      aiGenerating[field.key] = true
+      try {
+        const response = await field.aiGenerate({
+          prompt,
+          title: form.title || '',
+          content: form[field.key] || '',
+          displayMode: form.displayMode || '',
+          targetType: form.targetType || '',
+        })
+        const data = response.data || {}
+        if (data.title && 'title' in form) form.title = data.title
+        if (data.content) form[field.key] = data.content
+        message.success('AI 已生成公告草稿')
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : 'AI 生成失败')
+      } finally {
+        aiGenerating[field.key] = false
+      }
     }
 
     async function copyCell(record, column) {
@@ -406,6 +453,9 @@ export const CrudPage = {
       handleTextareaTab,
       insertMarkdown,
       applyMarkdownTemplate,
+      aiState,
+      aiGenerating,
+      generateFieldDraft,
       markdownTemplates,
       copyCell,
     }
@@ -503,6 +553,19 @@ export const CrudPage = {
         <div class="form-grid drawer-form-grid">
           <label v-for="field in dialogFields" :key="field.key" :class="{ full: field.type === 'textarea' || field.full }">
             <div class="muted" style="margin-bottom:6px">{{ field.label }}</div>
+            <div v-if="field.aiGenerate" class="admin-ai-draft">
+              <div class="admin-ai-draft-head">
+                <span><i class="ti ti-sparkles"></i> AI 代写公告</span>
+                <small>输入主题后自动生成标题和 Markdown 内容</small>
+              </div>
+              <div class="admin-ai-draft-row">
+                <a-input v-model:value="aiState(field).prompt" placeholder="例如：端午活动通知，强调全站冲档优惠、邀请好友一起参与" @press-enter="generateFieldDraft(field)" />
+                <a-button type="primary" :loading="aiGenerating[field.key]" @click="generateFieldDraft(field)">
+                  <i class="ti ti-wand"></i>
+                  生成
+                </a-button>
+              </div>
+            </div>
             <div v-if="field.type === 'textarea' && field.preview === 'markdown'" class="admin-markdown-editor-grid">
               <div class="admin-markdown-editor">
                 <div class="admin-markdown-toolbar">

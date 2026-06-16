@@ -1,10 +1,59 @@
 import { formatAmount } from '../common/format.js'
 import { renderMarkdown } from '../common/markdown.js'
 
+const { computed } = Vue
+
+function parseActivityRules(raw) {
+  try {
+    const rules = JSON.parse(String(raw || '[]'))
+    return Array.isArray(rules)
+      ? rules
+        .map((rule) => ({ minImages: Number(rule.minImages || 0), discountPercent: Number(rule.discountPercent || 0) }))
+        .filter((rule) => rule.minImages >= 0 && rule.discountPercent > 0)
+        .sort((a, b) => a.minImages - b.minImages)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function activeActivityRule(rules, count) {
+  return [...rules].reverse().find((rule) => count >= rule.minImages) || null
+}
+
+function nextActivityRule(rules, count) {
+  return rules.find((rule) => count < rule.minImages) || null
+}
+
 export const HomePage = {
-  props: ['announcements', 'creditName', 'currentUser', 'promotions', 'settings', 'siteName', 'subscriptionPlans'],
-  emits: ['announcement-close', 'go', 'login', 'recharge', 'subscribe'],
-  setup() {
+  props: ['activityStatus', 'announcements', 'creditName', 'currentUser', 'promotions', 'settings', 'siteName', 'subscriptionPlans'],
+  emits: ['announcement-close', 'go', 'invite', 'login', 'recharge', 'subscribe'],
+  setup(props) {
+    const activityEnabled = computed(() => props.settings?.incentiveEnabled === true || props.settings?.incentiveEnabled === 'true' || props.activityStatus?.active)
+    const activityRules = computed(() => parseActivityRules(props.settings?.incentiveRules))
+    const activityName = computed(() => props.activityStatus?.planName || props.settings?.incentiveName || '全站生图活动')
+    const todayImages = computed(() => Number(props.activityStatus?.todayImages || 0))
+    const currentDiscount = computed(() => Number(props.activityStatus?.discountPercent || 0))
+    const activeRule = computed(() => props.activityStatus?.rule || activeActivityRule(activityRules.value, todayImages.value))
+    const nextRule = computed(() => props.activityStatus?.nextRule || nextActivityRule(activityRules.value, todayImages.value))
+    const progressTarget = computed(() => nextRule.value?.minImages || activeRule.value?.minImages || activityRules.value[0]?.minImages || 0)
+    const progressPercent = computed(() => {
+      const target = Number(progressTarget.value || 0)
+      if (!props.currentUser || target <= 0) return 0
+      return Math.min(100, Math.round((todayImages.value / target) * 100))
+    })
+    const activitySummary = computed(() => {
+      if (!props.currentUser) return '全站用户共同累计今日生图数量，登录后即可参与冲档享优惠。'
+      if (currentDiscount.value > 0) return `全站今日已生成 ${todayImages.value} 张，所有用户当前享 ${formatAmount(currentDiscount.value)}% 活动优惠。`
+      if (nextRule.value) return `全站今日已生成 ${todayImages.value} 张，满 ${nextRule.value.minImages} 张全员享 ${formatAmount(nextRule.value.discountPercent)}% 优惠。`
+      return `全站今日已生成 ${todayImages.value} 张，活动最高档已达成。`
+    })
+    const activityMeta = computed(() => {
+      if (!props.currentUser) return activityRules.value[0] ? `首档满 ${activityRules.value[0].minImages} 张享 ${formatAmount(activityRules.value[0].discountPercent)}%` : '开启后自动按今日生图数量降价'
+      if (nextRule.value) return `全站距离下一档还差 ${Math.max(0, Number(nextRule.value.minImages || 0) - todayImages.value)} 张`
+      return '全站已达最高活动档'
+    })
+    const minUnitPrice = computed(() => Math.max(0.001, Number(props.activityStatus?.minUnitPrice || props.settings?.incentiveMinUnitPrice || 0.001)))
     function promotionIcon(item) {
       const icon = String(item?.badge || '').trim()
       return icon.startsWith('ti-') ? icon : 'ti-speakerphone'
@@ -12,7 +61,7 @@ export const HomePage = {
     function announcementHtml(item) {
       return renderMarkdown(item?.content || '')
     }
-    return { announcementHtml, formatAmount, promotionIcon }
+    return { activityEnabled, activityMeta, activityName, activityRules, activitySummary, currentDiscount, formatAmount, announcementHtml, minUnitPrice, nextRule, progressPercent, progressTarget, promotionIcon, todayImages }
   },
   template: `
     <div class="home-page">
@@ -41,6 +90,50 @@ export const HomePage = {
             <i class="ti ti-arrow-right"></i>
           </a>
         </article>
+      </section>
+
+      <section v-if="activityEnabled" class="home-activity-card glass-card">
+        <div class="home-activity-copy">
+          <div class="home-activity-kicker">
+            <i class="ti ti-users-group"></i>
+            <span>Global Activity</span>
+          </div>
+          <h2>{{ activityName }}</h2>
+          <p>{{ activitySummary }}</p>
+          <div class="home-activity-actions">
+            <button class="home-activity-login" type="button" @click="$emit(currentUser ? 'invite' : 'login')">
+              {{ currentUser ? '邀请好友一起冲档' : '登录参与全站活动' }}
+              <i class="ti ti-arrow-right"></i>
+            </button>
+            <button v-if="currentUser" class="home-activity-link" type="button" @click="$emit('go', 'chat')">
+              我也去贡献一张
+            </button>
+          </div>
+        </div>
+        <div class="home-activity-board">
+          <div class="home-activity-discount">
+            <span>当前全员优惠</span>
+            <strong :class="{ 'is-text': !currentUser || !currentDiscount }">{{ currentUser ? (currentDiscount ? formatAmount(currentDiscount) + '%' : '待达标') : '登录查看' }}</strong>
+          </div>
+          <div class="home-activity-progress">
+            <div class="home-activity-progress-head">
+              <span>{{ currentUser ? '全站今日进度' : '活动阶梯' }}</span>
+              <strong>{{ currentUser ? todayImages + ' / ' + (progressTarget || '-') + ' 张' : activityMeta }}</strong>
+            </div>
+            <div class="home-activity-track">
+              <i :style="{ width: progressPercent + '%' }"></i>
+            </div>
+            <div class="home-activity-foot">
+              <span><i class="ti ti-target-arrow"></i>{{ activityMeta }}</span>
+              <span><i class="ti ti-shield-check"></i>按模型价自动折扣 · 保底 {{ formatAmount(minUnitPrice) }} {{ creditName }}/张</span>
+            </div>
+          </div>
+          <div v-if="activityRules.length" class="home-activity-rules">
+            <span v-for="rule in activityRules.slice(0, 4)" :key="rule.minImages" :class="{ active: currentUser && todayImages >= rule.minImages }">
+              满 {{ rule.minImages }} 张 · {{ formatAmount(rule.discountPercent) }}%
+            </span>
+          </div>
+        </div>
       </section>
 
       <section class="home-hero clean-home-hero">

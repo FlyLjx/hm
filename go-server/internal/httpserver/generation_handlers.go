@@ -126,7 +126,11 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusForbidden, "用户已被禁用")
 	}
 
-	price := modelPriceForTier(*model, input.SizeTier) * float64(input.Quantity)
+	unitPrice, _, err := r.imageUnitPrice(ctx, user.ID, *model, input.SizeTier)
+	if err != nil {
+		return nil, err
+	}
+	price := unitPrice * float64(input.Quantity)
 	if user.Credits < price {
 		return nil, newAppError(http.StatusPaymentRequired, "用户积分不足")
 	}
