@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { formatDate } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
+const { computed, onMounted, ref, watch } = Vue
 const { message, Modal } = antd
 
 function duration(value) {
@@ -151,11 +151,6 @@ export const ApiKeysPage = {
       logPagination.value = null
     }
 
-    function handleAutoRefresh() {
-      if (activeKey.value) loadLogs()
-      else load()
-    }
-
     watch(page, load)
     watch(status, () => {
       page.value = 1
@@ -169,10 +164,6 @@ export const ApiKeysPage = {
 
     onMounted(() => {
       load()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return {

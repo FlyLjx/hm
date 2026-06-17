@@ -28,7 +28,7 @@ func (r *Router) dashboard(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	data, err := operations.NewRepository(r.db).Dashboard(ctx)
+	data, err := operations.NewRepository(r.db).DashboardSummary(ctx, queryInt(req, "limit", 8))
 	if err != nil {
 		writeError(w, err)
 		return

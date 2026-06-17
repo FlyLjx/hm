@@ -95,12 +95,11 @@ export const MailBroadcastPage = {
     async function loadUsers() {
       loadingUsers.value = true
       try {
-        const [usersResponse, settingsResponse] = await Promise.all([
-          adminApi.listUsers(),
-          adminApi.getSettings(),
-        ])
-        users.value = usersResponse.data || []
-        settings.value = settingsResponse.data || {}
+        settings.value = (await adminApi.getSettings()).data || {}
+        if (form.targetType === 'specific') {
+          const usersResponse = await adminApi.listUsers()
+          users.value = usersResponse.data || []
+        }
       } catch (error) {
         message.error(error instanceof Error ? error.message : '加载用户失败')
       } finally {
@@ -125,6 +124,16 @@ export const MailBroadcastPage = {
       form.actionText = template.actionText || '立即访问'
       form.actionUrl = form.actionUrl || defaultEntryUrl()
       message.success(`已套用「${template.name}」模板`)
+    }
+
+    async function ensureUsersLoaded() {
+      if (users.value.length || loadingUsers.value) return
+      try {
+        const usersResponse = await adminApi.listUsers()
+        users.value = usersResponse.data || []
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '加载用户失败')
+      }
     }
 
     async function copyActionUrl() {
@@ -177,6 +186,10 @@ export const MailBroadcastPage = {
 
     onMounted(loadUsers)
 
+    Vue.watch(() => form.targetType, (value) => {
+      if (value === 'specific') void ensureUsersLoaded()
+    })
+
     return {
       users,
       loadingUsers,
@@ -192,6 +205,7 @@ export const MailBroadcastPage = {
       loadUsers,
       openPreview,
       applyTemplate,
+      ensureUsersLoaded,
       copyActionUrl,
       submit,
     }

@@ -13,6 +13,20 @@ export function clearAdminToken() {
   localStorage.removeItem(ADMIN_TOKEN_KEY)
 }
 
+const adminGetCache = new Map()
+
+function clearAdminCache(matchers = []) {
+  if (!matchers.length) {
+    adminGetCache.clear()
+    return
+  }
+  for (const key of [...adminGetCache.keys()]) {
+    if (matchers.some((matcher) => key === matcher || key.startsWith(`${matcher}?`))) {
+      adminGetCache.delete(key)
+    }
+  }
+}
+
 async function readMessage(response, fallback) {
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -44,6 +58,29 @@ export async function request(path, options = {}) {
   return response.json()
 }
 
+async function cachedGet(path, ttlMs = 15000) {
+  const now = Date.now()
+  const cached = adminGetCache.get(path)
+  if (cached?.value && cached.expiresAt > now) {
+    return cached.value
+  }
+  if (cached?.promise) return cached.promise
+  const promise = request(path)
+    .then((result) => {
+      adminGetCache.set(path, {
+        value: result,
+        expiresAt: Date.now() + ttlMs,
+      })
+      return result
+    })
+    .catch((error) => {
+      adminGetCache.delete(path)
+      throw error
+    })
+  adminGetCache.set(path, { promise, expiresAt: now + ttlMs })
+  return promise
+}
+
 function query(params = {}) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -64,27 +101,57 @@ function pathId(id) {
 export const adminApi = {
   login: (input) => request('/api/admin/login', json('POST', input)),
   getSession: () => request('/api/admin/session'),
-  getDashboard: () => request('/api/dashboard'),
+  getDashboard: (params) => request(`/api/dashboard${query(params)}`),
   getCostStats: (params) => request(`/api/finance-stats/costs${query(params)}`),
-  listUsers: () => request('/api/users'),
+  listUsers: () => cachedGet('/api/users', 15000),
   createUser: (input) => request('/api/users', json('POST', input)),
-  updateUser: (id, input) => request(`/api/users/${pathId(id)}`, json('PATCH', input)),
-  deleteUser: (id) => request(`/api/users/${pathId(id)}`, { method: 'DELETE' }),
-  rechargeUser: (id, input) => request(`/api/users/${pathId(id)}/recharge`, json('POST', input)),
+  updateUser: (id, input) => request(`/api/users/${pathId(id)}`, json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/users'])
+    return result
+  }),
+  deleteUser: (id) => request(`/api/users/${pathId(id)}`, { method: 'DELETE' }).then((result) => {
+    clearAdminCache(['/api/users'])
+    return result
+  }),
+  rechargeUser: (id, input) => request(`/api/users/${pathId(id)}/recharge`, json('POST', input)).then((result) => {
+    clearAdminCache(['/api/users'])
+    return result
+  }),
   getUserDetails: (id) => request(`/api/users/${pathId(id)}/details`),
 
-  listApiProviders: () => request('/api/api-providers'),
-  createApiProvider: (input) => request('/api/api-providers', json('POST', input)),
-  updateApiProvider: (id, input) => request(`/api/api-providers/${pathId(id)}`, json('PATCH', input)),
-  deleteApiProvider: (id) => request(`/api/api-providers/${pathId(id)}`, { method: 'DELETE' }),
+  listApiProviders: () => cachedGet('/api/api-providers', 15000),
+  createApiProvider: (input) => request('/api/api-providers', json('POST', input)).then((result) => {
+    clearAdminCache(['/api/api-providers', '/api/models'])
+    return result
+  }),
+  updateApiProvider: (id, input) => request(`/api/api-providers/${pathId(id)}`, json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/api-providers', '/api/models'])
+    return result
+  }),
+  deleteApiProvider: (id) => request(`/api/api-providers/${pathId(id)}`, { method: 'DELETE' }).then((result) => {
+    clearAdminCache(['/api/api-providers', '/api/models'])
+    return result
+  }),
   fetchApiProviderModelDetails: (input) => request('/api/api-providers/model-details', json('POST', input)),
   testApiProvider: (id) => request(`/api/api-providers/${pathId(id)}/test`, json('POST')),
 
-  listModels: () => request('/api/models'),
-  createModel: (input) => request('/api/models', json('POST', input)),
-  updateModel: (id, input) => request(`/api/models/${pathId(id)}`, json('PATCH', input)),
-  updateModelSortOrders: (input) => request('/api/models/sort-orders', json('PATCH', input)),
-  deleteModel: (id) => request(`/api/models/${pathId(id)}`, { method: 'DELETE' }),
+  listModels: () => cachedGet('/api/models', 15000),
+  createModel: (input) => request('/api/models', json('POST', input)).then((result) => {
+    clearAdminCache(['/api/models'])
+    return result
+  }),
+  updateModel: (id, input) => request(`/api/models/${pathId(id)}`, json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/models'])
+    return result
+  }),
+  updateModelSortOrders: (input) => request('/api/models/sort-orders', json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/models'])
+    return result
+  }),
+  deleteModel: (id) => request(`/api/models/${pathId(id)}`, { method: 'DELETE' }).then((result) => {
+    clearAdminCache(['/api/models'])
+    return result
+  }),
 
   listTasks: (params) => request(`/api/tasks${query(params)}`),
   getTaskStats: () => request('/api/tasks/stats'),
@@ -136,11 +203,17 @@ export const adminApi = {
   updatePromotion: (id, input) => request(`/api/promotions/${pathId(id)}`, json('PATCH', input)),
   deletePromotion: (id) => request(`/api/promotions/${pathId(id)}`, { method: 'DELETE' }),
 
-  getSettings: () => request('/api/settings'),
-  updateSettings: (input) => request('/api/settings', json('PATCH', input)),
+  getSettings: () => cachedGet('/api/settings', 10000),
+  updateSettings: (input) => request('/api/settings', json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/settings'])
+    return result
+  }),
   sendTestBark: () => request('/api/settings/test-bark', json('POST')),
-  getAccountPoolSettings: () => request('/api/settings/account-pool'),
-  updateAccountPoolSettings: (input) => request('/api/settings/account-pool', json('PATCH', input)),
+  getAccountPoolSettings: () => cachedGet('/api/settings/account-pool', 10000),
+  updateAccountPoolSettings: (input) => request('/api/settings/account-pool', json('PATCH', input)).then((result) => {
+    clearAdminCache(['/api/settings/account-pool'])
+    return result
+  }),
   sendTestEmail: (email) => request('/api/settings/test-email', json('POST', { email })),
   sendMailBroadcast: (input) => request('/api/mail-broadcast', json('POST', input)),
   listAccountPoolAccounts: () => request('/api/account-pool/accounts'),

@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { creditLogTypeItem, formatAmount, formatDate, toNumber } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 
 function signedAmount(row) {
@@ -112,10 +112,6 @@ export const CreditLogsPage = {
       return creditLogTypeItem(value)
     }
 
-    function handleAutoRefresh() {
-      load()
-    }
-
     watch(page, load)
     watch([days, type], () => {
       page.value = 1
@@ -128,11 +124,6 @@ export const CreditLogsPage = {
 
     onMounted(() => {
       load()
-      loadUsers()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return { rows, summary, loading, page, pageSize, pagination, days, type, keyword, creditName, users, userOptions, createVisible, createForm, load, openCreate, submitCreate, deleteLog, typeItem, signedAmount, amountClass, formatAmount, formatDate }

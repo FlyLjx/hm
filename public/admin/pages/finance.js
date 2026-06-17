@@ -25,10 +25,11 @@ export const FinancePage = {
       value: model.id,
       searchText: `${model.displayName || ''} ${model.modelName || ''} ${model.providerName || ''}`,
     })))
+    const needsModelOptions = computed(() => props.mode === 'subscriptions')
     async function loadOptions() {
       const [providerRes, modelRes] = await Promise.all([
         adminApi.listApiProviders().catch(() => ({ data: [] })),
-        adminApi.listModels().catch(() => ({ data: [] })),
+        needsModelOptions.value ? adminApi.listModels().catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       ])
       providers.value = providerRes.data || []
       models.value = modelRes.data || []

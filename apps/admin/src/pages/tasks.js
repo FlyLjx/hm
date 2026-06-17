@@ -2,7 +2,7 @@ import { API_BASE_URL, adminApi } from '../api.js'
 import { amount, formatDate, statusItem } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
-const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
+const { computed, onMounted, ref, watch } = Vue
 const { message, Modal } = antd
 
 function formatDuration(value) {
@@ -165,19 +165,9 @@ export const TasksPage = {
       imagePage.value = 1
       loadImages()
     })
-    function handleAutoRefresh() {
-      if (preview.value) return
-      if (isImages.value) loadImages()
-      else loadTasks()
-    }
-
     onMounted(() => {
       if (isImages.value) loadImages()
       else loadTasks()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     watch(taskPage, loadTasks)

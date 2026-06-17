@@ -8,17 +8,44 @@ import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
 import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/user.js'
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
-import { ChatPage } from '../pages/chat.js'
-import { ApiDocsPage } from '../pages/apiDocs.js'
-import { HistoryPage } from '../pages/history.js'
-import { HomePage } from '../pages/home.js'
-import { PlazaPage } from '../pages/plaza.js'
-import { ProfilePage } from '../pages/profile.js'
-import { ReversePromptPage } from '../pages/reversePrompt.js'
-import { StatusPage } from '../pages/status.js'
-import { TextChatPage } from '../pages/textChat.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const WEB_ASSET_VERSION = '20260617-01'
+
+const PageLoading = markRaw({
+  template: `
+    <section class="hero-card shell-page-state">
+      <div class="hero-copy">
+        <span class="eyebrow">Loading</span>
+        <h2>页面加载中</h2>
+        <p>正在按需加载当前页面内容，请稍候。</p>
+      </div>
+    </section>
+  `,
+})
+
+function lazyPage(loader, exportName) {
+  return markRaw(defineAsyncComponent({
+    loader: async () => {
+      const mod = await loader()
+      return mod[exportName]
+    },
+    delay: 120,
+    timeout: 20000,
+    suspensible: false,
+    loadingComponent: PageLoading,
+  }))
+}
+
+const HomePage = lazyPage(() => import(`../pages/home.js?v=${WEB_ASSET_VERSION}`), 'HomePage')
+const PlazaPage = lazyPage(() => import(`../pages/plaza.js?v=${WEB_ASSET_VERSION}`), 'PlazaPage')
+const ChatPage = lazyPage(() => import(`../pages/chat.js?v=${WEB_ASSET_VERSION}`), 'ChatPage')
+const ApiDocsPage = lazyPage(() => import(`../pages/apiDocs.js?v=${WEB_ASSET_VERSION}`), 'ApiDocsPage')
+const HistoryPage = lazyPage(() => import(`../pages/history.js?v=${WEB_ASSET_VERSION}`), 'HistoryPage')
+const ProfilePage = lazyPage(() => import(`../pages/profile.js?v=${WEB_ASSET_VERSION}`), 'ProfilePage')
+const ReversePromptPage = lazyPage(() => import(`../pages/reversePrompt.js?v=${WEB_ASSET_VERSION}`), 'ReversePromptPage')
+const StatusPage = lazyPage(() => import(`../pages/status.js?v=${WEB_ASSET_VERSION}`), 'StatusPage')
+const TextChatPage = lazyPage(() => import(`../pages/textChat.js?v=${WEB_ASSET_VERSION}`), 'TextChatPage')
 
 export const RootApp = {
   components: {
@@ -361,21 +388,24 @@ export const RootApp = {
       }, 3000)
     }
 
+    function applyBootstrapData(data = {}) {
+      settings.value = data.settings || settings.value
+      siteName.value = settings.value?.siteName || siteName.value || 'AIπ'
+      logoText.value = settings.value?.logoText || logoText.value || siteName.value
+      creditName.value = settings.value?.creditName || creditName.value || '积分'
+      activityStatus.value = data.activityStatus || null
+      announcements.value = (data.announcements || [])
+        .filter((item) => item.status === 'active')
+        .filter((item) => !localReceipts().has(receiptKey(item)))
+      promotions.value = data.promotions || []
+      subscriptionPlans.value = data.subscriptionPlans || []
+      document.title = `${siteName.value} 生图工作台`
+    }
+
     async function loadBaseData() {
       try {
         const response = await clientApi.getHomeBootstrap(currentUser.value?.id)
-        const data = response.data || {}
-        settings.value = data.settings || settings.value
-        siteName.value = settings.value?.siteName || siteName.value || 'AIπ'
-        logoText.value = settings.value?.logoText || logoText.value || siteName.value
-        creditName.value = settings.value?.creditName || creditName.value || '积分'
-        activityStatus.value = data.activityStatus || null
-        announcements.value = (data.announcements || [])
-          .filter((item) => item.status === 'active')
-          .filter((item) => !localReceipts().has(receiptKey(item)))
-        promotions.value = data.promotions || []
-        subscriptionPlans.value = data.subscriptionPlans || []
-        document.title = `${siteName.value} 生图工作台`
+        applyBootstrapData(response.data || {})
       } catch {}
 
       if (!settings.value) {
@@ -463,7 +493,7 @@ export const RootApp = {
         updateCurrentUser(response.data)
         loginOpen.value = false
         notifySuccess(authMode.value === 'register' ? '注册成功' : '登录成功')
-        loadAnnouncements()
+        await loadBaseData()
         if (isOAuthPage.value) {
           await approveOAuth()
         }
@@ -767,9 +797,15 @@ export const RootApp = {
     watch(() => activePage.value, (page) => {
       document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
     }, { immediate: true })
-    watch(() => currentUser.value?.id, () => {
-      loadAnnouncements()
-      loadActivityStatus()
+    watch(() => currentUser.value?.id || '', (userId, previousUserId) => {
+      if (userId === previousUserId) return
+      if (!userId) {
+        announcements.value = []
+        activityStatus.value = null
+        void loadBaseData()
+        return
+      }
+      void loadBaseData()
     })
     watch(rechargeOpen, (open) => {
       if (!open) stopRechargePolling()

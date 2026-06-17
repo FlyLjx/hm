@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { amount, formatCurrency, formatDate } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
+const { computed, onMounted, ref, watch } = Vue
 const { message } = antd
 
 function money(value) {
@@ -68,17 +68,9 @@ export const CostStatsPage = {
       return `${Math.max(2, Math.round((Number(value || 0) / maxTrendValue.value) * 100))}%`
     }
 
-    function handleAutoRefresh() {
-      load()
-    }
-
     watch(days, load)
     onMounted(() => {
       load()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return {

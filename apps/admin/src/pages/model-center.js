@@ -1,9 +1,28 @@
 import { adminApi } from '../api.js'
-import { AccountPoolPage } from './account-pool.js'
-import { ModelsPage } from './models.js'
-import { ProvidersPage } from './providers.js'
 
-const { computed, onBeforeUnmount, onMounted, ref, watch } = Vue
+const { computed, defineAsyncComponent, markRaw, onMounted, ref, watch } = Vue
+const ADMIN_ASSET_VERSION = '20260617-01'
+
+const TabLoading = markRaw({
+  template: `<div class="page-panel"><div class="page-title" style="font-size:16px">模块加载中</div><div class="page-desc">正在按需加载当前标签页。</div></div>`,
+})
+
+function lazyTab(loader, exportName) {
+  return markRaw(defineAsyncComponent({
+    loader: async () => {
+      const mod = await loader()
+      return mod[exportName]
+    },
+    delay: 120,
+    timeout: 20000,
+    suspensible: false,
+    loadingComponent: TabLoading,
+  }))
+}
+
+const AccountPoolPage = lazyTab(() => import(`./account-pool.js?v=${ADMIN_ASSET_VERSION}`), 'AccountPoolPage')
+const ModelsPage = lazyTab(() => import(`./models.js?v=${ADMIN_ASSET_VERSION}`), 'ModelsPage')
+const ProvidersPage = lazyTab(() => import(`./providers.js?v=${ADMIN_ASSET_VERSION}`), 'ProvidersPage')
 
 const tabs = [
   { key: 'models', label: '模型管理', desc: '价格、排序、前台展示', icon: 'ti-robot', component: ModelsPage },
@@ -21,6 +40,7 @@ export const ModelCenterPage = {
     const providers = ref([])
     const models = ref([])
     const loading = ref(false)
+    const overviewReady = ref(false)
     const activeMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) || tabs[0])
     const activeComponent = computed(() => activeMeta.value.component)
     const activeProps = computed(() => activeMeta.value.props || {})
@@ -48,6 +68,7 @@ export const ModelCenterPage = {
     }
 
     async function loadOverview() {
+      if (overviewReady.value && !loading.value) return
       loading.value = true
       try {
         const [providerRes, modelRes] = await Promise.all([
@@ -56,21 +77,14 @@ export const ModelCenterPage = {
         ])
         providers.value = providerRes.data || []
         models.value = modelRes.data || []
+        overviewReady.value = true
       } finally {
         loading.value = false
       }
     }
 
-    function handleAutoRefresh() {
-      loadOverview()
-    }
-
     onMounted(() => {
       loadOverview()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return { tabs, activeTab, activeMeta, activeComponent, activeProps, summary, loading, selectTab, loadOverview }

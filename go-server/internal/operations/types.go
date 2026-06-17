@@ -96,6 +96,19 @@ type RechargeOrder struct {
 	UpdatedAt          string  `json:"updatedAt"`
 }
 
+type DashboardTaskSummary struct {
+	ID               string  `json:"id"`
+	UserID           string  `json:"userId"`
+	UserEmail        *string `json:"userEmail,omitempty"`
+	ModelID          string  `json:"modelId"`
+	ModelName        *string `json:"modelName,omitempty"`
+	ModelDisplayName *string `json:"modelDisplayName,omitempty"`
+	Quantity         int     `json:"quantity"`
+	CostCredits      float64 `json:"costCredits"`
+	Status           string  `json:"status"`
+	CreatedAt        string  `json:"createdAt"`
+}
+
 type APICallLog struct {
 	ID              string  `json:"id"`
 	Direction       string  `json:"direction"`

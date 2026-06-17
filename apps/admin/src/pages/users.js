@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { amount, creditLogTypeItem, formatDate, statusItem, text, toNumber } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 
 export const UsersPage = {
@@ -175,19 +175,9 @@ export const UsersPage = {
       return formatDate(subscription.expiresAt)
     }
 
-    function handleAutoRefresh() {
-      if (editVisible.value || rechargeVisible.value || detailVisible.value) return
-      load()
-      loadActivityRanking()
-    }
-
     onMounted(() => {
       load()
       loadActivityRanking()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
     return {
       rows, loading, query, role, status, page, pageSize, editVisible, editing, form, rechargeVisible, rechargeUser, rechargeForm,
@@ -218,23 +208,39 @@ export const UsersPage = {
           <div class="summary-card"><span>余额合计</span><b>{{ amount(summary.credits) }}</b><div class="muted">全量用户统计</div></div>
         </div>
         <div class="page-panel user-activity-panel">
-          <div class="page-hero">
-            <div>
+          <div class="user-activity-header">
+            <div class="user-activity-title">
               <div class="page-title" style="font-size:16px">用户活跃排名</div>
               <div class="page-desc">按最近生图活跃度排序，综合任务数、成功图数、积分消耗和最近活跃时间。</div>
             </div>
-            <div class="toolbar">
+            <div class="user-activity-actions">
               <a-segmented v-model:value="activityDays" :options="[{ label: '近 7 天', value: 7 }, { label: '近 30 天', value: 30 }]" />
               <a-button :loading="activityLoading" @click="loadActivityRanking">刷新排名</a-button>
             </div>
           </div>
-          <div class="summary-grid user-activity-summary">
-            <div class="summary-card"><span>上榜用户</span><b>{{ activitySummary.users }}</b><div class="muted">窗口内有生图行为</div></div>
-            <div class="summary-card"><span>任务总数</span><b>{{ amount(activitySummary.tasks) }}</b><div class="muted">最近窗口内</div></div>
-            <div class="summary-card"><span>成功图片</span><b>{{ amount(activitySummary.images) }}</b><div class="muted">实际产出图片数</div></div>
-            <div class="summary-card"><span>消耗积分</span><b>{{ amount(activitySummary.credits) }}</b><div class="muted">活跃用户总消耗</div></div>
+          <div class="user-activity-metrics">
+            <div class="activity-metric activity-metric-main">
+              <span>上榜用户</span>
+              <strong>{{ activitySummary.users }}</strong>
+              <small>窗口内有生图行为</small>
+            </div>
+            <div class="activity-metric">
+              <span>任务总数</span>
+              <strong>{{ amount(activitySummary.tasks) }}</strong>
+              <small>最近窗口内</small>
+            </div>
+            <div class="activity-metric">
+              <span>成功图片</span>
+              <strong>{{ amount(activitySummary.images) }}</strong>
+              <small>实际产出图片数</small>
+            </div>
+            <div class="activity-metric">
+              <span>消耗积分</span>
+              <strong>{{ amount(activitySummary.credits) }}</strong>
+              <small>活跃用户总消耗</small>
+            </div>
           </div>
-          <div class="data-table-wrap">
+          <div class="user-activity-table-wrap">
             <table class="data-table user-activity-table">
               <thead><tr><th>排名</th><th>用户</th><th>状态</th><th>任务</th><th>成功图数</th><th>消耗积分</th><th>最近活跃</th></tr></thead>
               <tbody>

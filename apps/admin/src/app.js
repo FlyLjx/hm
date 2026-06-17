@@ -1,19 +1,43 @@
 import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js'
-import { DashboardPage } from './pages/dashboard.js'
-import { UsersPage } from './pages/users.js'
-import { ModelCenterPage } from './pages/model-center.js'
-import { TasksPage } from './pages/tasks.js'
-import { ApiKeysPage } from './pages/api-keys.js'
-import { ApiLogsPage } from './pages/api-logs.js'
-import { CreditCenterPage } from './pages/credit-center.js?v=20260614-05'
-import { FinancePage } from './pages/finance.js?v=20260614-04'
-import { OperationsPage } from './pages/operations.js'
-import { SettingsPage } from './pages/settings.js'
-import { MailBroadcastPage } from './pages/mail-broadcast.js'
-import { SystemLogsPage } from './pages/system-logs.js'
 
-const { computed, onMounted, reactive, ref } = Vue
+const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
+const ADMIN_ASSET_VERSION = '20260617-01'
+
+const PageLoading = markRaw({
+  template: `
+    <div class="page-panel">
+      <div class="page-title" style="font-size:16px">页面加载中</div>
+      <div class="page-desc">正在按需加载当前模块，请稍候。</div>
+    </div>
+  `,
+})
+
+function lazyPage(loader, exportName) {
+  return markRaw(defineAsyncComponent({
+    loader: async () => {
+      const mod = await loader()
+      return mod[exportName]
+    },
+    delay: 120,
+    timeout: 20000,
+    suspensible: false,
+    loadingComponent: PageLoading,
+  }))
+}
+
+const DashboardPage = lazyPage(() => import(`./pages/dashboard.js?v=${ADMIN_ASSET_VERSION}`), 'DashboardPage')
+const UsersPage = lazyPage(() => import(`./pages/users.js?v=${ADMIN_ASSET_VERSION}`), 'UsersPage')
+const ModelCenterPage = lazyPage(() => import(`./pages/model-center.js?v=${ADMIN_ASSET_VERSION}`), 'ModelCenterPage')
+const TasksPage = lazyPage(() => import(`./pages/tasks.js?v=${ADMIN_ASSET_VERSION}`), 'TasksPage')
+const ApiKeysPage = lazyPage(() => import(`./pages/api-keys.js?v=${ADMIN_ASSET_VERSION}`), 'ApiKeysPage')
+const ApiLogsPage = lazyPage(() => import(`./pages/api-logs.js?v=${ADMIN_ASSET_VERSION}`), 'ApiLogsPage')
+const CreditCenterPage = lazyPage(() => import(`./pages/credit-center.js?v=${ADMIN_ASSET_VERSION}`), 'CreditCenterPage')
+const FinancePage = lazyPage(() => import(`./pages/finance.js?v=${ADMIN_ASSET_VERSION}`), 'FinancePage')
+const OperationsPage = lazyPage(() => import(`./pages/operations.js?v=${ADMIN_ASSET_VERSION}`), 'OperationsPage')
+const SettingsPage = lazyPage(() => import(`./pages/settings.js?v=${ADMIN_ASSET_VERSION}`), 'SettingsPage')
+const MailBroadcastPage = lazyPage(() => import(`./pages/mail-broadcast.js?v=${ADMIN_ASSET_VERSION}`), 'MailBroadcastPage')
+const SystemLogsPage = lazyPage(() => import(`./pages/system-logs.js?v=${ADMIN_ASSET_VERSION}`), 'SystemLogsPage')
 
 const menuGroups = [
   { title: '数据总览', items: [{ id: 'console', label: '控制台中心', desc: '订单与任务概览', icon: 'ti-layout-dashboard', component: DashboardPage }] },

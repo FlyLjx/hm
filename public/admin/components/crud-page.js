@@ -1,7 +1,7 @@
 import { amount, formatDate, money, statusItem, text, toNumber } from '../format.js'
 import { renderMarkdown } from '../common/markdown.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 
 const markdownTemplates = [
@@ -403,17 +403,9 @@ export const CrudPage = {
       load()
     })
     watch(page, load)
-    function handleAutoRefresh() {
-      if (editing.value !== undefined) return
-      load()
-    }
 
     onMounted(() => {
       load()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return {

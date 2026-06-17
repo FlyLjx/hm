@@ -57,14 +57,10 @@ export const DashboardPage = {
       loading.value = true
       try {
         const limit = 8
-        const [dashboardRes, ordersRes, tasksRes] = await Promise.all([
-          adminApi.getDashboard().catch(() => ({ data: null })),
-          adminApi.listRechargeOrders({ page: 1, pageSize: limit, status: 'all' }),
-          adminApi.listTasks({ page: 1, pageSize: limit }),
-        ])
+        const dashboardRes = await adminApi.getDashboard({ limit }).catch(() => ({ data: null }))
         dashboard.value = dashboardRes.data
-        orders.value = ordersRes.data || []
-        tasks.value = tasksRes.data || []
+        orders.value = dashboardRes.data?.recentOrders || []
+        tasks.value = dashboardRes.data?.recentTasks || []
         lastUpdated.value = new Date().toISOString()
       } catch (error) {
         message.error(error instanceof Error ? error.message : '加载控制台失败')

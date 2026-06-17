@@ -83,11 +83,15 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	disabledProviders, _ := r.count(ctx, `SELECT COUNT(*) FROM api_providers WHERE status='disabled'`)
 	activeModels, _ := r.count(ctx, `SELECT COUNT(*) FROM ai_models WHERE capability='chat_image' AND status='active'`)
 	disabledModels, _ := r.count(ctx, `SELECT COUNT(*) FROM ai_models WHERE capability='chat_image' AND status='disabled'`)
-	taskStats := map[string]any{
-		"total": 0, "queued": 0, "pending": 0, "processing": 0,
-		"success": 0, "failed": 0, "canceled": 0,
-		"totalImages": 0, "totalCredits": 0,
-	}
+	taskTotal := 0
+	taskQueued := 0
+	taskPending := 0
+	taskProcessing := 0
+	taskSuccess := 0
+	taskFailed := 0
+	taskCanceled := 0
+	taskTotalImages := 0
+	taskTotalCredits := 0.0
 	taskStatRows, err := r.db.QueryContext(ctx, `
 		SELECT
 			status,
@@ -109,11 +113,22 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 			taskStatRows.Close()
 			return nil, err
 		}
-		taskStats["total"] = taskStats["total"].(int) + total
-		taskStats["totalImages"] = taskStats["totalImages"].(int) + images
-		taskStats["totalCredits"] = taskStats["totalCredits"].(float64) + credits
-		if _, ok := taskStats[status]; ok {
-			taskStats[status] = total
+		taskTotal += total
+		taskTotalImages += images
+		taskTotalCredits += credits
+		switch status {
+		case "queued":
+			taskQueued = total
+		case "pending":
+			taskPending = total
+		case "processing":
+			taskProcessing = total
+		case "success":
+			taskSuccess = total
+		case "failed":
+			taskFailed = total
+		case "canceled":
+			taskCanceled = total
 		}
 	}
 	if err := taskStatRows.Close(); err != nil {
@@ -136,7 +151,17 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		"total": totalUsers, "active": activeUsers,
 	}
 	result["orders"] = orderTotals
-	result["taskStats"] = taskStats
+	result["taskStats"] = map[string]any{
+		"total":        taskTotal,
+		"queued":       taskQueued,
+		"pending":      taskPending,
+		"processing":   taskProcessing,
+		"success":      taskSuccess,
+		"failed":       taskFailed,
+		"canceled":     taskCanceled,
+		"totalImages":  taskTotalImages,
+		"totalCredits": taskTotalCredits,
+	}
 	result["pending"] = map[string]any{
 		"pendingOrders": pendingOrders, "runningTasks": runningTasks,
 		"recentFailedTasks": recentFailed, "privateImages": privateImages,
@@ -147,6 +172,91 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		"disabledModels": disabledModels, "lastTaskAt": lastTaskValue,
 	}
 	return result, nil
+}
+
+func (r *Repository) DashboardSummary(ctx context.Context, limit int) (map[string]any, error) {
+	if limit < 1 {
+		limit = 8
+	}
+	if limit > 20 {
+		limit = 20
+	}
+	result, err := r.Dashboard(ctx)
+	if err != nil {
+		return nil, err
+	}
+	orders, err := r.DashboardOrders(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := r.DashboardTasks(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	result["recentOrders"] = orders
+	result["recentTasks"] = tasks
+	return result, nil
+}
+
+func (r *Repository) DashboardOrders(ctx context.Context, limit int) ([]RechargeOrder, error) {
+	if limit < 1 {
+		limit = 8
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT recharge_orders.id, recharge_orders.user_id, users.email, recharge_orders.out_trade_no, recharge_orders.trade_no,
+			recharge_orders.order_type, recharge_orders.subscription_plan_id, recharge_orders.amount, recharge_orders.credits,
+			recharge_orders.status, recharge_orders.pay_url, recharge_orders.qr_code, recharge_orders.paid_at, recharge_orders.created_at, recharge_orders.updated_at
+		FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id
+		ORDER BY recharge_orders.created_at DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RechargeOrder{}
+	for rows.Next() {
+		item, err := scanOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) DashboardTasks(ctx context.Context, limit int) ([]DashboardTaskSummary, error) {
+	if limit < 1 {
+		limit = 8
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT generation_tasks.id, generation_tasks.user_id, users.email, generation_tasks.model_id,
+			ai_models.model_name, ai_models.display_name, generation_tasks.quantity,
+			generation_tasks.cost_credits, generation_tasks.status, generation_tasks.created_at
+		FROM generation_tasks
+		LEFT JOIN users ON users.id = generation_tasks.user_id
+		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+		ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DashboardTaskSummary{}
+	for rows.Next() {
+		var item DashboardTaskSummary
+		var created time.Time
+		var email, modelName, modelDisplayName sql.NullString
+		if err := rows.Scan(&item.ID, &item.UserID, &email, &item.ModelID, &modelName, &modelDisplayName, &item.Quantity, &item.CostCredits, &item.Status, &created); err != nil {
+			return nil, err
+		}
+		item.UserEmail = nullString(email)
+		item.ModelName = nullString(modelName)
+		item.ModelDisplayName = nullString(modelDisplayName)
+		item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) CreditLogs(ctx context.Context, input PageInput) ([]CreditLog, int, error) {

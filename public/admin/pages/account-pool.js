@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { formatDate, text } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
+const { computed, onMounted, reactive, ref } = Vue
 const { message } = antd
 
 function maskSecret(value) {
@@ -132,17 +132,9 @@ export const AccountPoolPage = {
       return 'blue'
     }
 
-    function handleAutoRefresh() {
-      load()
-    }
-
     onMounted(() => {
       loadSettings()
       load()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
 
     return { rows, loading, keyword, statusFilter, typeFilter, fetchedAt, source, settingsLoading, settingsVisible, settingsForm, page, pageSize, summary, typeOptions, statusOptions, filteredRows, visibleRows, load, loadSettings, saveSettings, resetFilters, copyValue, statusColor, maskSecret, limitLabel, text, formatDate }

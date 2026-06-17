@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 import { formatDate, statusItem, text } from '../format.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 const providerTypeOptions = [
   { label: 'Sub2API', value: 'sub2api' },
@@ -132,17 +132,8 @@ export const ProvidersPage = {
       return `${next.slice(0, 6)}****${next.slice(-4)}`
     }
 
-    function handleAutoRefresh() {
-      if (dialogVisible.value) return
-      load()
-    }
-
     onMounted(() => {
       load()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
     return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, providerTypeOptions, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
   },

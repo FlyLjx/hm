@@ -2,7 +2,7 @@ import { adminApi } from '../api.js'
 import { amount, formatDate, statusItem, text, toNumber } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
-const { computed, onBeforeUnmount, onMounted, reactive, ref } = Vue
+const { computed, onMounted, reactive, ref } = Vue
 const { message } = antd
 const modelSizeTierOptions = [
   { label: '1K', value: '1k' },
@@ -122,11 +122,6 @@ export const ModelsPage = {
       selected.value = checked ? [...new Set([...selected.value, name])] : selected.value.filter((item) => item !== name)
     }
 
-    function handleAutoRefresh() {
-      if (loading.value) return
-      loadBase()
-    }
-
     function groupedSortRows(source = models.value) {
       const groups = new Map()
       source.forEach((model) => {
@@ -181,10 +176,6 @@ export const ModelsPage = {
 
     onMounted(() => {
       loadBase()
-      window.addEventListener('admin:auto-refresh', handleAutoRefresh)
-    })
-    onBeforeUnmount(() => {
-      window.removeEventListener('admin:auto-refresh', handleAutoRefresh)
     })
     return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, formatEnabledSizeTiers, amount, statusItem, text, formatDate }
   },

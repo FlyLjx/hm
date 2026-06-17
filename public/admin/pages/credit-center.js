@@ -1,7 +1,26 @@
-import { CostStatsPage } from './cost-stats.js?v=20260614-05'
-import { CreditLogsPage } from './credit-logs.js'
+const { computed, defineAsyncComponent, markRaw, ref, watch } = Vue
 
-const { computed, ref, watch } = Vue
+const ADMIN_ASSET_VERSION = '20260617-01'
+
+const TabLoading = markRaw({
+  template: `<div class="page-panel"><div class="page-title" style="font-size:16px">模块加载中</div><div class="page-desc">正在按需加载当前标签页。</div></div>`,
+})
+
+function lazyTab(loader, exportName) {
+  return markRaw(defineAsyncComponent({
+    loader: async () => {
+      const mod = await loader()
+      return mod[exportName]
+    },
+    delay: 120,
+    timeout: 20000,
+    suspensible: false,
+    loadingComponent: TabLoading,
+  }))
+}
+
+const CostStatsPage = lazyTab(() => import(`./cost-stats.js?v=${ADMIN_ASSET_VERSION}`), 'CostStatsPage')
+const CreditLogsPage = lazyTab(() => import(`./credit-logs.js?v=${ADMIN_ASSET_VERSION}`), 'CreditLogsPage')
 
 const tabs = [
   { key: 'stats', label: '统计概览', desc: '收入、成本、毛利', icon: 'ti-chart-bar', component: CostStatsPage },

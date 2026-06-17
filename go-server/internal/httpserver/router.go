@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -233,20 +234,34 @@ func (r *Router) staticFallback(w http.ResponseWriter, req *http.Request) {
 }
 
 func setStaticNoStoreHeaders(w http.ResponseWriter, requestPath string) {
-	if strings.HasPrefix(requestPath, "/web/") ||
-		strings.HasPrefix(requestPath, "/admin/") ||
-		requestPath == "/" ||
+	if requestPath == "/" ||
 		requestPath == "/admin" ||
 		strings.HasSuffix(requestPath, ".html") {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
+		return
+	}
+	if strings.HasPrefix(requestPath, "/web/") || strings.HasPrefix(requestPath, "/admin/") {
+		w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
 	}
 }
 
 func (r *Router) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		startedAt := time.Now()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				r.logger.Error("http panic",
+					"path", req.URL.Path,
+					"method", req.Method,
+					"remoteAddr", req.RemoteAddr,
+					"panic", recovered,
+					"stack", string(debug.Stack()),
+				)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"message": "服务器内部错误"})
+			}
+		}()
 		if r.cfg.RequestBodyLimit > 0 {
 			req.Body = http.MaxBytesReader(w, req.Body, r.cfg.RequestBodyLimit)
 		}
