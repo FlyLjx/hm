@@ -25,17 +25,20 @@ function availability(provider) {
 
 function healthLevel(rate, total) {
   if (!total) return 'unknown'
-  if (rate < 30) return 'warning'
-  return 'degraded'
+  if (rate >= 99) return 'excellent'
+  if (rate >= 95) return 'stable'
+  if (rate >= 80) return 'degraded'
+  if (rate >= 30) return 'warning'
+  return 'incident'
 }
 
 function healthText(level) {
   return {
-    excellent: '服务波动',
-    stable: '服务波动',
-    degraded: '服务波动',
+    excellent: '运行稳定',
+    stable: '基本稳定',
+    degraded: '轻微波动',
     warning: '服务警告',
-    incident: '服务警告',
+    incident: '服务异常',
     unknown: '暂无样本',
   }[level] || '暂无样本'
 }
@@ -65,11 +68,11 @@ function providerState(provider) {
 function providerStateText(provider) {
   const state = providerState(provider)
   return {
-    excellent: '波动',
-    stable: '波动',
+    excellent: '稳定',
+    stable: '稳定',
     degraded: '波动',
     warning: '警告',
-    incident: '警告',
+    incident: '异常',
     disabled: '停用',
     unknown: '待监控',
   }[state] || '待监控'

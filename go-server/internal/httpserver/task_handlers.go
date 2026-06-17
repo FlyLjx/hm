@@ -143,12 +143,19 @@ func (r *Router) listTasks(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := tasks.NewRepository(r.db).FindAll(ctx, input)
+	items, total, err := tasks.NewRepository(r.db).FindAdminList(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeTaskPage(w, items, total, page, pageSize)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": items,
+		"pagination": map[string]any{
+			"total":    total,
+			"page":     page,
+			"pageSize": pageSize,
+		},
+	})
 }
 
 func (r *Router) exportTasks(w http.ResponseWriter, req *http.Request) {

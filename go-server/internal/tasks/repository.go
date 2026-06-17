@@ -76,6 +76,60 @@ func (r *Repository) FindAll(ctx context.Context, input ListInput) ([]Task, int,
 	return items, total, err
 }
 
+func (r *Repository) FindAdminList(ctx context.Context, input ListInput) ([]AdminTaskListItem, int, error) {
+	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
+	where, args := buildTaskWhere(input.Keyword, input.Status, input.Display)
+	total, err := r.count(ctx, where, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	queryArgs := append(args, pageSize, offset)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			generation_tasks.id,
+			generation_tasks.user_id,
+			users.email AS user_email,
+			generation_tasks.model_id,
+			ai_models.model_name,
+			ai_models.display_name AS model_display_name,
+			generation_tasks.size_tier,
+			generation_tasks.size,
+			generation_tasks.quantity,
+			generation_tasks.user_ip,
+			generation_tasks.cost_credits,
+			generation_tasks.duration_seconds,
+			generation_tasks.status,
+			generation_tasks.error_message,
+			generation_tasks.created_at,
+			user_subscriptions.plan_name AS user_subscription_plan_name
+		FROM generation_tasks
+		LEFT JOIN users ON users.id = generation_tasks.user_id
+		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+		LEFT JOIN (
+			SELECT user_id, MAX(plan_name) AS plan_name
+			FROM user_subscriptions
+			WHERE status = 'active' AND expires_at > NOW()
+			GROUP BY user_id
+		) user_subscriptions ON user_subscriptions.user_id = generation_tasks.user_id
+		`+where+`
+		ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := []AdminTaskListItem{}
+	for rows.Next() {
+		item, err := scanAdminTaskListItem(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) FindAllForExport(ctx context.Context) ([]Task, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+taskSelectColumns+`
@@ -652,6 +706,55 @@ func scanTasks(rows *sql.Rows) ([]Task, error) {
 		items = append(items, *item)
 	}
 	return items, rows.Err()
+}
+
+func scanAdminTaskListItem(row interface{ Scan(dest ...any) error }) (AdminTaskListItem, error) {
+	var item AdminTaskListItem
+	var userEmail, modelName, modelDisplayName, size, errorMessage, subscriptionPlanName sql.NullString
+	var createdAt time.Time
+	var status string
+	err := row.Scan(
+		&item.ID,
+		&item.UserID,
+		&userEmail,
+		&item.ModelID,
+		&modelName,
+		&modelDisplayName,
+		&item.SizeTier,
+		&size,
+		&item.Quantity,
+		&item.UserIP,
+		&item.CostCredits,
+		&item.DurationSeconds,
+		&status,
+		&errorMessage,
+		&createdAt,
+		&subscriptionPlanName,
+	)
+	if err != nil {
+		return AdminTaskListItem{}, err
+	}
+	item.Status = Status(status)
+	item.CreatedAt = createdAt.In(time.Local).Format(time.RFC3339)
+	if userEmail.Valid {
+		item.UserEmail = &userEmail.String
+	}
+	if modelName.Valid {
+		item.ModelName = &modelName.String
+	}
+	if modelDisplayName.Valid {
+		item.ModelDisplayName = &modelDisplayName.String
+	}
+	if size.Valid {
+		item.Size = &size.String
+	}
+	if errorMessage.Valid {
+		item.ErrorMessage = &errorMessage.String
+	}
+	if subscriptionPlanName.Valid {
+		item.UserSubscriptionPlanName = &subscriptionPlanName.String
+	}
+	return item, nil
 }
 
 func ResultURLs(value any) []string {

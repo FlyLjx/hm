@@ -777,7 +777,7 @@ export const ChatPage = {
     }
 
     function selectResultImage(message, index) {
-      message.activeImageIndex = index
+      message.activeImageIndex = Number(index) || 0
     }
 
     function openResultImage(message, index) {
@@ -2075,7 +2075,7 @@ export const ChatPage = {
                     @click="toggleResultGallery(message)"
                     @dblclick="$emit('preview', { url: resolveOriginalImageUrl(activeResultImage(message)), title: '生成结果 ' + (activeResultIndex(message) + 1) })"
                   >
-                    <img :src="activeResultImage(message)" :alt="'生成结果 ' + (activeResultIndex(message) + 1)" @load="(event) => rememberResultImageRatio(event, message, activeResultIndex(message))" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" />
+                    <img :key="message.id + '-' + activeResultIndex(message) + '-' + (activeResultImage(message) || '')" :src="activeResultImage(message)" :alt="'生成结果 ' + (activeResultIndex(message) + 1)" @load="(event) => rememberResultImageRatio(event, message, activeResultIndex(message))" @error="(event) => hideBrokenImage(event, message, activeResultIndex(message))" />
                     <span class="result-main-badge">{{ activeResultIndex(message) + 1 }}</span>
                     <span v-if="visibleResultIndexes(message).length > 1" class="result-fold-hint">
                       <i class="ti ti-stack-2"></i>

@@ -90,6 +90,25 @@ type PublicTask struct {
 	ProviderName          *string  `json:"providerName,omitempty"`
 }
 
+type AdminTaskListItem struct {
+	ID                       string   `json:"id"`
+	UserID                   string   `json:"userId"`
+	UserEmail                *string  `json:"userEmail,omitempty"`
+	ModelID                  string   `json:"modelId"`
+	ModelName                *string  `json:"modelName,omitempty"`
+	ModelDisplayName         *string  `json:"modelDisplayName,omitempty"`
+	SizeTier                 string   `json:"sizeTier"`
+	Size                     *string  `json:"size"`
+	Quantity                 int      `json:"quantity"`
+	UserIP                   string   `json:"userIp"`
+	CostCredits              float64  `json:"costCredits"`
+	DurationSeconds          float64  `json:"durationSeconds"`
+	Status                   Status   `json:"status"`
+	ErrorMessage             *string  `json:"errorMessage"`
+	CreatedAt                string   `json:"createdAt"`
+	UserSubscriptionPlanName *string  `json:"userSubscriptionPlanName,omitempty"`
+}
+
 func ToPublic(task *Task) PublicTask {
 	directResultURLs := []string{}
 	resultURLs := []string{}
