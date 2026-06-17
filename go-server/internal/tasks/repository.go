@@ -106,10 +106,11 @@ func (r *Repository) FindAdminList(ctx context.Context, input ListInput) ([]Admi
 		LEFT JOIN users ON users.id = generation_tasks.user_id
 		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
 		LEFT JOIN (
-			SELECT user_id, MAX(plan_name) AS plan_name
+			SELECT user_subscriptions.user_id, MAX(subscription_plans.name) AS plan_name
 			FROM user_subscriptions
-			WHERE status = 'active' AND expires_at > NOW()
-			GROUP BY user_id
+			LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+			WHERE user_subscriptions.status = 'active' AND user_subscriptions.expires_at > NOW()
+			GROUP BY user_subscriptions.user_id
 		) user_subscriptions ON user_subscriptions.user_id = generation_tasks.user_id
 		`+where+`
 		ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
