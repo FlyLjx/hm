@@ -1,21 +1,17 @@
 # Docker 部署
 
-## 本地构建
+## 使用 GitHub 镜像
 
 ```bash
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
 ## 服务器上
 
-1. 上传整个项目，至少保留这些目录/文件：
+1. 上传或拉取项目，至少保留这些文件：
 
 ```text
-apps/
-go-server/
-public/vendor/
-Dockerfile
 docker-compose.yml
 .env
 ```
@@ -40,23 +36,26 @@ MYSQL_DATABASE=数据库名
 3. 启动：
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-如果服务器访问 Docker/Go 依赖源较慢或失败，可以临时给构建过程加代理：
+如果服务器拉取 GitHub 镜像较慢或失败，可以只给拉取过程加一次性代理：
 
 ```bash
-export GOPROXY="https://goproxy.cn,direct"
 export HTTP_PROXY="http://192.168.1.5:7897"
 export HTTPS_PROXY="http://192.168.1.5:7897"
+export NO_PROXY="localhost,127.0.0.1,::1"
 export http_proxy="http://192.168.1.5:7897"
 export https_proxy="http://192.168.1.5:7897"
+export no_proxy="localhost,127.0.0.1,::1"
 
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 如果是 SOCKS5 代理，把地址改成 `socks5h://192.168.1.5:7897`。代理软件需要开启允许局域网连接。
-如果 Go 依赖卡在 `proxy.golang.org`，可以只保留 `GOPROXY=https://goproxy.cn,direct` 后重新构建。
+服务器默认不再本地构建镜像，所以不需要下载 Go 或 Debian 依赖。
 
 4. 宝塔网站反向代理到：
 
@@ -72,13 +71,14 @@ http://127.0.0.1:6985
 
 1. 新建项目，项目路径选择上传后的项目目录。
 2. Compose 文件选择 `docker-compose.yml`。
-3. 点击构建/启动。
+3. 点击拉取/启动。
 4. 网站反代到 `127.0.0.1:6985`。
 
 ## 说明
 
 - `.env` 通过 compose 的 `env_file` 注入，不会打进镜像。
-- `public` 会在镜像构建时从 `apps/web/src` 和 `apps/admin/src` 同步生成。
+- 镜像由 GitHub Actions 自动构建并推送到 `ghcr.io/flyljx/hm:latest`。
+- 如需在服务器本地构建，使用 `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`。
 - Compose 默认暴露外部端口 `6985`，容器内部仍监听 `3001`。
 - `logs` 建议单独挂载，方便看运行日志。
 - 镜像和 Compose 默认使用 `Asia/Shanghai`，日志时间会按中国时区输出。
@@ -89,7 +89,9 @@ http://127.0.0.1:6985
 ```bash
 docker compose ps
 docker compose logs -f
+docker inspect --format='{{json .State.Health}}' aipi-go
 docker compose restart
 docker compose down
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```

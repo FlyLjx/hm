@@ -12,6 +12,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      IMAGE_NAME: ghcr.io/flyljx/hm
 
     steps:
       - name: Checkout
@@ -22,6 +28,23 @@ jobs:
         with:
           go-version-file: go-server/go.mod
           cache-dependency-path: go-server/go.sum
+
+      - name: Setup proxy
+        run: |
+          if [ -n "${{ secrets.HTTP_PROXY }}" ]; then
+            echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+            echo "http_proxy=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+          fi
+          if [ -n "${{ secrets.HTTPS_PROXY }}" ]; then
+            echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
+            echo "https_proxy=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
+          fi
+          if [ -n "${{ secrets.NO_PROXY }}" ]; then
+            echo "NO_PROXY=${{ secrets.NO_PROXY }}" >> $GITHUB_ENV
+            echo "no_proxy=${{ secrets.NO_PROXY }}" >> $GITHUB_ENV
+          fi
+          if [ -n "${{ secrets.GOPROXY }}" ]; then echo "GOPROXY=${{ secrets.GOPROXY }}" >> $GITHUB_ENV; fi
+          if [ -n "${{ secrets.GOSUMDB }}" ]; then echo "GOSUMDB=${{ secrets.GOSUMDB }}" >> $GITHUB_ENV; fi
 
       - name: Sync UI
         run: |
@@ -49,11 +72,27 @@ jobs:
           test -f public/vendor/vue/vue.global.prod.min.js
 
       - name: Build Docker image
-        run: docker build -t aipi-go:ci .
+        run: docker build -t $IMAGE_NAME:ci .
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        run: |
+          docker tag $IMAGE_NAME:ci $IMAGE_NAME:latest
+          docker tag $IMAGE_NAME:ci $IMAGE_NAME:${{ github.sha }}
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:${{ github.sha }}
 
       - name: Package release
         run: |
-          tar -czf aipi-linux-amd64.tar.gz release/aipi-go public Dockerfile docker-compose.yml docs/docker-deploy.md
+          tar -czf aipi-linux-amd64.tar.gz release/aipi-go public Dockerfile docker-compose.yml docker-compose.build.yml docs/docker-deploy.md
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
