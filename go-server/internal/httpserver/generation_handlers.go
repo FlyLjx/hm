@@ -19,6 +19,7 @@ type generateImageInput struct {
 	UserID                string   `json:"userId"`
 	ModelID               string   `json:"modelId"`
 	Prompt                string   `json:"prompt"`
+	Capability            string   `json:"capability"`
 	SizeTier              string   `json:"sizeTier"`
 	Size                  string   `json:"size"`
 	TransparentBackground bool     `json:"transparentBackground"`
@@ -81,14 +82,21 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	input.UserID = strings.TrimSpace(input.UserID)
 	input.ModelID = strings.TrimSpace(input.ModelID)
 	input.Prompt = strings.TrimSpace(input.Prompt)
+	input.Capability = defaultString(strings.TrimSpace(input.Capability), "chat_image")
 	input.SizeTier = defaultString(strings.TrimSpace(input.SizeTier), "1k")
 	input.Size = strings.TrimSpace(input.Size)
 	input.OutputFormat = normalizeOutputFormat(input.OutputFormat)
 	if input.Quantity == 0 {
 		input.Quantity = 1
 	}
-	if input.UserID == "" || input.ModelID == "" || input.Prompt == "" {
+	if input.UserID == "" || input.ModelID == "" {
+		return nil, newAppError(http.StatusBadRequest, "缺少用户或模型")
+	}
+	if input.Capability == "chat_image" && input.Prompt == "" {
 		return nil, newAppError(http.StatusBadRequest, "缺少用户、模型或提示词")
+	}
+	if input.Capability != "chat_image" {
+		return nil, newAppError(http.StatusBadRequest, "任务能力不正确")
 	}
 	if input.Quantity < 1 || input.Quantity > 10 {
 		return nil, newAppError(http.StatusBadRequest, "生成数量必须在 1 到 10 之间")
@@ -109,7 +117,10 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	if model.Status != "active" {
 		return nil, newAppError(http.StatusBadRequest, "模型已禁用")
 	}
-	if !modelNameMatchesCapability(model.ModelName, "chat_image") {
+	if model.Capability != input.Capability {
+		return nil, newAppError(http.StatusBadRequest, "当前模型用途与任务不匹配，请重新选择")
+	}
+	if !modelNameMatchesCapability(model.ModelName, input.Capability) {
 		return nil, newAppError(http.StatusBadRequest, "当前模型不是生图模型，请重新选择")
 	}
 	if !sizeTierEnabled(model.EnabledSizeTiers, input.SizeTier) {
@@ -138,13 +149,14 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	if size == "" {
 		size = defaultImageSize(input.SizeTier)
 	}
+	prompt := input.Prompt
 	task := tasks.Task{
 		ID:                    newID(),
 		UserID:                user.ID,
 		ModelID:               model.ID,
 		ProviderID:            model.ProviderID,
-		Capability:            model.Capability,
-		Prompt:                input.Prompt,
+		Capability:            input.Capability,
+		Prompt:                prompt,
 		ReferenceImageURL:     referenceImagePayload(input),
 		SizeTier:              input.SizeTier,
 		Size:                  &size,

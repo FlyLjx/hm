@@ -2024,6 +2024,25 @@
   font-size: 22px;
 }
 
+.reverse-inline-info {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.reverse-inline-info strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.reverse-inline-info small {
+  color: var(--muted);
+}
+
+
 .reverse-result-actions {
   justify-content: flex-end;
 }

@@ -58,6 +58,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	}
 	result, err := s.callImageGeneration(ctx, ImageRequest{
 		TaskID:                taskID,
+		Capability:            task.Capability,
 		Operation:             imageOperation(task.ReferenceImageURL),
 		Provider:              *provider,
 		Model:                 *model,

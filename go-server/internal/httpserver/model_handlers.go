@@ -113,7 +113,7 @@ func (r *Router) syncModels(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusBadRequest, "请选择接口配置"))
 		return
 	}
-	if input.Capability != "chat_image" {
+	if !isSupportedModelCapability(input.Capability) {
 		writeError(w, newAppError(http.StatusBadRequest, "模型用途不正确"))
 		return
 	}
@@ -468,7 +468,7 @@ func (r *Router) parseModelInput(w http.ResponseWriter, req *http.Request) (mode
 		writeError(w, newAppError(http.StatusBadRequest, "请填写服务商、模型名和展示名称"))
 		return modelInput{}, false
 	}
-	if input.Capability != "chat_image" {
+	if !isSupportedModelCapability(input.Capability) {
 		writeError(w, newAppError(http.StatusBadRequest, "模型用途不正确"))
 		return modelInput{}, false
 	}
@@ -499,5 +499,14 @@ func modelFromInput(id string, input modelInput) models.Model {
 		EnabledSizeTiers:   input.EnabledSizeTiers,
 		SortOrder:          input.SortOrder,
 		Status:             input.Status,
+	}
+}
+
+func isSupportedModelCapability(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "chat_image":
+		return true
+	default:
+		return false
 	}
 }

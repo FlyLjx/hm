@@ -42,8 +42,8 @@ func (r *Repository) FindAll(ctx context.Context) ([]Model, error) {
 			ai_models.updated_at
 		FROM ai_models
 		LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
-		WHERE ai_models.capability = 'chat_image'
 		ORDER BY
+			ai_models.capability ASC,
 			ai_models.sort_order ASC,
 			api_providers.name ASC,
 			ai_models.model_name ASC,

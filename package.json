@@ -3,10 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "npm run dev:go",
+    "dev": "powershell -ExecutionPolicy Bypass -File scripts/dev-go-watch.ps1",
     "dev:go": "powershell -ExecutionPolicy Bypass -File scripts/dev-go-watch.ps1",
     "dev:go:once": "powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1 -Run",
-    "build": "npm run build:all",
+    "build": "powershell -ExecutionPolicy Bypass -File scripts/build-all.ps1",
     "build:all": "powershell -ExecutionPolicy Bypass -File scripts/build-all.ps1",
     "build:ui": "powershell -ExecutionPolicy Bypass -File scripts/build-ui.ps1",
     "build:go": "powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1",

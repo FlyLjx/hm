@@ -115,6 +115,7 @@ func TestCallImageJSONSendsEditImageURLFields(t *testing.T) {
 	}
 }
 
+
 func TestCallImageJSONReturnsUpstreamPolicyErrorWithoutFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -283,6 +284,7 @@ func (e errUnexpectedResult) Error() string {
 func testImageRequest(baseURL string) ImageRequest {
 	return ImageRequest{
 		TaskID: "test-task",
+		Capability: "chat_image",
 		Provider: providers.Provider{
 			ID:      "provider-test",
 			Type:    "newapi",

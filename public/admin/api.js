@@ -35,7 +35,7 @@ async function readMessage(response, fallback) {
   }
   const text = await response.text().catch(() => '')
   if (text.trimStart().startsWith('<!doctype') || text.trimStart().startsWith('<html')) {
-    return '接口返回了 HTML，请确认 Node Express 正在处理 /api'
+    return '接口返回了 HTML，请确认后端正在处理 /api'
   }
   return text || fallback
 }

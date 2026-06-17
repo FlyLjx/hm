@@ -8,6 +8,9 @@ const providerTypeOptions = [
   { label: 'Custom', value: 'custom' },
   { label: 'New API', value: 'newapi' },
 ]
+const providerCapabilityOptions = [
+  { label: '对话生图', value: 'chat_image' },
+]
 
 export const ProvidersPage = {
   setup() {
@@ -135,7 +138,7 @@ export const ProvidersPage = {
     onMounted(() => {
       load()
     })
-    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, providerTypeOptions, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
+    return { rows, loading, keyword, typeFilter, statusFilter, page, pageSize, dialogVisible, editing, testingId, form, summary, filteredRows, visibleRows, providerTypeOptions, providerCapabilityOptions, load, openCreate, openEdit, saveProvider, removeProvider, testProvider, resetFilters, maskKey, statusItem, text, formatDate }
   },
   template: `
     <div class="page-stack">
@@ -193,7 +196,7 @@ export const ProvidersPage = {
           <label><div class="muted">接口名称</div><a-input v-model:value="form.name" /></label>
           <label><div class="muted">接口类型</div><a-select v-model:value="form.type" style="width:100%"><a-select-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</a-select-option></a-select></label>
           <label><div class="muted">状态</div><a-select v-model:value="form.status" style="width:100%"><a-select-option value="active">启用</a-select-option><a-select-option value="disabled">禁用</a-select-option></a-select></label>
-          <label><div class="muted">用途</div><a-select v-model:value="form.capability" style="width:100%"><a-select-option value="chat_image">对话生图</a-select-option></a-select></label>
+          <label><div class="muted">用途</div><a-select v-model:value="form.capability" style="width:100%"><a-select-option v-for="item in providerCapabilityOptions" :key="item.value" :value="item.value">{{ item.label }}</a-select-option></a-select></label>
           <label class="full"><div class="muted">Base URL</div><a-input v-model:value="form.baseUrl" /></label>
           <label class="full"><div class="muted">API Key</div><a-textarea v-model:value="form.apiKey" :rows="4" /></label>
         </div>

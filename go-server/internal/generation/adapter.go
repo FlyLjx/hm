@@ -12,6 +12,7 @@ const maxUpstreamImageBatch = 4
 
 type ImageRequest struct {
 	TaskID                string
+	Capability            string
 	Operation             string
 	Provider              providers.Provider
 	Model                 models.Model

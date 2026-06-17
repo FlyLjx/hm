@@ -13,7 +13,7 @@ async function readErrorMessage(response) {
   }
   const text = await response.text().catch(() => '')
   if (text.trimStart().startsWith('<!doctype') || text.trimStart().startsWith('<html')) {
-    return '接口返回了网页 HTML，请检查 Node Express 服务是否正常'
+    return '接口返回了网页 HTML，请检查后端服务是否正常'
   }
   return translateErrorMessage(text) || '请求失败'
 }

@@ -164,7 +164,7 @@ func (r *Router) parseProviderInput(w http.ResponseWriter, req *http.Request) (p
 		writeError(w, newAppError(http.StatusBadRequest, "接口类型不正确"))
 		return providerInput{}, false
 	}
-	if input.Capability != "chat_image" {
+	if !isSupportedModelCapability(input.Capability) {
 		writeError(w, newAppError(http.StatusBadRequest, "接口用途不正确"))
 		return providerInput{}, false
 	}

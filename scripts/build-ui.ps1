@@ -17,11 +17,10 @@ function Sync-App {
     throw "Missing source directory: $source"
   }
 
-  if (Test-Path $target) {
-    Remove-Item -LiteralPath $target -Recurse -Force
-  }
-
   New-Item -ItemType Directory -Force -Path $target | Out-Null
+  Get-ChildItem -LiteralPath $target -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+  }
   Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
   Write-Host "[build-ui] synced apps/$Name/src -> public/$Name"
 }

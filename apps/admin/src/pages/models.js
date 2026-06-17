@@ -9,6 +9,9 @@ const modelSizeTierOptions = [
   { label: '2K', value: '2k' },
   { label: '4K', value: '4k' },
 ]
+const modelCapabilityOptions = [
+  { label: '对话生图', value: 'chat_image' },
+]
 
 function formatEnabledSizeTiers(value) {
   const tiers = Array.isArray(value) && value.length ? value : ['1k', '2k', '4k']
@@ -19,7 +22,7 @@ const modelFields = [
   { key: 'providerId', label: '服务商ID', required: true },
   { key: 'modelName', label: '模型名', required: true },
   { key: 'displayName', label: '展示名称', required: true },
-  { key: 'capability', label: '用途', type: 'select', defaultValue: 'chat_image', options: [{ label: '对话生图', value: 'chat_image' }] },
+  { key: 'capability', label: '用途', type: 'select', defaultValue: 'chat_image', options: modelCapabilityOptions },
   { key: 'cost1k', label: '1K成本', type: 'number', number: true, defaultValue: 0 },
   { key: 'cost2k', label: '2K成本', type: 'number', number: true, defaultValue: 0 },
   { key: 'cost4k', label: '4K成本', type: 'number', number: true, defaultValue: 0 },
@@ -104,7 +107,7 @@ export const ModelsPage = {
       const cost2k = toNumber(model.cost2k, cost1k)
       const cost4k = toNumber(model.cost4k, cost2k)
       const displayName = String(model.displayName || model.name).trim() || model.name
-      return { providerId: providerId.value, modelName: model.name, displayName, capability: 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), priceChangePercent: 0, price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, enabledSizeTiers: ['1k', '2k', '4k'], sortOrder: 100, status: 'active' }
+      return { providerId: providerId.value, modelName: model.name, displayName, capability: providers.value.find((item) => item.id === providerId.value)?.capability || 'chat_image', cost1k, cost2k, cost4k, markupPercent: toNumber(markupPercent.value, 0), priceChangePercent: 0, price1k: 0, price2k: 0, price4k: 0, appendSizeToPrompt: false, enabledSizeTiers: ['1k', '2k', '4k'], sortOrder: 100, status: 'active' }
     }
 
     async function saveSelected() {
