@@ -123,6 +123,7 @@ export const adminApi = {
   deleteCheckin: (id) => request(`/api/checkins/${pathId(id)}`, { method: 'DELETE' }),
   listInvites: (params) => request(`/api/invites${query(params)}`),
   deleteInvite: (id) => request(`/api/invites/${pathId(id)}`, { method: 'DELETE' }),
+  listUserActivityRanking: (params) => request(`/api/users/activity-ranking${query(params)}`),
 
   listAnnouncements: () => request('/api/announcements'),
   generateAnnouncement: (input) => request('/api/announcements/generate', json('POST', input)),

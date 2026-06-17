@@ -1118,6 +1118,23 @@ a {
   padding: 16px;
 }
 
+.user-activity-panel {
+  margin-top: 16px;
+}
+
+.user-activity-summary {
+  padding: 0 16px 16px;
+}
+
+.user-activity-table {
+  min-width: 920px;
+}
+
+.user-activity-table th:first-child,
+.user-activity-table td:first-child {
+  width: 74px;
+}
+
 .api-log-summary {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }

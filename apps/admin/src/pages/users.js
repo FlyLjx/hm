@@ -23,6 +23,9 @@ export const UsersPage = {
     const detailUser = ref(null)
     const detailLoading = ref(false)
     const detailData = ref(null)
+    const activityRanking = ref([])
+    const activityLoading = ref(false)
+    const activityDays = ref(7)
 
     async function load() {
       loading.value = true
@@ -33,6 +36,18 @@ export const UsersPage = {
         message.error(error instanceof Error ? error.message : '加载用户失败')
       } finally {
         loading.value = false
+      }
+    }
+
+    async function loadActivityRanking() {
+      activityLoading.value = true
+      try {
+        const response = await adminApi.listUserActivityRanking({ days: activityDays.value, limit: 10 })
+        activityRanking.value = response.data || []
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '加载活跃排名失败')
+      } finally {
+        activityLoading.value = false
       }
     }
 
@@ -54,8 +69,15 @@ export const UsersPage = {
       subscribed: rows.value.filter((row) => row.subscription?.status === 'active').length,
       credits: rows.value.reduce((sum, row) => sum + Number(row.credits || 0), 0),
     }))
+    const activitySummary = computed(() => ({
+      users: activityRanking.value.length,
+      tasks: activityRanking.value.reduce((sum, row) => sum + Number(row.taskCount || 0), 0),
+      images: activityRanking.value.reduce((sum, row) => sum + Number(row.successImages || 0), 0),
+      credits: activityRanking.value.reduce((sum, row) => sum + Number(row.creditsUsed || 0), 0),
+    }))
 
     watch([query, role, status], () => { page.value = 1 })
+    watch(activityDays, loadActivityRanking)
 
     function resetFilters() {
       query.value = ''
@@ -156,10 +178,12 @@ export const UsersPage = {
     function handleAutoRefresh() {
       if (editVisible.value || rechargeVisible.value || detailVisible.value) return
       load()
+      loadActivityRanking()
     }
 
     onMounted(() => {
       load()
+      loadActivityRanking()
       window.addEventListener('admin:auto-refresh', handleAutoRefresh)
     })
     onBeforeUnmount(() => {
@@ -167,7 +191,7 @@ export const UsersPage = {
     })
     return {
       rows, loading, query, role, status, page, pageSize, editVisible, editing, form, rechargeVisible, rechargeUser, rechargeForm,
-      detailVisible, detailUser, detailLoading, detailData, filteredRows, visibleRows, summary, load, resetFilters, openCreate,
+      detailVisible, detailUser, detailLoading, detailData, activityRanking, activityLoading, activityDays, activitySummary, filteredRows, visibleRows, summary, load, loadActivityRanking, resetFilters, openCreate,
       openEdit, saveUser, openRecharge, submitRecharge, deleteUser, openDetails, subscriptionLabel, subscriptionColor, subscriptionExpireText,
       amount, formatDate, statusItem, text, toNumber, creditLogTypeItem,
     }
@@ -192,6 +216,41 @@ export const UsersPage = {
           <div class="summary-card"><span>禁用账号</span><b>{{ summary.disabled }}</b><div class="muted">已限制登录使用</div></div>
           <div class="summary-card"><span>订阅用户</span><b>{{ summary.subscribed }}</b><div class="muted">当前有效会员</div></div>
           <div class="summary-card"><span>余额合计</span><b>{{ amount(summary.credits) }}</b><div class="muted">全量用户统计</div></div>
+        </div>
+        <div class="page-panel user-activity-panel">
+          <div class="page-hero">
+            <div>
+              <div class="page-title" style="font-size:16px">用户活跃排名</div>
+              <div class="page-desc">按最近生图活跃度排序，综合任务数、成功图数、积分消耗和最近活跃时间。</div>
+            </div>
+            <div class="toolbar">
+              <a-segmented v-model:value="activityDays" :options="[{ label: '近 7 天', value: 7 }, { label: '近 30 天', value: 30 }]" />
+              <a-button :loading="activityLoading" @click="loadActivityRanking">刷新排名</a-button>
+            </div>
+          </div>
+          <div class="summary-grid user-activity-summary">
+            <div class="summary-card"><span>上榜用户</span><b>{{ activitySummary.users }}</b><div class="muted">窗口内有生图行为</div></div>
+            <div class="summary-card"><span>任务总数</span><b>{{ amount(activitySummary.tasks) }}</b><div class="muted">最近窗口内</div></div>
+            <div class="summary-card"><span>成功图片</span><b>{{ amount(activitySummary.images) }}</b><div class="muted">实际产出图片数</div></div>
+            <div class="summary-card"><span>消耗积分</span><b>{{ amount(activitySummary.credits) }}</b><div class="muted">活跃用户总消耗</div></div>
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table user-activity-table">
+              <thead><tr><th>排名</th><th>用户</th><th>状态</th><th>任务</th><th>成功图数</th><th>消耗积分</th><th>最近活跃</th></tr></thead>
+              <tbody>
+                <tr v-for="row in activityRanking" :key="row.userId">
+                  <td><strong>#{{ row.rank }}</strong></td>
+                  <td>{{ text(row.userEmail) }}</td>
+                  <td><a-tag :color="statusItem('user', row.userStatus).color">{{ statusItem('user', row.userStatus).label }}</a-tag></td>
+                  <td>{{ amount(row.taskCount) }}</td>
+                  <td>{{ amount(row.successImages) }}</td>
+                  <td>{{ amount(row.creditsUsed) }}</td>
+                  <td>{{ row.lastActiveAt ? formatDate(row.lastActiveAt) : '-' }}</td>
+                </tr>
+                <tr v-if="!activityLoading && !activityRanking.length"><td colspan="7" class="muted" style="text-align:center;padding:24px">暂无活跃数据</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         <div class="filter-row">
           <a-input v-model:value="query" allow-clear placeholder="搜索邮箱" style="width: 260px" />
