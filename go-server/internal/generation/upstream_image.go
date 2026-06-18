@@ -14,6 +14,8 @@ import (
 	"aipi-go/internal/providers"
 )
 
+const upstreamImageMaxAttempts = 3
+
 func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt int) (any, error) {
 	body := map[string]any{
 		"model":           input.Model.ModelName,
@@ -58,6 +60,35 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	}
 	payload, _ := json.Marshal(body)
 	endpoint := imageEndpoint(input.Provider, input.Operation)
+
+	var lastErr error
+	for requestAttempt := 1; requestAttempt <= upstreamImageMaxAttempts; requestAttempt++ {
+		result, err := s.callImageJSONOnce(ctx, input, attempt, requestAttempt, endpoint, payload)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if requestAttempt >= upstreamImageMaxAttempts || !isRetryableImageUpstreamError(err) {
+			return nil, err
+		}
+		if s.logger != nil {
+			s.logger.Warn("generation upstream image retry",
+				"taskId", input.TaskID,
+				"providerId", input.Provider.ID,
+				"endpoint", endpoint,
+				"attempt", attempt,
+				"requestAttempt", requestAttempt,
+				"error", err.Error(),
+			)
+		}
+		if err := sleepImageRetry(ctx, requestAttempt); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, attempt int, requestAttempt int, endpoint string, payload []byte) (any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -68,41 +99,102 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	startedAt := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("上游接口连接失败：%w", err)
+		return nil, fmt.Errorf("上游中转服务连接中断：%w", err)
 	}
 	defer resp.Body.Close()
 
 	responseBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	var responseJSON any
 	_ = json.Unmarshal(responseBytes, &responseJSON)
-	s.logger.Info("generation upstream image response",
-		"taskId", input.TaskID,
-		"providerId", input.Provider.ID,
-		"endpoint", endpoint,
-		"attempt", attempt,
-		"status", resp.StatusCode,
-		"durationMs", time.Since(startedAt).Milliseconds(),
-		"imageCount", len(ExtractImages(responseJSON)),
-		"auth", providers.APIKeyDiagnostics(input.Provider.APIKey),
-	)
+	errorMessage := cleanUpstreamError(responseJSON, string(responseBytes))
+	if s.logger != nil {
+		s.logger.Info("generation upstream image response",
+			"taskId", input.TaskID,
+			"providerId", input.Provider.ID,
+			"endpoint", endpoint,
+			"attempt", attempt,
+			"requestAttempt", requestAttempt,
+			"status", resp.StatusCode,
+			"durationMs", time.Since(startedAt).Milliseconds(),
+			"imageCount", len(ExtractImages(responseJSON)),
+			"errorMessage", trimLong(errorMessage, 300),
+			"auth", providers.APIKeyDiagnostics(input.Provider.APIKey),
+		)
+	}
 	if isHTMLResponse(resp, responseBytes) {
 		return nil, errors.New("上游返回了网页 HTML，不是图片接口 JSON，请检查接口 Base URL")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := cleanUpstreamError(responseJSON, string(responseBytes))
+		message := errorMessage
 		if message == "" {
 			message = fmt.Sprintf("上游接口调用失败：%d", resp.StatusCode)
 		}
-		return nil, errors.New(message)
+		return nil, imageUpstreamHTTPError{status: resp.StatusCode, message: message}
 	}
 	if len(ExtractImages(responseJSON)) == 0 {
-		message := cleanUpstreamError(responseJSON, string(responseBytes))
+		message := errorMessage
 		if message != "" {
 			return nil, errors.New("上游接口未返回图片结果：" + message)
 		}
 		return nil, errors.New("上游接口未返回图片结果")
 	}
 	return NormalizeImageResultForProvider(responseJSON, input.Provider), nil
+}
+
+type imageUpstreamHTTPError struct {
+	status  int
+	message string
+}
+
+func (e imageUpstreamHTTPError) Error() string {
+	return e.message
+}
+
+func isRetryableImageUpstreamError(err error) bool {
+	var upstreamErr imageUpstreamHTTPError
+	if errors.As(err, &upstreamErr) {
+		return isRetryableImageStatus(upstreamErr.status) || isTransientImageMessage(upstreamErr.message)
+	}
+	return isTransientImageMessage(err.Error())
+}
+
+func isRetryableImageStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientImageMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	for _, keyword := range []string{
+		"curl: (56)",
+		"connection closed abruptly",
+		"connection reset",
+		"unexpected eof",
+		"eof",
+		"timeout",
+		"temporarily unavailable",
+		"server closed idle connection",
+	} {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepImageRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * 600 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func imageEndpoint(provider providers.Provider, operation string) string {

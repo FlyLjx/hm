@@ -23,6 +23,8 @@ type remoteModel struct {
 	remoteModelPrice
 }
 
+const providerProbeMaxAttempts = 3
+
 func (r *Router) providerModelDetails(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -174,6 +176,24 @@ func (r *Router) fetchProviderModelDetails(ctx context.Context, baseURL string, 
 }
 
 func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]remoteModel, error) {
+	var lastErr error
+	for attempt := 1; attempt <= providerProbeMaxAttempts; attempt++ {
+		items, err := fetchOpenAIModelsOnce(ctx, endpoint, apiKey)
+		if err == nil {
+			return items, nil
+		}
+		lastErr = err
+		if attempt >= providerProbeMaxAttempts || !isRetryableProviderProbeError(err) {
+			return nil, err
+		}
+		if err := sleepProviderProbeRetry(ctx, attempt); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func fetchOpenAIModelsOnce(ctx context.Context, endpoint string, apiKey string) ([]remoteModel, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -194,18 +214,19 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 		} `json:"error"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		return nil, newAppError(http.StatusBadGateway, "模型接口返回格式不正确")
-	}
+	decodeErr := json.Unmarshal(bodyBytes, &payload)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message := payload.Message
 		if payload.Error != nil && payload.Error.Message != "" {
 			message = payload.Error.Message
 		}
 		if message == "" {
-			message = "获取模型列表失败：HTTP " + itoa(response.StatusCode)
+			message = upstreamErrorMessage(bodyBytes, response.StatusCode)
 		}
 		return nil, upstreamHTTPError{status: response.StatusCode, message: message}
+	}
+	if decodeErr != nil {
+		return nil, newAppError(http.StatusBadGateway, "模型接口返回格式不正确")
 	}
 	source := payload.Data
 	if len(source) == 0 {
@@ -230,6 +251,53 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 		}
 	}
 	return items, nil
+}
+
+func isRetryableProviderProbeError(err error) bool {
+	var upstreamErr upstreamHTTPError
+	if errors.As(err, &upstreamErr) {
+		return isRetryableProviderProbeStatus(upstreamErr.status) || isTransientProviderProbeMessage(upstreamErr.message)
+	}
+	return isTransientProviderProbeMessage(err.Error())
+}
+
+func isRetryableProviderProbeStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientProviderProbeMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	for _, keyword := range []string{
+		"curl: (56)",
+		"connection closed abruptly",
+		"connection reset",
+		"unexpected eof",
+		"eof",
+		"timeout",
+		"temporarily unavailable",
+		"server closed idle connection",
+	} {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepProviderProbeRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * 450 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func fetchNewAPIPricing(ctx context.Context, baseURL string, apiKey string) map[string]remoteModelPrice {

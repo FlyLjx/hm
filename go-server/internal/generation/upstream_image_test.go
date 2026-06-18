@@ -115,7 +115,6 @@ func TestCallImageJSONSendsEditImageURLFields(t *testing.T) {
 	}
 }
 
-
 func TestCallImageJSONReturnsUpstreamPolicyErrorWithoutFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -137,6 +136,39 @@ func TestCallImageJSONReturnsUpstreamPolicyErrorWithoutFallback(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "内容政策") {
 		t.Fatalf("expected cleaned policy message, got: %v", err)
+	}
+}
+
+func TestCallImageJSONRetriesTransientCurl56Error(t *testing.T) {
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt64(&requestCount, 1)
+		if count == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "Failed to perform, curl: (56) Connection closed abruptly.",
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": "https://cdn.example.test/retry-ok.png"}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	result, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	if err != nil {
+		t.Fatalf("callImageJSON returned error after retry: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("expected one retry, got %d requests", requestCount)
+	}
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://cdn.example.test/retry-ok.png" {
+		t.Fatalf("unexpected images after retry: %#v", images)
 	}
 }
 
@@ -283,7 +315,7 @@ func (e errUnexpectedResult) Error() string {
 
 func testImageRequest(baseURL string) ImageRequest {
 	return ImageRequest{
-		TaskID: "test-task",
+		TaskID:     "test-task",
 		Capability: "chat_image",
 		Provider: providers.Provider{
 			ID:      "provider-test",
