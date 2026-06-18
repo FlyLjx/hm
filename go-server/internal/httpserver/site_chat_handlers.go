@@ -146,7 +146,7 @@ func (r *Router) siteChatStream(w http.ResponseWriter, req *http.Request, provid
 		writeError(w, err)
 		return
 	}
-	upstreamReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	upstreamReq.Header.Set("Authorization", providers.AuthorizationHeader(provider.APIKey))
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {

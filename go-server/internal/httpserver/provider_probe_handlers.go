@@ -141,7 +141,7 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Authorization", providers.AuthorizationHeader(apiKey))
 	request.Header.Set("Accept", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -245,7 +245,7 @@ func fetchProviderJSON(ctx context.Context, endpoint string, apiKey string, targ
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Authorization", providers.AuthorizationHeader(apiKey))
 	request.Header.Set("Accept", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

@@ -62,7 +62,7 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+input.Provider.APIKey)
+	req.Header.Set("Authorization", providers.AuthorizationHeader(input.Provider.APIKey))
 	req.Header.Set("Content-Type", "application/json")
 
 	startedAt := time.Now()

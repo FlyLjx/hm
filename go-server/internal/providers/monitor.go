@@ -91,7 +91,7 @@ func (m *Monitor) sampleProvider(parent context.Context, provider Provider) {
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err == nil {
-		request.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		request.Header.Set("Authorization", AuthorizationHeader(provider.APIKey))
 		request.Header.Set("Accept", "application/json")
 		var response *http.Response
 		response, err = m.client.Do(request)

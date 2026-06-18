@@ -1,6 +1,9 @@
 package providers
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Provider struct {
 	ID         string
@@ -38,4 +41,16 @@ func ToPublic(provider Provider) PublicProvider {
 		CreatedAt:  provider.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:  provider.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+func NormalizeAPIKey(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= len("Bearer ") && strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
+		return strings.TrimSpace(value[len("Bearer "):])
+	}
+	return value
+}
+
+func AuthorizationHeader(apiKey string) string {
+	return "Bearer " + NormalizeAPIKey(apiKey)
 }

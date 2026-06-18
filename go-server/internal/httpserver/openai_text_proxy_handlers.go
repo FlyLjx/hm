@@ -134,7 +134,7 @@ func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Reques
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
 		return
 	}
-	upstreamReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	upstreamReq.Header.Set("Authorization", providers.AuthorizationHeader(provider.APIKey))
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
@@ -170,7 +170,7 @@ func postOpenAIJSON(ctx context.Context, provider providers.Provider, upstreamPa
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	req.Header.Set("Authorization", providers.AuthorizationHeader(provider.APIKey))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

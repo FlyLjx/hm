@@ -154,7 +154,7 @@ func (r *Router) parseProviderInput(w http.ResponseWriter, req *http.Request) (p
 	input.Type = strings.TrimSpace(input.Type)
 	input.Capability = defaultString(strings.TrimSpace(input.Capability), "chat_image")
 	input.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
-	input.APIKey = strings.TrimSpace(input.APIKey)
+	input.APIKey = providers.NormalizeAPIKey(input.APIKey)
 	input.Status = defaultString(strings.TrimSpace(input.Status), "active")
 	if input.Name == "" || input.BaseURL == "" || input.APIKey == "" {
 		writeError(w, newAppError(http.StatusBadRequest, "请填写接口名称、地址和密钥"))
