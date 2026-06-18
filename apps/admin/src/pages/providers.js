@@ -102,13 +102,19 @@ export const ProvidersPage = {
       try {
         const response = await adminApi.testApiProvider(row.id)
         const result = response.data
+        const auth = result.auth || {}
         const content = [
           `状态：${result.status === 'success' ? '成功' : '失败'}`,
           `HTTP：${result.statusCode || '-'}`,
           `耗时：${result.durationMs}ms`,
           `模型：${result.modelCount}`,
           `地址：${result.endpoint}`,
+          `鉴权：Authorization: Bearer ***`,
+          `Key长度：${auth.keyLength || '-'}`,
+          `Key指纹：${auth.keyFingerprint || '-'}`,
+          `原始Bearer前缀：${auth.hasBearerPrefix ? '有，已自动去除' : '无'}`,
           `消息：${result.message}`,
+          result.hint ? `提示：${result.hint}` : '',
         ].join('\n')
         Modal[result.ok ? 'success' : 'error']({
           title: `接口测试${result.ok ? '成功' : '失败'}`,

@@ -38,7 +38,7 @@ func (r *Router) providerModelDetails(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	input.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
-	input.APIKey = strings.TrimSpace(input.APIKey)
+	input.APIKey = providers.NormalizeAPIKey(input.APIKey)
 	if input.BaseURL == "" || input.APIKey == "" {
 		writeError(w, newAppError(http.StatusBadRequest, "请填写 Base URL 和 API Key"))
 		return
@@ -85,6 +85,7 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 	}
 	startedAt := time.Now()
 	endpoint := providerModelsEndpoint(provider.BaseURL)
+	authDiagnostics := providers.APIKeyDiagnostics(provider.APIKey)
 	items, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
 	duration := time.Since(startedAt).Milliseconds()
 	var statusCode any = http.StatusOK
@@ -99,7 +100,7 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 			"statusCode", statusCode,
 			"durationMs", duration,
 			"modelCount", len(items),
-			"auth", providers.APIKeyDiagnostics(provider.APIKey),
+			"auth", authDiagnostics,
 			"error", errString(err),
 		)
 	}
@@ -111,6 +112,8 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 			"durationMs": duration,
 			"endpoint":   endpoint,
 			"modelCount": 0,
+			"auth":       authDiagnostics,
+			"hint":       providerAuthHint(statusCode),
 			"message":    err.Error(),
 		}})
 		return
@@ -122,8 +125,17 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 		"durationMs": duration,
 		"endpoint":   endpoint,
 		"modelCount": len(items),
+		"auth":       authDiagnostics,
+		"hint":       "",
 		"message":    "连接成功，模型 " + itoa(len(items)) + " 个",
 	}})
+}
+
+func providerAuthHint(statusCode any) string {
+	if code, ok := statusCode.(int); ok && code == http.StatusUnauthorized {
+		return "上游已收到请求但拒绝了当前密钥。请确认这里填写的是模型接口 Key；号池/账号池 Key 可能只能访问 /api/accounts，不能访问 /v1/models。"
+	}
+	return ""
 }
 
 func upstreamStatusCode(err error) any {
