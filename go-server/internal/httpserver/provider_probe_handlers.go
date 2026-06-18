@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -86,11 +87,27 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 	endpoint := providerModelsEndpoint(provider.BaseURL)
 	items, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
 	duration := time.Since(startedAt).Milliseconds()
+	var statusCode any = http.StatusOK
+	if err != nil {
+		statusCode = upstreamStatusCode(err)
+	}
+	if r.logger != nil {
+		r.logger.Info("provider test finished",
+			"providerId", provider.ID,
+			"providerName", provider.Name,
+			"endpoint", endpoint,
+			"statusCode", statusCode,
+			"durationMs", duration,
+			"modelCount", len(items),
+			"auth", providers.APIKeyDiagnostics(provider.APIKey),
+			"error", errString(err),
+		)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 			"ok":         false,
 			"status":     "failed",
-			"statusCode": nil,
+			"statusCode": statusCode,
 			"durationMs": duration,
 			"endpoint":   endpoint,
 			"modelCount": 0,
@@ -107,6 +124,14 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 		"modelCount": len(items),
 		"message":    "连接成功，模型 " + itoa(len(items)) + " 个",
 	}})
+}
+
+func upstreamStatusCode(err error) any {
+	status := upstreamStatus(err)
+	if status == http.StatusBadGateway {
+		return nil
+	}
+	return status
 }
 
 func (r *Router) fetchProviderModelDetails(ctx context.Context, baseURL string, apiKey string) ([]remoteModel, error) {
@@ -148,6 +173,7 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 		return nil, err
 	}
 	defer response.Body.Close()
+	bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, 4*1024*1024))
 	var payload struct {
 		Data   []any `json:"data"`
 		Models []any `json:"models"`
@@ -156,7 +182,7 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 		} `json:"error"`
 		Message string `json:"message"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 		return nil, newAppError(http.StatusBadGateway, "模型接口返回格式不正确")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -167,7 +193,7 @@ func fetchOpenAIModels(ctx context.Context, endpoint string, apiKey string) ([]r
 		if message == "" {
 			message = "获取模型列表失败：HTTP " + itoa(response.StatusCode)
 		}
-		return nil, newAppError(response.StatusCode, message)
+		return nil, upstreamHTTPError{status: response.StatusCode, message: message}
 	}
 	source := payload.Data
 	if len(source) == 0 {

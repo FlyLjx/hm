@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
 )
@@ -53,4 +55,20 @@ func NormalizeAPIKey(value string) string {
 
 func AuthorizationHeader(apiKey string) string {
 	return "Bearer " + NormalizeAPIKey(apiKey)
+}
+
+func APIKeyDiagnostics(value string) map[string]any {
+	normalized := NormalizeAPIKey(value)
+	hash := sha256.Sum256([]byte(normalized))
+	fingerprint := hex.EncodeToString(hash[:])[:12]
+	return map[string]any{
+		"hasBearerPrefix": hasBearerPrefix(value),
+		"keyLength":       len(normalized),
+		"keyFingerprint":  fingerprint,
+	}
+}
+
+func hasBearerPrefix(value string) bool {
+	value = strings.TrimSpace(value)
+	return len(value) >= len("Bearer ") && strings.EqualFold(value[:len("Bearer ")], "Bearer ")
 }

@@ -78,10 +78,12 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	s.logger.Info("generation upstream image response",
 		"taskId", input.TaskID,
 		"providerId", input.Provider.ID,
+		"endpoint", endpoint,
 		"attempt", attempt,
 		"status", resp.StatusCode,
 		"durationMs", time.Since(startedAt).Milliseconds(),
 		"imageCount", len(ExtractImages(responseJSON)),
+		"auth", providers.APIKeyDiagnostics(input.Provider.APIKey),
 	)
 	if isHTMLResponse(resp, responseBytes) {
 		return nil, errors.New("上游返回了网页 HTML，不是图片接口 JSON，请检查接口 Base URL")
