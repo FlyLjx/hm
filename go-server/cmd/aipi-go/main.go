@@ -21,13 +21,14 @@ func main() {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel, cfg.LogDir)
 
-	db, err := database.Open(cfg.Database)
+	sqlDB, err := database.Open(cfg.Database)
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
 	}
+	db := database.Wrap(sqlDB)
 	defer db.Close()
-	if err := database.EnsureSchema(db); err != nil {
+	if err := database.EnsureSchema(db.Raw()); err != nil {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}

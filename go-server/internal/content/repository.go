@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+
+	"aipi-go/internal/database"
 )
 
 type Repository struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewRepository(db *sql.DB) *Repository {
+func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 

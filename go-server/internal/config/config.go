@@ -26,12 +26,14 @@ type OAuthClient struct {
 }
 
 type DatabaseConfig struct {
+	Driver       string
 	Host         string
 	Port         int
 	RootPassword string
 	User         string
 	Password     string
 	Name         string
+	SSLMode      string
 	MaxOpenConns int
 	MaxIdleConns int
 }
@@ -48,14 +50,16 @@ func Load() Config {
 		LogDir:           envString("LOG_DIR", "logs"),
 		LogLevel:         strings.ToLower(envString("LOG_LEVEL", "info")),
 		Database: DatabaseConfig{
-			Host:         envString("MYSQL_HOST", "127.0.0.1"),
-			Port:         envInt("MYSQL_PORT", 3306),
-			RootPassword: envString("MYSQL_ROOT_PASSWORD", envString("MYSQL_PASSWORD", "")),
-			User:         envString("MYSQL_USER", "root"),
-			Password:     envString("MYSQL_PASSWORD", ""),
-			Name:         envString("MYSQL_DATABASE", "aipi"),
-			MaxOpenConns: envInt("MYSQL_MAX_OPEN_CONNS", 80),
-			MaxIdleConns: envInt("MYSQL_MAX_IDLE_CONNS", 40),
+			Driver:       strings.ToLower(envString("DB_DRIVER", envString("DATABASE_DRIVER", "mysql"))),
+			Host:         envString("DB_HOST", envString("MYSQL_HOST", "127.0.0.1")),
+			Port:         envInt("DB_PORT", envInt("MYSQL_PORT", 3306)),
+			RootPassword: envString("DB_ROOT_PASSWORD", envString("MYSQL_ROOT_PASSWORD", envString("MYSQL_PASSWORD", ""))),
+			User:         envString("DB_USER", envString("MYSQL_USER", "root")),
+			Password:     envString("DB_PASSWORD", envString("MYSQL_PASSWORD", "")),
+			Name:         envString("DB_NAME", envString("MYSQL_DATABASE", "aipi")),
+			SSLMode:      envString("DB_SSLMODE", "disable"),
+			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", envInt("MYSQL_MAX_OPEN_CONNS", 80)),
+			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", envInt("MYSQL_MAX_IDLE_CONNS", 40)),
 		},
 	}
 }

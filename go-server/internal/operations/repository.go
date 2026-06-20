@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"aipi-go/internal/database"
 )
 
 type Repository struct {
-	db *sql.DB
+	db *database.DB
 }
 
 const apiLogMonitorPhase = "service-monitor"
 const publicSlowRequestMs = 10000
 
-func NewRepository(db *sql.DB) *Repository {
+func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 

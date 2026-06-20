@@ -2,11 +2,11 @@ package generation
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"sync"
 	"time"
 
+	"aipi-go/internal/database"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
@@ -25,7 +25,7 @@ type Job struct {
 	TaskID string
 }
 
-func NewQueue(db *sql.DB, logger *slog.Logger, workers int, hub *tasks.Hub, userHub *users.Hub) *Queue {
+func NewQueue(db *database.DB, logger *slog.Logger, workers int, hub *tasks.Hub, userHub *users.Hub) *Queue {
 	if workers <= 0 {
 		workers = 3
 	}
@@ -72,14 +72,14 @@ func (q *Queue) worker(workerID int) {
 }
 
 type Service struct {
-	db      *sql.DB
+	db      *database.DB
 	logger  *slog.Logger
 	tasks   *tasks.Repository
 	hub     *tasks.Hub
 	userHub *users.Hub
 }
 
-func NewService(db *sql.DB, logger *slog.Logger, hub *tasks.Hub, userHub *users.Hub) *Service {
+func NewService(db *database.DB, logger *slog.Logger, hub *tasks.Hub, userHub *users.Hub) *Service {
 	return &Service{
 		db:      db,
 		logger:  logger,

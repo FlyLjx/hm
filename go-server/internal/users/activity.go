@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"aipi-go/internal/database"
 )
 
 type ActivityRank struct {
@@ -40,7 +42,7 @@ func (r *Repository) ActivityRanking(ctx context.Context, days int, limit int) (
 			users.email,
 			users.status,
 			COUNT(generation_tasks.id) AS task_count,
-			COALESCE(SUM(generation_tasks.status = 'success'), 0) AS success_tasks,
+			`+database.BoolCountExpr(`generation_tasks.status = 'success'`)+` AS success_tasks,
 			COALESCE(SUM(CASE WHEN generation_tasks.status = 'success' THEN generation_tasks.quantity ELSE 0 END), 0) AS success_images,
 			COALESCE(SUM(CASE WHEN generation_tasks.status = 'success' THEN generation_tasks.cost_credits ELSE 0 END), 0) AS credits_used,
 			MAX(generation_tasks.created_at) AS last_active_at

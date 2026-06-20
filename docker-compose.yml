@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: aipi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-aipi}
+      POSTGRES_USER: ${DB_USER:-aipi}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aipi_change_me}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${POSTGRES_PUBLIC_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-aipi} -d ${DB_NAME:-aipi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   aipi:
     image: ghcr.io/flyljx/hm:latest
     container_name: aipi-go
@@ -6,8 +26,25 @@ services:
     env_file:
       - .env
     environment:
-      TZ: Asia/Shanghai
+      TZ: ${TZ:-Asia/Shanghai}
+      DB_DRIVER: ${DB_DRIVER:-postgres}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-aipi}
+      DB_PASSWORD: ${DB_PASSWORD:-aipi_change_me}
+      DB_NAME: ${DB_NAME:-aipi}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      SERVE_STATIC: ${SERVE_STATIC:-true}
+      PUBLIC_DIR: ${PUBLIC_DIR:-public}
+      LOG_DIR: ${LOG_DIR:-logs}
+      PORT: ${PORT:-3001}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
-      - "6985:3001"
+      - "${APP_PUBLIC_PORT:-6985}:3001"
     volumes:
       - ./logs:/app/logs
+
+volumes:
+  postgres_data:

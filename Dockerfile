@@ -31,9 +31,11 @@ RUN rm -rf public/web public/admin \
   && cp -a apps/web/src/. public/web/ \
   && cp -a apps/admin/src/. public/admin/
 WORKDIR /src/go-server
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/aipi-go ./cmd/aipi-go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/aipi-go ./cmd/aipi-go \
+  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/pgmigrate ./cmd/pgmigrate \
+  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/pgsmoke ./cmd/pgsmoke
 
-FROM debian:bookworm-slim
+FROM golang:1.26.4-bookworm AS runtime
 
 WORKDIR /app
 ARG HTTP_PROXY
@@ -47,19 +49,13 @@ ENV PORT=3001 \
   PUBLIC_DIR=public \
   LOG_DIR=logs \
   TZ=Asia/Shanghai
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
-  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
-  && echo $TZ > /etc/timezone \
-  && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /app/logs
+RUN mkdir -p /app/logs
 
 COPY --from=build /out/aipi-go /app/aipi-go
+COPY --from=build /out/pgmigrate /app/pgmigrate
+COPY --from=build /out/pgsmoke /app/pgsmoke
 COPY --from=build /src/public /app/public
 
 EXPOSE 3001
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3001/api/health >/dev/null || exit 1
 
 CMD ["/app/aipi-go"]

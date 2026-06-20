@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"aipi-go/internal/database"
 )
 
 const (
@@ -22,12 +23,12 @@ const (
 )
 
 type Monitor struct {
-	db     *sql.DB
+	db     *database.DB
 	logger *slog.Logger
 	client *http.Client
 }
 
-func NewMonitor(db *sql.DB, logger *slog.Logger) *Monitor {
+func NewMonitor(db *database.DB, logger *slog.Logger) *Monitor {
 	return &Monitor{
 		db:     db,
 		logger: logger,

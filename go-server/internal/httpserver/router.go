@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"aipi-go/internal/auth"
 	"aipi-go/internal/build"
 	"aipi-go/internal/config"
+	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
 	"aipi-go/internal/operations"
 	"aipi-go/internal/tasks"
@@ -24,7 +24,7 @@ import (
 
 type Router struct {
 	cfg     config.Config
-	db      *sql.DB
+	db      *database.DB
 	logger  *slog.Logger
 	mux     *http.ServeMux
 	tokens  auth.TokenManager
@@ -33,7 +33,7 @@ type Router struct {
 	userHub *users.Hub
 }
 
-func NewRouter(cfg config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
+func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Handler {
 	router := &Router{
 		cfg:    cfg,
 		db:     db,

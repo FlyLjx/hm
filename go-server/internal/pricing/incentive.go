@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"aipi-go/internal/database"
 )
 
 const MinUnitPrice = 0.001
@@ -47,7 +49,7 @@ type Result struct {
 	EndedAt         string  `json:"endedAt,omitempty"`
 }
 
-func Evaluate(ctx context.Context, db *sql.DB, values map[string]any, userID string, now time.Time) (Result, error) {
+func Evaluate(ctx context.Context, db *database.DB, values map[string]any, userID string, now time.Time) (Result, error) {
 	plan := ParsePlan(values)
 	result := Result{
 		PlanName:     plan.Name,
@@ -112,7 +114,7 @@ func ApplyUnitPrice(unitPrice float64, incentive Result, subscriptionDiscountPer
 	return round4(discounted), bestDiscount, source
 }
 
-func CurrentSubscriptionDiscount(ctx context.Context, db *sql.DB, userID string) (float64, error) {
+func CurrentSubscriptionDiscount(ctx context.Context, db *database.DB, userID string) (float64, error) {
 	var discount sql.NullFloat64
 	err := db.QueryRowContext(ctx, `
 		SELECT subscription_plans.discount_percent
@@ -187,7 +189,7 @@ func nextRule(rules []Rule, count int) *Rule {
 	return nil
 }
 
-func todaySuccessImages(ctx context.Context, db *sql.DB) (int, error) {
+func todaySuccessImages(ctx context.Context, db *database.DB) (int, error) {
 	var count int
 	err := db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(quantity), 0)

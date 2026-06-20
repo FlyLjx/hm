@@ -3,23 +3,31 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"aipi-go/internal/config"
 )
 
 func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
-	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4,utf8&loc=Local",
-		cfg.User,
-		cfg.Password,
-		cfg.Host,
-		cfg.Port,
-		cfg.Name,
-	)
-	db, err := sql.Open("mysql", dsn)
+	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
+	if driver == "" {
+		driver = "mysql"
+	}
+	SetDialect(driver)
+	dsn, err := dsnForDriver(driver, cfg)
+	if err != nil {
+		return nil, err
+	}
+	sqlDriverName := driver
+	if driver == "postgres" {
+		sqlDriverName = "pgx"
+	}
+	db, err := sql.Open(sqlDriverName, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -31,4 +39,40 @@ func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
 	}
 	db.SetConnMaxLifetime(30 * time.Minute)
 	return db, nil
+}
+
+func dsnForDriver(driver string, cfg config.DatabaseConfig) (string, error) {
+	switch driver {
+	case "mysql":
+		return fmt.Sprintf(
+			"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4,utf8&loc=Local",
+			cfg.User,
+			cfg.Password,
+			cfg.Host,
+			cfg.Port,
+			cfg.Name,
+		), nil
+	case "postgres", "pgx":
+		query := url.Values{}
+		query.Set("sslmode", defaultString(cfg.SSLMode, "disable"))
+		query.Set("application_name", "aipi-go")
+		return fmt.Sprintf(
+			"postgres://%s:%s@%s:%d/%s?%s",
+			url.QueryEscape(cfg.User),
+			url.QueryEscape(cfg.Password),
+			cfg.Host,
+			cfg.Port,
+			cfg.Name,
+			query.Encode(),
+		), nil
+	default:
+		return "", fmt.Errorf("unsupported database driver: %s", driver)
+	}
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
