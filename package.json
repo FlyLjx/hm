@@ -1,5 +1,5 @@
 {
-  "name": "AI-PAI",
+  "name": "ai-pai",
   "private": true,
   "version": "0.0.0",
   "scripts": {
@@ -12,7 +12,7 @@
     "build:go": "powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1",
     "check-release": "powershell -ExecutionPolicy Bypass -File scripts/check-release.ps1",
     "prestart": "powershell -ExecutionPolicy Bypass -File scripts/check-release.ps1",
-    "start": ".\\release\\aipi-go.exe",
-    "start:server": ".\\release\\aipi-go.exe"
+    "start": ".\\release\\ai-pai.exe",
+    "start:server": ".\\release\\ai-pai.exe"
   }
 }

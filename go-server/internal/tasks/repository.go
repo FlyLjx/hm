@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
 )
 
@@ -212,7 +213,7 @@ func (r *Repository) FindFavoritesByUserID(ctx context.Context, userID string, i
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	conditions := []string{
 		"generation_tasks.user_id = ?",
-		"generation_tasks.favorite_enabled = 1",
+		"generation_tasks.favorite_enabled = TRUE",
 		"generation_tasks.status = 'success'",
 		"generation_tasks.result_json IS NOT NULL",
 	}
@@ -246,7 +247,7 @@ func (r *Repository) FindPublicDisplay(ctx context.Context) ([]Task, error) {
 		FROM generation_tasks
 		`+taskJoins+`
 		WHERE generation_tasks.public_status = 'approved'
-			AND generation_tasks.display_enabled = 1
+			AND generation_tasks.display_enabled = TRUE
 			AND generation_tasks.status = 'success'
 			AND generation_tasks.result_json IS NOT NULL
 		ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
@@ -316,8 +317,7 @@ func (r *Repository) Stats(ctx context.Context) (Stats, error) {
 		SELECT
 			status,
 			COUNT(*) AS total,
-			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images,
-			COALESCE(SUM(CASE WHEN status = 'success' THEN cost_credits ELSE 0 END), 0) AS total_credits
+			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images
 		FROM generation_tasks
 		GROUP BY status
 	`)
@@ -330,13 +330,11 @@ func (r *Repository) Stats(ctx context.Context) (Stats, error) {
 		var status string
 		var total int
 		var images int
-		var credits float64
-		if err := rows.Scan(&status, &total, &images, &credits); err != nil {
+		if err := rows.Scan(&status, &total, &images); err != nil {
 			return Stats{}, err
 		}
 		stats.Total += total
 		stats.TotalImages += images
-		stats.TotalCredits += credits
 		switch Status(status) {
 		case StatusQueued:
 			stats.Queued = total
@@ -465,7 +463,7 @@ func (r *Repository) RequestPublic(ctx context.Context, id string, userID string
 		SET public_status = 'pending',
 			public_requested_at = NOW(),
 			public_reviewed_at = NULL,
-			display_enabled = 0,
+			display_enabled = FALSE,
 			display_note = ?
 		WHERE id = ?
 	`, note, id)
@@ -672,11 +670,11 @@ func scanTask(row taskScanner) (*Task, error) {
 		task.DisplayNote = &displayNote.String
 	}
 	if publicRequestedAt.Valid {
-		value := publicRequestedAt.Time.In(time.Local)
+		value := appclock.DatabaseTime(publicRequestedAt.Time)
 		task.PublicRequestedAt = &value
 	}
 	if publicReviewedAt.Valid {
-		value := publicReviewedAt.Time.In(time.Local)
+		value := appclock.DatabaseTime(publicReviewedAt.Time)
 		task.PublicReviewedAt = &value
 	}
 	if userEmail.Valid {
@@ -694,8 +692,8 @@ func scanTask(row taskScanner) (*Task, error) {
 	if providerBaseURL.Valid {
 		task.ProviderBaseURL = &providerBaseURL.String
 	}
-	task.CreatedAt = task.CreatedAt.In(time.Local)
-	task.UpdatedAt = task.UpdatedAt.In(time.Local)
+	task.CreatedAt = appclock.DatabaseTime(task.CreatedAt)
+	task.UpdatedAt = appclock.DatabaseTime(task.UpdatedAt)
 	return &task, nil
 }
 
@@ -738,7 +736,7 @@ func scanAdminTaskListItem(row interface{ Scan(dest ...any) error }) (AdminTaskL
 		return AdminTaskListItem{}, err
 	}
 	item.Status = Status(status)
-	item.CreatedAt = createdAt.In(time.Local).Format(time.RFC3339)
+	item.CreatedAt = appclock.DatabaseTime(createdAt).Format(time.RFC3339)
 	if userEmail.Valid {
 		item.UserEmail = &userEmail.String
 	}

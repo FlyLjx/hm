@@ -14,8 +14,8 @@ docker compose up -d
 
 默认会启动：
 
-- `aipi-postgres`
-- `aipi-go`
+- `ai-pai-postgres`
+- `ai-pai`
 
 默认访问端口：
 
@@ -43,9 +43,9 @@ Postgres 主库：
 DB_DRIVER=postgres
 DB_HOST=postgres
 DB_PORT=5432
-DB_USER=aipi
+DB_USER=ai_pai
 DB_PASSWORD=你的新密码
-DB_NAME=aipi
+DB_NAME=ai_pai
 DB_SSLMODE=disable
 ```
 
@@ -79,13 +79,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\postgres-bootstrap.ps1
 $env:DB_DRIVER='postgres'
 $env:DB_HOST='127.0.0.1'
 $env:DB_PORT='5432'
-$env:DB_USER='aipi'
+$env:DB_USER='ai_pai'
 $env:DB_PASSWORD='你的新密码'
-$env:DB_NAME='aipi'
+$env:DB_NAME='ai_pai'
 $env:DB_SSLMODE='disable'
 go run ./go-server/cmd/pgmigrate
 go run ./go-server/cmd/pgsmoke
-docker compose up -d aipi
+docker compose up -d ai-pai
 ```
 
 说明：
@@ -140,7 +140,7 @@ http://127.0.0.1:6985
 
 ```bash
 docker compose ps
-docker compose logs -f aipi
+docker compose logs -f ai-pai
 docker compose logs -f postgres
 docker compose restart
 docker compose down

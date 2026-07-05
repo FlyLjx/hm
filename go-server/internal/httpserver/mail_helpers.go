@@ -74,7 +74,7 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string,
 		fromName = settings.SiteName
 	}
 	if fromName == "" {
-		fromName = "AIπ"
+		fromName = "ai-pai"
 	}
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	auth := smtp.PlainAuth("", settings.User, settings.Password, settings.Host)
@@ -189,7 +189,7 @@ func buildMailMessage(fromName string, fromAddress string, to string, subject st
 func buildMailHTML(fromName string, subject string, text string, action mailAction) string {
 	brand := strings.TrimSpace(fromName)
 	if brand == "" {
-		brand = "AIπ"
+		brand = "ai-pai"
 	}
 	actionHTML := ""
 	copyLinkHTML := ""

@@ -1,15 +1,14 @@
-# AI-PAI Go Backend
+# ai-pai Go Backend
 
-This directory is the Go backend for AI-PAI. It serves the public web app,
+This directory is the Go backend for ai-pai. It serves the public web app,
 admin console, OpenAI-compatible API, WebSocket updates, task queue, billing,
-logs, and core operations from one compiled binary.
+and core operations from one compiled binary.
 
 ## Current Scope
 
 - Runtime config from the existing `.env` keys.
-- MySQL connection using the existing `aipi` database.
+- Database connection using the `ai_pai` database by default.
 - `/api/health` compatible health response.
-- `/api/service-status` ready response.
 - `/api/go/migration` migration status.
 - Static `public/web` and `public/admin` fallback routes.
 - Compatible admin login/session.
@@ -25,9 +24,9 @@ logs, and core operations from one compiled binary.
   `/v1/credits`, `/v1/images/generations`, `/v1/images/edits`,
   `/v1/chat/completions`, and `/v1/responses`.
 - Registration, password reset, email verification, OAuth, announcements,
-  promotions, recharge products, subscriptions, redeem codes, check-ins,
-  invites, mail broadcast, payment callback compatibility, prompt reverse,
-  prompt library proxy, API keys, API logs, account pool, and admin statistics.
+  subscriptions, redeem codes, check-ins, invites, mail broadcast, payment
+  callback compatibility, prompt reverse, prompt library proxy, API keys,
+  account pool, and admin operations.
 
 ## Structure Rules
 
@@ -45,13 +44,13 @@ logs, and core operations from one compiled binary.
 cd go-server
 $env:GOPROXY="https://goproxy.cn,direct"
 go mod tidy
-go run ./cmd/aipi-go
+go run ./cmd/ai-pai
 ```
 
 If Go is not on PATH in the current terminal after installation, use:
 
 ```powershell
-& "C:\Program Files\Go\bin\go.exe" run ./cmd/aipi-go
+& "C:\Program Files\Go\bin\go.exe" run ./cmd/ai-pai
 ```
 
 ## Repo Build

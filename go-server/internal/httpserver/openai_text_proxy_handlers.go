@@ -15,7 +15,6 @@ import (
 	"aipi-go/internal/apikeys"
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
-	"aipi-go/internal/users"
 )
 
 func (r *Router) compatChatCompletions(w http.ResponseWriter, req *http.Request) {
@@ -92,16 +91,20 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
 		return
 	}
-	costCredits := model.Price1K
-	if auth.User.Credits < costCredits {
-		writeOpenAIError(w, http.StatusPaymentRequired, "用户积分不足", "insufficient_quota")
+	if err := r.requireGenerationSubscription(ctx, auth.User.ID, *model); err != nil {
+		status := http.StatusInternalServerError
+		var appErr appError
+		if errors.As(err, &appErr) {
+			status = appErr.status
+		}
+		writeOpenAIError(w, status, err.Error(), "insufficient_quota")
 		return
 	}
 
 	body["model"] = model.ModelName
 	stream := boolValue(body["stream"])
 	if stream {
-		r.forwardOpenAITextStream(w, req, auth.User.ID, *provider, body, upstreamPath, costCredits, model.DisplayName)
+		r.forwardOpenAITextStream(w, req, *provider, body, upstreamPath)
 		return
 	}
 	body["stream"] = false
@@ -109,12 +112,6 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 	if err != nil {
 		writeOpenAIError(w, upstreamStatus(err), err.Error(), "api_error")
 		return
-	}
-	if costCredits > 0 {
-		if err := r.deductCompatCredits(req.Context(), auth.User.ID, costCredits, "API 调用："+model.DisplayName); err != nil {
-			writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
-			return
-		}
 	}
 	if strings.Contains(strings.ToLower(contentType), "application/json") {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -126,7 +123,7 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 	_, _ = w.Write(result)
 }
 
-func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Request, userID string, provider providers.Provider, body map[string]any, upstreamPath string, costCredits float64, modelDisplayName string) {
+func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Request, provider providers.Provider, body map[string]any, upstreamPath string) {
 	body["stream"] = true
 	payload, _ := json.Marshal(body)
 	upstreamReq, err := http.NewRequestWithContext(req.Context(), http.MethodPost, openAIProxyEndpoint(provider, upstreamPath), bytes.NewReader(payload))
@@ -158,9 +155,6 @@ func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Reques
 	}
 	if copyErr != nil {
 		return
-	}
-	if costCredits > 0 {
-		_ = r.deductCompatCredits(context.Background(), userID, costCredits, "API 流式调用："+modelDisplayName)
 	}
 }
 
@@ -194,40 +188,6 @@ func openAIProxyEndpoint(provider providers.Provider, upstreamPath string) strin
 		baseURL += "/v1"
 	}
 	return baseURL + "/" + strings.TrimLeft(upstreamPath, "/")
-}
-
-func (r *Router) deductCompatCredits(ctx context.Context, userID string, amount float64, remark string) error {
-	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var credits float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, userID).Scan(&credits); err != nil {
-		return err
-	}
-	if credits < amount {
-		return errors.New("用户积分不足")
-	}
-	remaining := credits - amount
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits = ? WHERE id = ?`, remaining, userID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
-		VALUES (?, ?, 'deduct', ?, ?, ?)
-	`, newID(), userID, amount, remaining, remark); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if r.userHub != nil {
-		if user, err := users.NewRepository(r.db).FindByID(context.Background(), userID); err == nil {
-			r.userHub.PublishUser(user)
-		}
-	}
-	return nil
 }
 
 type upstreamHTTPError struct {

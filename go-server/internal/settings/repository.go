@@ -31,9 +31,11 @@ func (r *Repository) Get(ctx context.Context) (Settings, error) {
 		if err := rows.Scan(&key, &value); err != nil {
 			return nil, err
 		}
+		if _, ok := Defaults[key]; !ok {
+			continue
+		}
 		result[key] = parseValue(key, value)
 	}
-	normalizeSettings(result)
 	return result, rows.Err()
 }
 
@@ -90,11 +92,5 @@ func serializeValue(value any) string {
 		return strconv.Itoa(item)
 	default:
 		return ""
-	}
-}
-
-func normalizeSettings(result Settings) {
-	if value, ok := result["incentiveMinUnitPrice"].(float64); ok && value == 0.01 {
-		result["incentiveMinUnitPrice"] = Defaults["incentiveMinUnitPrice"]
 	}
 }

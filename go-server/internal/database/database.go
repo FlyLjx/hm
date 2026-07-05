@@ -7,13 +7,15 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/config"
 )
 
 func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
+	appclock.ConfigureDefault()
 	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
 	if driver == "" {
 		driver = "mysql"
@@ -44,18 +46,24 @@ func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
 func dsnForDriver(driver string, cfg config.DatabaseConfig) (string, error) {
 	switch driver {
 	case "mysql":
-		return fmt.Sprintf(
-			"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4,utf8&loc=Local",
-			cfg.User,
-			cfg.Password,
-			cfg.Host,
-			cfg.Port,
-			cfg.Name,
-		), nil
+		mysqlConfig := mysql.NewConfig()
+		mysqlConfig.User = cfg.User
+		mysqlConfig.Passwd = cfg.Password
+		mysqlConfig.Net = "tcp"
+		mysqlConfig.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+		mysqlConfig.DBName = cfg.Name
+		mysqlConfig.ParseTime = true
+		mysqlConfig.Loc = appclock.ConfigureDefault()
+		mysqlConfig.Params = map[string]string{
+			"charset":   "utf8mb4,utf8",
+			"time_zone": "'" + appclock.DefaultDatabaseTimeZone + "'",
+		}
+		return mysqlConfig.FormatDSN(), nil
 	case "postgres", "pgx":
 		query := url.Values{}
 		query.Set("sslmode", defaultString(cfg.SSLMode, "disable"))
-		query.Set("application_name", "aipi-go")
+		query.Set("application_name", "ai-pai")
+		query.Set("timezone", appclock.DefaultLocationName)
 		return fmt.Sprintf(
 			"postgres://%s:%s@%s:%d/%s?%s",
 			url.QueryEscape(cfg.User),

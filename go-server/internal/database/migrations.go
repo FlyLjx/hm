@@ -2,10 +2,17 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
+)
+
+const (
+	migrationInviteCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	migrationInviteCodeLength   = 8
 )
 
 func EnsureSchema(db *sql.DB) error {
@@ -20,7 +27,40 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL", "size"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "users", "invite_code", "VARCHAR(16) NULL", "email"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "users", "invited_by", "VARCHAR(36) NULL", "invite_code"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "users", "invited_ip", "VARCHAR(64) NULL", "invited_by"); err != nil {
+		return err
+	}
+	if err := backfillUserInviteCodes(ctx, db); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "subscription_plans", "quota_images", "INTEGER NOT NULL DEFAULT 100", "duration_days"); err != nil {
+		return err
+	}
+	if err := backfillSubscriptionPlanQuotas(ctx, db); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup'", "content"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_type", "VARCHAR(20) NOT NULL DEFAULT 'credits'", "reward_credits"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_plan_id", "VARCHAR(36) NULL", "reward_type"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_label", "VARCHAR(120) NULL", "reward_plan_id"); err != nil {
+		return err
+	}
+	if err := dropRemovedFeatureTables(ctx, db); err != nil {
+		return err
+	}
+	if err := deleteRemovedSystemSettings(ctx, db); err != nil {
 		return err
 	}
 	indexes := []struct {
@@ -35,12 +75,172 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_recharge_orders_user_id_created_at", `CREATE INDEX idx_recharge_orders_user_id_created_at ON recharge_orders (user_id, created_at)`},
 		{"idx_credit_logs_user_id_created_at", `CREATE INDEX idx_credit_logs_user_id_created_at ON credit_logs (user_id, created_at)`},
 		{"idx_credit_logs_type_created_at", `CREATE INDEX idx_credit_logs_type_created_at ON credit_logs (type, created_at)`},
+		{"uq_users_invite_code", `CREATE UNIQUE INDEX uq_users_invite_code ON users (invite_code)`},
+		{"idx_users_invited_by", `CREATE INDEX idx_users_invited_by ON users (invited_by)`},
 		{"idx_user_checkins_user_id_checkin_date", `CREATE INDEX idx_user_checkins_user_id_checkin_date ON user_checkins (user_id, checkin_date)`},
 		{"idx_user_invites_invitee_id", `CREATE INDEX idx_user_invites_invitee_id ON user_invites (invitee_id)`},
 		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteRemovedSystemSettings(ctx context.Context, db *sql.DB) error {
+	for _, statement := range []string{
+		`DELETE FROM system_settings WHERE setting_key IN (
+			'creditName',
+			'rechargeEnabled',
+			'rechargeRate',
+			'rechargeMinAmount',
+			'rechargePresets',
+			'checkinEnabled',
+			'checkinRewards',
+			'inviteRewardCredits',
+			'registerRewardCredits',
+			'announcementEnabled',
+			'announcementTitle',
+			'announcementContent',
+			'promptModerationEnabled',
+			'promptModerationAdultKeywords',
+			'promptModerationPoliticalKeywords',
+			'promptModerationRejectMessage',
+			'incentiveEnabled',
+			'incentiveName',
+			'incentiveStartAt',
+			'incentiveEndAt',
+			'incentiveNewUserDays',
+			'incentiveMinUnitPrice',
+			'incentiveRules',
+			'barkEnabled',
+			'barkServerUrl',
+			'barkDeviceKey',
+			'barkTitlePrefix',
+			'barkSound',
+			'barkNotifyGenerationFailure',
+			'barkNotifyTaskTimeout',
+			'barkNotifyProviderFailure'
+		)`,
+	} {
+		if _, err := db.ExecContext(ctx, Rebind(statement)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillSubscriptionPlanQuotas(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, Rebind(`
+		UPDATE subscription_plans
+		SET quota_images = CASE
+			WHEN duration_days <= 1 THEN 20
+			WHEN duration_days <= 31 THEN 300
+			WHEN duration_days <= 92 THEN 1000
+			ELSE 100
+		END
+		WHERE COALESCE(quota_images, 0) <= 0
+			OR (quota_images = 100 AND duration_days <= 31)
+	`))
+	return err
+}
+
+func backfillUserInviteCodes(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, Rebind(`SELECT id, invite_code FROM users ORDER BY created_at ASC, id ASC`))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	seen := map[string]struct{}{}
+	missingUserIDs := []string{}
+	for rows.Next() {
+		var id string
+		var current sql.NullString
+		if err := rows.Scan(&id, &current); err != nil {
+			return err
+		}
+		code := normalizeMigrationInviteCode(current.String)
+		if !current.Valid || code == "" {
+			missingUserIDs = append(missingUserIDs, id)
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			missingUserIDs = append(missingUserIDs, id)
+			continue
+		}
+		if code != strings.TrimSpace(current.String) {
+			missingUserIDs = append(missingUserIDs, id)
+			continue
+		}
+		seen[code] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, userID := range missingUserIDs {
+		code, err := uniqueMigrationInviteCode(seen)
+		if err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, Rebind(`UPDATE users SET invite_code = ? WHERE id = ?`), code, userID); err != nil {
+			return err
+		}
+		seen[code] = struct{}{}
+	}
+	return nil
+}
+
+func normalizeMigrationInviteCode(value string) string {
+	code := strings.ToUpper(strings.TrimSpace(value))
+	if len(code) < 6 || len(code) > 16 {
+		return ""
+	}
+	for _, ch := range code {
+		if !strings.ContainsRune(migrationInviteCodeAlphabet, ch) {
+			return ""
+		}
+	}
+	return code
+}
+
+func uniqueMigrationInviteCode(seen map[string]struct{}) (string, error) {
+	for attempts := 0; attempts < 64; attempts++ {
+		code, err := randomMigrationInviteCode()
+		if err != nil {
+			return "", err
+		}
+		if _, exists := seen[code]; !exists {
+			return code, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique invite code")
+}
+
+func randomMigrationInviteCode() (string, error) {
+	max := big.NewInt(int64(len(migrationInviteCodeAlphabet)))
+	var builder strings.Builder
+	builder.Grow(migrationInviteCodeLength)
+	for builder.Len() < migrationInviteCodeLength {
+		index, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		builder.WriteByte(migrationInviteCodeAlphabet[index.Int64()])
+	}
+	return builder.String(), nil
+}
+
+func dropRemovedFeatureTables(ctx context.Context, db *sql.DB) error {
+	for _, statement := range []string{
+		`DROP TABLE IF EXISTS promotions`,
+		`DROP TABLE IF EXISTS recharge_products`,
+		`DROP TABLE IF EXISTS api_call_logs`,
+	} {
+		if _, err := db.ExecContext(ctx, Rebind(statement)); err != nil {
 			return err
 		}
 	}
@@ -83,6 +283,9 @@ func schemaBootstrapStatements() []string {
 			`CREATE TABLE IF NOT EXISTS users (
 				id VARCHAR(36) PRIMARY KEY,
 				email VARCHAR(120) NOT NULL UNIQUE,
+				invite_code VARCHAR(16) NULL,
+				invited_by VARCHAR(36) NULL,
+				invited_ip VARCHAR(64) NULL,
 				password_hash VARCHAR(255) NOT NULL,
 				role VARCHAR(16) NOT NULL DEFAULT 'user',
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
@@ -184,23 +387,13 @@ func schemaBootstrapStatements() []string {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
-			`CREATE TABLE IF NOT EXISTS recharge_products (
-				id VARCHAR(36) PRIMARY KEY,
-				name VARCHAR(80) NOT NULL,
-				amount NUMERIC(12,2) NOT NULL,
-				credits NUMERIC(12,4) NOT NULL,
-				badge VARCHAR(40) NULL,
-				sort_order INTEGER NOT NULL DEFAULT 0,
-				status VARCHAR(16) NOT NULL DEFAULT 'active',
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
 			`CREATE TABLE IF NOT EXISTS subscription_plans (
 				id VARCHAR(36) PRIMARY KEY,
 				name VARCHAR(80) NOT NULL,
 				description VARCHAR(300) NULL,
 				amount NUMERIC(12,2) NOT NULL,
 				duration_days INTEGER NOT NULL,
+				quota_images INTEGER NOT NULL DEFAULT 100,
 				bonus_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
 				discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0.00,
 				allowed_provider_ids JSONB NULL,
@@ -247,6 +440,9 @@ func schemaBootstrapStatements() []string {
 				inviter_id VARCHAR(36) NOT NULL,
 				invitee_id VARCHAR(36) NOT NULL UNIQUE,
 				reward_credits NUMERIC(12,4) NOT NULL,
+				reward_type VARCHAR(20) NOT NULL DEFAULT 'credits',
+				reward_plan_id VARCHAR(36) NULL,
+				reward_label VARCHAR(120) NULL,
 				invitee_ip VARCHAR(64) NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
@@ -307,18 +503,6 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_user_email_tokens_user_id ON user_email_tokens (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_email_tokens_purpose ON user_email_tokens (purpose)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_email_tokens_expires_at ON user_email_tokens (expires_at)`,
-			`CREATE TABLE IF NOT EXISTS promotions (
-				id VARCHAR(36) PRIMARY KEY,
-				title VARCHAR(120) NOT NULL,
-				content TEXT NOT NULL,
-				badge VARCHAR(40) NULL,
-				action_text VARCHAR(40) NULL,
-				action_url VARCHAR(255) NULL,
-				status VARCHAR(16) NOT NULL DEFAULT 'active',
-				sort_order INTEGER NOT NULL DEFAULT 0,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
 			`CREATE TABLE IF NOT EXISTS user_api_keys (
 				id VARCHAR(36) PRIMARY KEY,
 				user_id VARCHAR(36) NOT NULL,
@@ -333,26 +517,6 @@ func schemaBootstrapStatements() []string {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
-			`CREATE TABLE IF NOT EXISTS api_call_logs (
-				id VARCHAR(36) PRIMARY KEY,
-				direction VARCHAR(16) NOT NULL DEFAULT 'upstream',
-				task_id VARCHAR(36) NULL,
-				user_id VARCHAR(36) NULL,
-				api_key_id VARCHAR(36) NULL,
-				api_key_name VARCHAR(120) NULL,
-				provider_id VARCHAR(36) NULL,
-				provider_type VARCHAR(40) NULL,
-				endpoint VARCHAR(500) NOT NULL,
-				phase VARCHAR(80) NOT NULL,
-				method VARCHAR(12) NOT NULL DEFAULT 'POST',
-				status VARCHAR(16) NOT NULL,
-				status_code INTEGER NULL,
-				duration_ms INTEGER NOT NULL DEFAULT 0,
-				request_summary JSONB NULL,
-				response_summary JSONB NULL,
-				error_message TEXT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
 			`CREATE INDEX IF NOT EXISTS idx_ai_models_status_capability ON ai_models (status, capability)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_created_at ON generation_tasks (created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_id ON generation_tasks (user_id)`,
@@ -366,7 +530,6 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_recharge_orders_user_id ON recharge_orders (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_recharge_orders_out_trade_no ON recharge_orders (out_trade_no)`,
 			`CREATE INDEX IF NOT EXISTS idx_recharge_orders_status ON recharge_orders (status)`,
-			`CREATE INDEX IF NOT EXISTS idx_recharge_products_status_sort ON recharge_products (status, sort_order)`,
 			`CREATE INDEX IF NOT EXISTS idx_subscription_plans_status_sort ON subscription_plans (status, sort_order)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_status ON user_subscriptions (user_id, status, expires_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_subscriptions_plan_id ON user_subscriptions (plan_id)`,
@@ -376,18 +539,8 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_user_invites_ip_created ON user_invites (invitee_ip, created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_announcements_status_sort ON announcements (status, sort_order, created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_announcement_users_user_id ON announcement_users (user_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_promotions_status_sort ON promotions (status, sort_order, created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_api_keys_prefix_status ON user_api_keys (key_prefix, status)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_created_at ON api_call_logs (created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_provider_created ON api_call_logs (provider_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_status_created ON api_call_logs (status, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_task_id ON api_call_logs (task_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_direction_created ON api_call_logs (direction, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_user_created ON api_call_logs (user_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_api_key_created ON api_call_logs (api_key_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_monitor_provider_created ON api_call_logs (direction, phase, provider_id, created_at, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_api_call_logs_monitor_created ON api_call_logs (direction, phase, created_at)`,
 		}
 	}
 	return []string{

@@ -6,6 +6,7 @@ const OPENNANA_API_BASE = 'https://api.opennana.com/api/prompts'
 const OPENNANA_PAGE_SIZE = 24
 const openNanaDetailCache = new Map()
 const promptCategories = ['热门']
+const modelFilters = ['全部模型', 'ChatGPT', 'GPT-Image-2', 'GPT-4o', '通用']
 
 function promptCover(item) {
   return item.thumbnailUrl || item.resultUrl || item.imageUrl || ''
@@ -17,6 +18,11 @@ function promptTitle(item) {
 
 function promptModel(item) {
   return item.modelName || item.model || 'GPT-Image-2'
+}
+
+function promptSummary(item) {
+  const text = String(item.prompt || item.description || '在线精选图片提示词，点击去生成时自动读取完整提示词。').trim()
+  return text.length > 58 ? `${text.slice(0, 58)}...` : text
 }
 
 function normalizeOpenNanaListItem(item) {
@@ -108,12 +114,12 @@ export const PlazaPage = {
     const openNanaTotal = ref(0)
     const openNanaHasMore = ref(false)
     const loadingPromptId = ref('')
-    const modelFilters = ['全部模型', 'ChatGPT', 'GPT-Image-2', 'GPT-4o', '通用']
     const visibleOpenNanaPrompts = computed(() => openNanaPrompts.value.filter((item) => {
       const categoryMatched = activeCategory.value === '热门'
       const modelMatched = activeModel.value === '全部模型' || item.model === activeModel.value
       return categoryMatched && modelMatched
     }))
+    const heroTemplateCount = computed(() => openNanaPrompts.value.length)
     async function loadOpenNanaPrompts({ append = false } = {}) {
       if (openNanaLoading.value) return
       openNanaLoading.value = true
@@ -183,64 +189,104 @@ export const PlazaPage = {
       loadingPromptId,
       visibleOpenNanaPrompts,
       plazaItems,
+      heroTemplateCount,
       goGenerate,
       loadOpenNanaPrompts,
       promptCover,
       promptTitle,
       promptModel,
+      promptSummary,
       resolveOriginalImageUrl,
     }
   },
   template: `
-    <div class="page-stack">
-      <section class="plaza-hero glass-card">
-        <div class="plaza-hero-copy">
-          <span class="eyebrow">Prompt Plaza</span>
-          <h2>提示词广场</h2>
-          <p>挑一张喜欢的参考图，一键带入创作中心继续生成。</p>
-          <div class="plaza-stats">
-            <span><strong>{{ plazaItems.length }}</strong> 个灵感</span>
-            <span><strong>{{ openNanaPrompts.length }}</strong> 条在线精选</span>
+    <div class="plaza-v2-page">
+      <section class="plaza-v2-hero">
+        <div class="plaza-v2-copy">
+          <h2>
+            提示词广场
+            <i class="ti ti-rosette-discount-check"></i>
+          </h2>
+          <p>探索精选提示词，一键应用到创作中，激发无限灵感。</p>
+          <div class="plaza-v2-stats">
+            <article>
+              <span><i class="ti ti-category"></i></span>
+              <strong>{{ openNanaPrompts.length }}</strong>
+              <small>热门提示词</small>
+            </article>
+            <article>
+              <span class="amber"><i class="ti ti-template"></i></span>
+              <strong>{{ heroTemplateCount }}</strong>
+              <small>在线模板</small>
+            </article>
           </div>
           <p v-if="openNanaError" class="plaza-sync-error">{{ openNanaError }}</p>
         </div>
-        <div class="plaza-filter-panel">
-          <small>场景分类</small>
-          <div class="plaza-filter-row">
-            <button v-for="item in promptCategories" :key="item" :class="{active: activeCategory === item}" type="button" @click="activeCategory = item">{{ item }}</button>
-          </div>
-          <small>模型筛选</small>
-          <div class="plaza-filter-row compact">
-            <button v-for="item in modelFilters" :key="item" :class="{active: activeModel === item}" type="button" @click="activeModel = item">{{ item }}</button>
-          </div>
-        </div>
-      </section>
-      <section class="plaza-board">
-        <article v-for="item in plazaItems" :key="item.type + '-' + item.id" class="plaza-card">
-          <button class="plaza-cover plain-btn" type="button" @click="$emit('preview', { url: resolveOriginalImageUrl(item.previewUrl || promptCover(item)), title: promptTitle(item) })">
-            <img v-if="promptCover(item)" :src="promptCover(item)" :alt="promptTitle(item)" />
-            <span class="plaza-badge">{{ item.category }}</span>
-          </button>
-          <div class="plaza-card-body">
-            <div class="plaza-card-head">
-              <strong>{{ promptTitle(item) }}</strong>
-              <small>{{ promptModel(item) }}</small>
+        <aside class="plaza-v2-filter-panel">
+          <div class="plaza-v2-filter-block">
+            <small>场景分类</small>
+            <div class="plaza-v2-filter-row">
+              <button v-for="item in promptCategories" :key="item" :class="{active: activeCategory === item}" type="button" @click="activeCategory = item">
+                <i class="ti ti-flame"></i>
+                {{ item }}
+              </button>
             </div>
-            <p>{{ item.prompt }}</p>
-            <div class="tag-row">
+          </div>
+          <div class="plaza-v2-filter-block">
+            <small>模型筛选</small>
+            <div class="plaza-v2-filter-row compact">
+              <button v-for="item in modelFilters" :key="item" :class="{active: activeModel === item}" type="button" @click="activeModel = item">{{ item }}</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="plaza-v2-section-head">
+        <h3>
+          <i class="ti ti-rosette-discount-check"></i>
+          热门推荐
+        </h3>
+        <button type="button" @click="openNanaHasMore ? loadOpenNanaPrompts({ append: true }) : null">
+          查看全部
+          <i class="ti ti-chevron-right"></i>
+        </button>
+      </section>
+
+      <section v-if="plazaItems.length" class="plaza-v2-board">
+        <article v-for="item in plazaItems" :key="item.type + '-' + item.id" class="plaza-v2-card">
+          <button class="plaza-v2-cover plain-btn" type="button" @click="$emit('preview', { url: resolveOriginalImageUrl(item.previewUrl || promptCover(item)), title: promptTitle(item) })">
+            <img v-if="promptCover(item)" :src="promptCover(item)" :alt="promptTitle(item)" />
+            <span v-else class="plaza-v2-cover-empty"><i class="ti ti-photo-off"></i>图片暂不可用</span>
+            <span class="plaza-v2-badge"><i class="ti ti-flame"></i>{{ item.category }}</span>
+          </button>
+          <div class="plaza-v2-card-body">
+            <strong>{{ promptTitle(item) }}</strong>
+            <p>{{ promptSummary(item) }}</p>
+            <div class="plaza-v2-tags">
               <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
             </div>
           </div>
-          <div class="plaza-actions">
-            <button class="result-action primary" type="button" :disabled="loadingPromptId === item.id" @click="goGenerate(item)">
+          <footer class="plaza-v2-actions">
+            <button type="button" :disabled="loadingPromptId === item.id" @click="goGenerate(item)">
               <i class="ti ti-wand"></i>
               {{ loadingPromptId === item.id ? '读取中' : '去生成' }}
             </button>
-          </div>
+          </footer>
         </article>
       </section>
-      <div v-if="openNanaHasMore || openNanaLoading" class="plaza-load-more">
-        <button class="result-action" type="button" :disabled="openNanaLoading" @click="loadOpenNanaPrompts({ append: true })">
+
+      <section v-else class="plaza-v2-empty">
+        <i class="ti ti-inbox"></i>
+        <strong>{{ openNanaLoading ? '正在加载提示词' : '暂无提示词' }}</strong>
+        <p>{{ openNanaError || '当前筛选下暂无可展示内容。' }}</p>
+        <button class="result-action" type="button" :disabled="openNanaLoading" @click="loadOpenNanaPrompts()">
+          <i class="ti ti-refresh"></i>
+          重新加载
+        </button>
+      </section>
+
+      <div v-if="openNanaHasMore || openNanaLoading" class="plaza-v2-load-more">
+        <button type="button" :disabled="openNanaLoading" @click="loadOpenNanaPrompts({ append: true })">
           <i :class="openNanaLoading ? 'ti ti-loader-2' : 'ti ti-plus'"></i>
           {{ openNanaLoading ? '正在加载在线精选' : '加载更多精选提示词' }}
         </button>

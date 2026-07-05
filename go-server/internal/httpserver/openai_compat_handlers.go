@@ -66,34 +66,6 @@ func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (r *Router) compatBalance(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	auth, err := r.authenticateAPIKey(req)
-	if err != nil {
-		writeCompatAuthError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"object":   "balance",
-		"balance":  auth.User.Credits,
-		"credits":  auth.User.Credits,
-		"currency": "credits",
-		"user": map[string]any{
-			"id":    auth.User.ID,
-			"email": auth.User.Email,
-		},
-		"api_key": map[string]any{
-			"id":     auth.APIKey.ID,
-			"name":   auth.APIKey.Name,
-			"prefix": auth.APIKey.KeyPrefix,
-			"status": auth.APIKey.Status,
-		},
-	})
-}
-
 func (r *Router) compatImageGenerations(w http.ResponseWriter, req *http.Request) {
 	r.compatImageRequest(w, req, false)
 }
@@ -147,21 +119,20 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "当前模型未开放 "+strings.ToUpper(sizeTier)+" 清晰度", "invalid_request_error")
 		return
 	}
-	unitPrice, _, err := r.imageUnitPrice(ctx, auth.User.ID, *model, sizeTier)
-	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
-		return
-	}
-	price := unitPrice * float64(input.N)
-	if auth.User.Credits < price {
-		writeOpenAIError(w, http.StatusPaymentRequired, "用户积分不足", "insufficient_quota")
+	if err := r.requireGenerationQuota(ctx, auth.User.ID, *model, input.N); err != nil {
+		status := http.StatusInternalServerError
+		var appErr appError
+		if errors.As(err, &appErr) {
+			status = appErr.status
+		}
+		writeOpenAIError(w, status, err.Error(), "insufficient_quota")
 		return
 	}
 	outputFormat := normalizeOutputFormat(input.OutputFormat)
 	transparent := strings.EqualFold(input.Background, "transparent") || outputFormat == "png"
-	referencePayload := compatReferencePayload(input.ReferenceURLs)
+	referencePayload := compatReferencePayload(req, input.ReferenceURLs)
 	if isEdit {
-		referencePayload = compatEditReferencePayload(input)
+		referencePayload = compatEditReferencePayload(req, input)
 		if referencePayload == nil {
 			writeOpenAIError(w, http.StatusBadRequest, "图片编辑缺少参考图", "invalid_request_error")
 			return
@@ -183,7 +154,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		UserIP:                requestIP(req),
 		CostCredits:           0,
 		ModelCostCredits:      0,
-		RemainingCredits:      auth.User.Credits,
+		RemainingCredits:      0,
 		DurationSeconds:       0,
 		Status:                tasks.StatusQueued,
 		PublicStatus:          "private",
@@ -409,11 +380,11 @@ func normalizeOutputFormat(value string) string {
 	return "jpeg"
 }
 
-func compatReferencePayload(urls []string) *string {
+func compatReferencePayload(req *http.Request, urls []string) *string {
 	cleaned := []string{}
 	for _, url := range urls {
 		if strings.TrimSpace(url) != "" {
-			cleaned = append(cleaned, strings.TrimSpace(url))
+			cleaned = appendUniqueReferencePayload(cleaned, absoluteURL(req, strings.TrimSpace(url)))
 		}
 	}
 	if len(cleaned) == 0 {
@@ -423,7 +394,7 @@ func compatReferencePayload(urls []string) *string {
 	return &value
 }
 
-func compatEditReferencePayload(input compatImageInput) *string {
+func compatEditReferencePayload(req *http.Request, input compatImageInput) *string {
 	items := extractCompatImageURLs(input.ImageURL)
 	if len(items) == 0 {
 		items = extractCompatImageURLs(input.Image)
@@ -436,11 +407,11 @@ func compatEditReferencePayload(input compatImageInput) *string {
 	for _, item := range items {
 		item = strings.TrimSpace(item)
 		if item != "" {
-			cleaned = append(cleaned, item)
+			cleaned = appendUniqueReferencePayload(cleaned, absoluteURL(req, item))
 		}
 	}
 	if strings.TrimSpace(mask) != "" {
-		cleaned = append(cleaned, "mask:"+strings.TrimSpace(mask))
+		cleaned = appendUniqueReferencePayload(cleaned, "mask:"+absoluteURL(req, strings.TrimSpace(mask)))
 	}
 	if len(cleaned) == 0 {
 		return nil

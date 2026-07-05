@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,170 +33,6 @@ func (r *Router) dashboard(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) creditLogs(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	repo := operations.NewRepository(r.db)
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	if req.Method == http.MethodGet {
-		items, total, err := repo.CreditLogs(ctx, operationPage(req))
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, paginated(items, total, req))
-		return
-	}
-	writeMethodNotAllowed(w)
-}
-
-func (r *Router) creditLogStats(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	data, err := operations.NewRepository(r.db).CreditStats(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) creditLogByID(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodDelete {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.TrimPrefix(req.URL.Path, "/api/credit-logs/")
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	deleted, err := operations.NewRepository(r.db).DeleteCreditLog(ctx, id)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
-}
-
-func (r *Router) financeCosts(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	data, err := operations.NewRepository(r.db).FinanceCosts(ctx, queryInt(req, "days", 30))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) shopProducts(w http.ResponseWriter, req *http.Request) {
-	r.productCollection(w, req, true)
-}
-
-func (r *Router) adminShopProducts(w http.ResponseWriter, req *http.Request) {
-	r.productCollection(w, req, false)
-}
-
-func (r *Router) productCollection(w http.ResponseWriter, req *http.Request, public bool) {
-	if !public {
-		if _, err := r.requireAdmin(req); err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	repo := operations.NewRepository(r.db)
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	switch req.Method {
-	case http.MethodGet:
-		items, err := repo.Products(ctx, public)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if public {
-			w.Header().Set("Cache-Control", "public, max-age=30")
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": items})
-	case http.MethodPost:
-		if public {
-			writeMethodNotAllowed(w)
-			return
-		}
-		var input operations.RechargeProduct
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		input.ID = newID()
-		item, err := repo.SaveProduct(ctx, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"data": item})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) shopProductByID(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.TrimPrefix(req.URL.Path, "/api/shop/recharge-products/")
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	switch req.Method {
-	case http.MethodPatch:
-		var input operations.RechargeProduct
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		input.ID = id
-		item, err := repo.SaveProduct(ctx, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": item})
-	case http.MethodDelete:
-		deleted, err := repo.DeleteProduct(ctx, id)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
-	default:
-		writeMethodNotAllowed(w)
-	}
 }
 
 func (r *Router) plans(w http.ResponseWriter, req *http.Request) {
@@ -298,191 +133,12 @@ func (r *Router) currentSubscription(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	data, err := operations.NewRepository(r.db).CurrentSubscription(ctx, userID)
+	data, err := r.currentSubscriptionEntitlement(ctx, userID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) redeemCodes(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path == "/api/redeem-codes/redeem" {
-		r.redeemCode(w, req)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	switch req.Method {
-	case http.MethodGet:
-		items, total, err := repo.RedeemCodes(ctx, operationPage(req))
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, paginated(items, total, req))
-	case http.MethodPost:
-		var input operations.RedeemCode
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		input.ID = newID()
-		item, err := repo.SaveRedeemCode(ctx, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"data": item})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) redeemCodeByID(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.TrimPrefix(req.URL.Path, "/api/redeem-codes/")
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	switch req.Method {
-	case http.MethodPatch:
-		var input operations.RedeemCode
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		input.ID = id
-		item, err := repo.SaveRedeemCode(ctx, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": item})
-	case http.MethodDelete:
-		deleted, err := repo.DeleteRedeemCode(ctx, id)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) redeemCode(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	var input struct {
-		UserID string `json:"userId"`
-		Code   string `json:"code"`
-	}
-	if err := decodeCompatJSON(req, &input); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	credits, balance, err := operations.NewRepository(r.db).Redeem(ctx, strings.TrimSpace(input.Code), strings.TrimSpace(input.UserID), requestIP(req))
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, newAppError(http.StatusBadRequest, "兑换码无效或已过期"))
-		return
-	}
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if user, err := users.NewRepository(r.db).FindByID(context.Background(), strings.TrimSpace(input.UserID)); err == nil && r.userHub != nil {
-		r.userHub.PublishUser(user)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"credits": credits, "balanceAfter": balance}})
-}
-
-func (r *Router) checkins(w http.ResponseWriter, req *http.Request) {
-	repo := operations.NewRepository(r.db)
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	switch req.Method {
-	case http.MethodGet:
-		if _, err := r.requireAdmin(req); err != nil {
-			writeError(w, err)
-			return
-		}
-		items, total, err := repo.Checkins(ctx, operationPage(req))
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, paginated(items, total, req))
-	case http.MethodPost:
-		var input struct {
-			UserID string `json:"userId"`
-		}
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		settingsData, _ := settings.NewRepository(r.db).Get(ctx)
-		reward := firstReward(fmt.Sprint(settingsData["checkinRewards"]))
-		data, err := repo.Checkin(ctx, strings.TrimSpace(input.UserID), reward, requestIP(req))
-		if err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "今日已签到或用户不存在"))
-			return
-		}
-		if user, err := users.NewRepository(r.db).FindByID(context.Background(), strings.TrimSpace(input.UserID)); err == nil && r.userHub != nil {
-			r.userHub.PublishUser(user)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": data})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) checkinStatus(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	userID := strings.TrimSpace(req.URL.Query().Get("userId"))
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	data, err := operations.NewRepository(r.db).CheckinStatus(ctx, userID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) checkinByID(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodDelete {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.TrimPrefix(req.URL.Path, "/api/checkins/")
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	deleted, err := operations.NewRepository(r.db).DeleteCheckin(ctx, id)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
 }
 
 func (r *Router) invites(w http.ResponseWriter, req *http.Request) {
@@ -513,11 +169,28 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	reward, _ := values["inviteRewardCredits"].(float64)
-	data, err := operations.NewRepository(r.db).InviteSummary(ctx, userID, reward)
+	data, err := operations.NewRepository(r.db).InviteSummary(ctx, userID)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if userID != "" {
+		userRepo := users.NewRepository(r.db)
+		if inviteCode, err := userRepo.EnsureInviteCode(ctx, userID); err == nil {
+			data["inviteCode"] = inviteCode
+		}
+	}
+	data["rewardType"] = "subscription"
+	planID := strings.TrimSpace(anyString(values["inviteRewardPlanId"]))
+	data["rewardPlanId"] = planID
+	if planID != "" {
+		if plan, err := operations.NewRepository(r.db).FindPlan(ctx, planID); err == nil && plan != nil {
+			data["rewardPlanName"] = plan.Name
+			data["rewardText"] = plan.Name
+		}
+	}
+	if data["rewardText"] == nil {
+		data["rewardText"] = "订阅权益"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
@@ -534,12 +207,15 @@ func (r *Router) inviteByID(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimPrefix(req.URL.Path, "/api/invites/")
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	deleted, err := operations.NewRepository(r.db).DeleteInvite(ctx, id)
+	result, err := operations.NewRepository(r.db).DeleteInvite(ctx, id)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
+	if result != nil && result.Deleted && result.InviterID != "" {
+		r.publishCurrentUser(context.Background(), result.InviterID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
@@ -549,10 +225,6 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 	}
 	var input struct {
 		UserID             string  `json:"userId"`
-		Amount             float64 `json:"amount"`
-		Credits            float64 `json:"credits"`
-		OrderType          string  `json:"orderType"`
-		ProductID          string  `json:"productId"`
 		SubscriptionPlanID *string `json:"subscriptionPlanId"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
@@ -571,10 +243,6 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if !anyBool(values["rechargeEnabled"]) {
-		writeError(w, newAppError(http.StatusForbidden, "充值暂未开放"))
-		return
-	}
 	user, err := users.NewRepository(r.db).FindByID(ctx, input.UserID)
 	if errors.Is(err, sql.ErrNoRows) || user == nil || user.Status != "active" {
 		writeError(w, newAppError(http.StatusNotFound, "用户不存在或已被禁用"))
@@ -584,52 +252,26 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	amount := input.Amount
-	credits := input.Credits
-	subject := anyString(values["siteName"]) + "自定义充值"
-	orderType := defaultString(input.OrderType, "recharge")
-	var subscriptionPlanID *string
-	repo := operations.NewRepository(r.db)
-	if input.SubscriptionPlanID != nil && strings.TrimSpace(*input.SubscriptionPlanID) != "" {
-		planID := strings.TrimSpace(*input.SubscriptionPlanID)
-		plan, err := repo.FindPlan(ctx, planID)
-		if errors.Is(err, sql.ErrNoRows) || plan == nil || plan.Status != "active" {
-			writeError(w, newAppError(http.StatusNotFound, "订阅套餐不存在或已下架"))
-			return
-		}
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		amount = plan.Amount
-		credits = plan.BonusCredits
-		subject = anyString(values["siteName"]) + plan.Name
-		orderType = "subscription"
-		subscriptionPlanID = &planID
-	} else if strings.TrimSpace(input.ProductID) != "" {
-		product, err := repo.FindProduct(ctx, strings.TrimSpace(input.ProductID))
-		if errors.Is(err, sql.ErrNoRows) || product == nil || product.Status != "active" {
-			writeError(w, newAppError(http.StatusNotFound, "充值套餐不存在或已下架"))
-			return
-		}
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		amount = product.Amount
-		credits = product.Credits
-		subject = anyString(values["siteName"]) + product.Name
-		orderType = "recharge"
-	} else {
-		minAmount := anyFloat(values["rechargeMinAmount"], 1)
-		if amount < minAmount {
-			writeError(w, newAppError(http.StatusBadRequest, fmt.Sprintf("自定义充值最低 %.2f 元", minAmount)))
-			return
-		}
-		if credits == 0 {
-			credits = amount * anyFloat(values["rechargeRate"], 1)
-		}
+	if input.SubscriptionPlanID == nil || strings.TrimSpace(*input.SubscriptionPlanID) == "" {
+		writeError(w, newAppError(http.StatusBadRequest, "请选择订阅套餐"))
+		return
 	}
+	repo := operations.NewRepository(r.db)
+	planID := strings.TrimSpace(*input.SubscriptionPlanID)
+	plan, err := repo.FindPlan(ctx, planID)
+	if errors.Is(err, sql.ErrNoRows) || plan == nil || plan.Status != "active" {
+		writeError(w, newAppError(http.StatusNotFound, "订阅套餐不存在或已下架"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	amount := plan.Amount
+	credits := float64(0)
+	subject := anyString(values["siteName"]) + plan.Name
+	orderType := "subscription"
+	subscriptionPlanID := &planID
 	orderID := newID()
 	outTradeNo := "AIPI" + time.Now().Format("20060102150405") + strings.ToUpper(strings.ReplaceAll(orderID[:8], "-", ""))
 	payment, err := createAlipayPrecreateOrder(ctx, alipaySettingsFromMap(values), outTradeNo, amount, subject, requestOrigin(req))
@@ -714,7 +356,7 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 	}
 	order, changed, err := operations.NewRepository(r.db).CompleteOrder(ctx, outTradeNo, tradeNo)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, newAppError(http.StatusNotFound, "充值订单不存在"))
+		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))
 		return
 	}
 	if err != nil {
@@ -722,9 +364,7 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if changed {
-		if user, err := users.NewRepository(r.db).FindByID(context.Background(), order.UserID); err == nil && r.userHub != nil {
-			r.userHub.PublishUser(user)
-		}
+		r.publishCurrentUser(context.Background(), order.UserID)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("success"))
@@ -779,7 +419,7 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 	repo := operations.NewRepository(r.db)
 	order, err := repo.FindOrder(ctx, strings.Trim(id, "/"))
 	if errors.Is(err, sql.ErrNoRows) || order == nil {
-		writeError(w, newAppError(http.StatusNotFound, "充值订单不存在"))
+		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))
 		return
 	}
 	if err != nil {
@@ -787,7 +427,7 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		return
 	}
 	if strings.TrimSpace(input.UserID) != "" && strings.TrimSpace(input.UserID) != order.UserID {
-		writeError(w, newAppError(http.StatusNotFound, "充值订单不存在"))
+		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))
 		return
 	}
 	if order.Status != "pending" {
@@ -814,9 +454,7 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		return
 	}
 	if changed {
-		if user, err := users.NewRepository(r.db).FindByID(context.Background(), paidOrder.UserID); err == nil && r.userHub != nil {
-			r.userHub.PublishUser(user)
-		}
+		r.publishCurrentUser(context.Background(), paidOrder.UserID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": paidOrder})
 }
@@ -839,14 +477,4 @@ func paginated(items any, total int, req *http.Request) map[string]any {
 			"total": total, "page": page, "pageSize": pageSize,
 		},
 	}
-}
-
-func firstReward(value string) float64 {
-	for _, part := range strings.Split(value, ",") {
-		n, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return 0.1
 }

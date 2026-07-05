@@ -20,10 +20,10 @@ type SettingsGetter interface {
 }
 
 type Plan struct {
-	Enabled         bool    `json:"enabled"`
-	Name            string  `json:"name"`
-	StartAt         string  `json:"startAt"`
-	EndAt           string  `json:"endAt"`
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+	StartAt string `json:"startAt"`
+	EndAt   string `json:"endAt"`
 	// NewUserDays is kept for compatibility with old settings, but activity pricing is site-wide.
 	NewUserDays     int     `json:"newUserDays"`
 	MinUnitPrice    float64 `json:"minUnitPrice"`
@@ -102,6 +102,9 @@ func ApplyUnitPrice(unitPrice float64, incentive Result, subscriptionDiscountPer
 	}
 	if bestDiscount <= 0 {
 		return round4(price), 0, ""
+	}
+	if bestDiscount >= 100 {
+		return 0, 100, source
 	}
 	minUnit := incentive.MinUnitPrice
 	if minUnit <= 0 {
@@ -250,8 +253,8 @@ func normalizeDiscount(value float64) float64 {
 	if value < 0 {
 		return 0
 	}
-	if value > 99 {
-		return 99
+	if value > 100 {
+		return 100
 	}
 	return value
 }

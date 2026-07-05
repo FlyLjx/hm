@@ -6,18 +6,18 @@ const { message, Modal } = antd
 
 const markdownTemplates = [
   {
-    key: 'activity',
-    label: '活动通知',
-    title: '限时活动通知',
-    content: `### 限时活动通知
+    key: 'notice',
+    label: '普通公告',
+    title: '平台公告',
+    content: `### 平台公告
 
-**活动时间：** 即日起 - 结束时间待定
+这里填写需要同步给用户的重要内容。
 
-- 活动期间完成充值，可获得额外权益
-- 会员用户可优先体验新模型
-- 如遇到账问题，请联系客服处理
+- 功能调整或体验优化
+- 服务维护或异常说明
+- 账号、订阅、支付相关提醒
 
-> 活动名额有限，具体规则以页面展示为准。`,
+如遇到问题，请通过客服入口联系管理员处理。`,
   },
   {
     key: 'maintenance',
@@ -33,7 +33,7 @@ const markdownTemplates = [
 
 - 页面短暂无法访问
 - 任务状态同步延迟
-- 充值到账轻微延迟
+- 支付状态同步延迟
 
 维护完成后服务会自动恢复，感谢理解。`,
   },
@@ -52,20 +52,20 @@ const markdownTemplates = [
 如果你在使用中遇到异常，可以联系管理员反馈。`,
   },
   {
-    key: 'recharge',
-    label: '充值优惠',
-    title: '充值优惠活动',
-    content: `### 充值优惠活动
+    key: 'subscription',
+    label: '订阅提醒',
+    title: '订阅服务提醒',
+    content: `### 订阅服务提醒
 
-活动期间充值可享受更多创作权益。
+平台订阅服务已开放，订阅后可享受对应套餐权益。
 
-| 充值档位 | 活动权益 |
+| 套餐类型 | 适用场景 |
 | --- | --- |
-| 30 元 | 适合日常体验 |
-| 50 元 | 推荐创作用户 |
-| 100 元 | 高频用户更划算 |
+| 月度订阅 | 日常创作 |
+| 季度订阅 | 稳定使用 |
+| 年度订阅 | 高频创作 |
 
-点击充值后，支付完成会自动到账。`,
+具体权益以订阅页面展示为准。`,
   },
 ]
 
@@ -117,8 +117,6 @@ export const CrudPage = {
     const pagination = ref(null)
     const editing = ref(undefined)
     const form = reactive({})
-    const aiDrafts = reactive({})
-    const aiGenerating = reactive({})
 
     const filteredRows = computed(() => {
       if (props.paginated) return rows.value
@@ -185,11 +183,6 @@ export const CrudPage = {
 
     function closeForm() {
       editing.value = undefined
-    }
-
-    function aiState(field) {
-      if (!aiDrafts[field.key]) aiDrafts[field.key] = { prompt: '' }
-      return aiDrafts[field.key]
     }
 
     function resetFilterState() {
@@ -345,34 +338,6 @@ export const CrudPage = {
       form[field.key] = template.content
     }
 
-    async function generateFieldDraft(field) {
-      if (typeof field.aiGenerate !== 'function') return
-      const state = aiState(field)
-      const prompt = String(state.prompt || '').trim()
-      if (!prompt) {
-        message.warning('先输入公告主题或要点')
-        return
-      }
-      aiGenerating[field.key] = true
-      try {
-        const response = await field.aiGenerate({
-          prompt,
-          title: form.title || '',
-          content: form[field.key] || '',
-          displayMode: form.displayMode || '',
-          targetType: form.targetType || '',
-        })
-        const data = response.data || {}
-        if (data.title && 'title' in form) form.title = data.title
-        if (data.content) form[field.key] = data.content
-        message.success('AI 已生成公告草稿')
-      } catch (error) {
-        message.error(error instanceof Error ? error.message : 'AI 生成失败')
-      } finally {
-        aiGenerating[field.key] = false
-      }
-    }
-
     async function copyCell(record, column) {
       const source = column?.source || {}
       const value = source.render ? source.render(record) : read(record, source.key)
@@ -445,9 +410,6 @@ export const CrudPage = {
       handleTextareaTab,
       insertMarkdown,
       applyMarkdownTemplate,
-      aiState,
-      aiGenerating,
-      generateFieldDraft,
       markdownTemplates,
       copyCell,
     }
@@ -545,19 +507,6 @@ export const CrudPage = {
         <div class="form-grid drawer-form-grid">
           <label v-for="field in dialogFields" :key="field.key" :class="{ full: field.type === 'textarea' || field.full }">
             <div class="muted" style="margin-bottom:6px">{{ field.label }}</div>
-            <div v-if="field.aiGenerate" class="admin-ai-draft">
-              <div class="admin-ai-draft-head">
-                <span><i class="ti ti-sparkles"></i> AI 代写公告</span>
-                <small>输入主题后自动生成标题和 Markdown 内容</small>
-              </div>
-              <div class="admin-ai-draft-row">
-                <a-input v-model:value="aiState(field).prompt" placeholder="例如：端午活动通知，强调全站冲档优惠、邀请好友一起参与" @press-enter="generateFieldDraft(field)" />
-                <a-button type="primary" :loading="aiGenerating[field.key]" @click="generateFieldDraft(field)">
-                  <i class="ti ti-wand"></i>
-                  生成
-                </a-button>
-              </div>
-            </div>
             <div v-if="field.type === 'textarea' && field.preview === 'markdown'" class="admin-markdown-editor-grid">
               <div class="admin-markdown-editor">
                 <div class="admin-markdown-toolbar">

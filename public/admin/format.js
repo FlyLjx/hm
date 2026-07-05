@@ -56,7 +56,7 @@ export const statusMaps = {
     failed: { label: '失败', color: 'red' },
   },
   orderType: {
-    recharge: { label: '充值', color: 'blue' },
+    recharge: { label: '订阅', color: 'purple' },
     subscription: { label: '订阅', color: 'purple' },
   },
   subscription: {
@@ -67,30 +67,8 @@ export const statusMaps = {
     active: { label: '启用', color: 'green' },
     disabled: { label: '禁用', color: 'red' },
   },
-  redeem: {
-    active: { label: '可用', color: 'green' },
-    used: { label: '已兑换', color: 'default' },
-    disabled: { label: '禁用', color: 'red' },
-  },
 }
 
 export function statusItem(map, value) {
   return statusMaps[map]?.[String(value)] || { label: text(value), color: 'default' }
-}
-
-export function creditLogType(value) {
-  const map = { recharge: '充值', deduct: '扣减', refund: '退回', adjust: '调整', admin_recharge: '后台充值', admin_deduct: '后台扣减' }
-  return map[String(value)] || text(value)
-}
-
-export function creditLogTypeItem(value) {
-  const map = {
-    recharge: { label: '充值', color: 'green' },
-    deduct: { label: '扣减', color: 'red' },
-    refund: { label: '退回', color: 'blue' },
-    adjust: { label: '调整', color: 'gold' },
-    admin_recharge: { label: '后台充值', color: 'cyan' },
-    admin_deduct: { label: '后台扣减', color: 'orange' },
-  }
-  return map[String(value)] || { label: text(value), color: 'default' }
 }

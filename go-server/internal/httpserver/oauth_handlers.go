@@ -202,7 +202,7 @@ func (r *Router) oauthMe(w http.ResponseWriter, req *http.Request) {
 		plain = *selected.KeyPlain
 	}
 	if plain == "" {
-		writeError(w, newAppError(http.StatusConflict, "当前 API Key 缺少明文密钥，请在用户中心重新生成后再授权画布"))
+		writeError(w, newAppError(http.StatusConflict, "当前授权配置不可用，请联系管理员处理"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{

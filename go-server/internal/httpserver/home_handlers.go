@@ -8,7 +8,6 @@ import (
 
 	"aipi-go/internal/content"
 	"aipi-go/internal/operations"
-	"aipi-go/internal/pricing"
 	"aipi-go/internal/settings"
 )
 
@@ -29,22 +28,12 @@ func (r *Router) homeBootstrap(w http.ResponseWriter, req *http.Request) {
 	contentRepo := content.NewRepository(r.db)
 	operationRepo := operations.NewRepository(r.db)
 
-	announcements, err := contentRepo.FindAnnouncements(ctx, true, userID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	promotions, err := contentRepo.FindPromotions(ctx, true)
+	announcements, err := contentRepo.FindAnnouncements(ctx, true, userID, false)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	plans, err := operationRepo.Plans(ctx, true)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	activity, err := pricing.Evaluate(ctx, r.db, values, userID, time.Now())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -58,8 +47,6 @@ func (r *Router) homeBootstrap(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 		"settings":          settings.Public(values),
 		"announcements":     announcements,
-		"promotions":        promotions,
 		"subscriptionPlans": plans,
-		"activityStatus":    activity,
 	}})
 }

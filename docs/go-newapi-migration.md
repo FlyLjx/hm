@@ -1,6 +1,6 @@
 # Go + NewAPI-Style UI Migration Plan
 
-The target is not a visual-only rewrite. The system should keep existing AI-PAI
+The target is not a visual-only rewrite. The system should keep existing ai-pai
 features while moving the backend runtime to Go and reshaping the admin UI toward
 a cleaner NewAPI-style operations console.
 
@@ -94,7 +94,7 @@ The UI can borrow NewAPI's operational-console feeling:
 - Logs split by category tags instead of separate heavy pages.
 - Inline status badges, compact actions, and side panels for detail/edit.
 
-Do not copy NewAPI data assumptions directly. AI-PAI has image generation tasks,
+Do not copy NewAPI data assumptions directly. ai-pai has image generation tasks,
 credits, public plaza, OAuth, prompt library, and user-facing pages that are
 different from a generic API gateway.
 
@@ -114,7 +114,7 @@ release/*                package output
 After migration:
 
 ```text
-aipi-go.exe              serves API + static frontend
+ai-pai.exe              serves API + static frontend
 public/*                 static UI
 logs/*                   runtime logs
 .env                     same deployment config

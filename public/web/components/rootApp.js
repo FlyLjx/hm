@@ -1,8 +1,8 @@
 import { clientApi } from '../common/api.js'
 import { localReceipts, receiptKey, saveReceipt } from '../common/announcementReceipts.js'
-import { formatAmount, formatCurrency, formatDate } from '../common/format.js'
+import { formatCurrency, formatDate } from '../common/format.js'
 import { renderMarkdown } from '../common/markdown.js'
-import { pageFromHash } from '../common/navigation.js'
+import { pageFromHash } from '../common/navigation.js?v=20260705-ai-pai-brand-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260617-01'
+const WEB_ASSET_VERSION = '20260705-ai-pai-brand-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -38,77 +38,65 @@ function lazyPage(loader, exportName) {
 }
 
 const HomePage = lazyPage(() => import(`../pages/home.js?v=${WEB_ASSET_VERSION}`), 'HomePage')
+const AnnouncementsPage = lazyPage(() => import(`../pages/announcements.js?v=${WEB_ASSET_VERSION}`), 'AnnouncementsPage')
 const PlazaPage = lazyPage(() => import(`../pages/plaza.js?v=${WEB_ASSET_VERSION}`), 'PlazaPage')
 const ChatPage = lazyPage(() => import(`../pages/chat.js?v=${WEB_ASSET_VERSION}`), 'ChatPage')
-const ApiDocsPage = lazyPage(() => import(`../pages/apiDocs.js?v=${WEB_ASSET_VERSION}`), 'ApiDocsPage')
 const HistoryPage = lazyPage(() => import(`../pages/history.js?v=${WEB_ASSET_VERSION}`), 'HistoryPage')
 const ProfilePage = lazyPage(() => import(`../pages/profile.js?v=${WEB_ASSET_VERSION}`), 'ProfilePage')
-const ReversePromptPage = lazyPage(() => import(`../pages/reversePrompt.js?v=${WEB_ASSET_VERSION}`), 'ReversePromptPage')
-const StatusPage = lazyPage(() => import(`../pages/status.js?v=${WEB_ASSET_VERSION}`), 'StatusPage')
-const TextChatPage = lazyPage(() => import(`../pages/textChat.js?v=${WEB_ASSET_VERSION}`), 'TextChatPage')
+const InvitePage = lazyPage(() => import(`../pages/invite.js?v=${WEB_ASSET_VERSION}`), 'InvitePage')
+
+function displayBrandName(value, fallback = 'ai-pai') {
+  const text = String(value || fallback).trim() || fallback
+  return text.replace(/AIπ/g, 'ai-pai').replace(/AI PAI/g, 'ai-pai')
+}
 
 export const RootApp = {
   components: {
     HomePage,
+    AnnouncementsPage,
     PlazaPage,
     ChatPage,
-    ApiDocsPage,
     HistoryPage,
     ProfilePage,
-    ReversePromptPage,
-    StatusPage,
-    TextChatPage,
+    InvitePage,
   },
   setup() {
     const activePage = ref(pageFromHash())
     const cachedUser = getCurrentUser()
-    const currentUser = ref(cachedUser ? { ...cachedUser, credits: null } : null)
+    const currentUser = ref(cachedUser ? { ...cachedUser } : null)
     const settings = ref(null)
-    const siteName = ref('AIπ')
-    const logoText = ref('AIπ')
-    const creditName = ref('积分')
+    const siteName = ref('ai-pai')
+    const logoText = ref('ai-pai')
     const loginOpen = ref(false)
     const authMode = ref('login')
-    const rechargeOpen = ref(false)
-    const rechargePanelMode = ref('credits')
     const subscriptionOpen = ref(false)
-    const redeemOpen = ref(false)
-    const checkinOpen = ref(false)
-    const inviteOpen = ref(false)
+    const subscriptionPaymentOpen = ref(false)
     const supportOpen = ref(false)
     const previewImage = ref(null)
     const announcements = ref([])
-    const promotions = ref([])
-    const activityStatus = ref(null)
     const subscriptionPlans = ref([])
     const announcementSigning = ref(false)
     const userRefreshing = ref(false)
     const userSynced = ref(!currentUser.value?.id)
     const accountMenuOpen = ref(false)
     const mobileMenuOpen = ref(false)
-    const navMoreOpen = ref(false)
     const oauthClient = ref(null)
     const oauthLoading = ref(false)
     const oauthError = ref('')
 
     const authForm = reactive({ email: '', password: '', newPassword: '', token: '' })
-    const rechargeState = reactive({ products: [], selectedProductId: '', mode: 'product', customAmount: '', order: null, qrImage: '', qrLoading: false, loading: false, syncing: false })
+    const rechargeState = reactive({ customAmount: '', order: null, qrImage: '', qrLoading: false, loading: false, syncing: false })
     const subscriptionState = reactive({ plans: [], current: null, selectedPlanId: '', loading: false })
-    const redeemForm = reactive({ code: '' })
-    const checkinState = reactive({ status: null, loading: false, rolling: false, rollingIndex: -1, rewardCredits: null })
-    const inviteState = reactive({ summary: null, loading: false })
     let rechargePollingTimer = null
     let paidRechargeNoticeOrderId = ''
 
     const navItems = [
       { id: 'home', label: '首页', icon: 'ti-home' },
+      { id: 'announcements', label: '公告列表', icon: 'ti-speakerphone' },
       { id: 'chat', label: '对话生图', icon: 'ti-message-2' },
-      { id: 'text-chat', label: '对话聊天', icon: 'ti-message-chatbot' },
-      { id: 'reverse', label: '提示词反推', icon: 'ti-scan-eye' },
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
       { id: 'history', label: '作品库', icon: 'ti-photo-heart' },
-      { id: 'docs', label: '对接文档', icon: 'ti-book-2' },
-      { id: 'status', label: '服务状态', icon: 'ti-activity-heartbeat' },
+      { id: 'invite', label: '邀请好友', icon: 'ti-user-plus' },
       { id: 'profile', label: '用户中心', icon: 'ti-user-circle' },
     ]
 
@@ -117,17 +105,26 @@ export const RootApp = {
     const topbarAnnouncements = computed(() => announcements.value.filter((item) => item.displayMode === 'topbar'))
     const activeAnnouncement = computed(() => popupAnnouncements.value[0] || null)
     const activeTopbarAnnouncement = computed(() => topbarAnnouncements.value[0] || null)
+    const unreadAnnouncementCount = computed(() => {
+      const keys = announcements.value.map((item) => receiptKey(item)).filter(Boolean)
+      return keys.length ? new Set(keys).size : announcements.value.length
+    })
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
-    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'plaza', 'history'].includes(item.id)))
-    const secondaryNavItems = computed(() => navItems.filter((item) => !primaryNavItems.value.some((primary) => primary.id === item.id)))
-    const isSecondaryNavActive = computed(() => secondaryNavItems.value.some((item) => item.id === activePage.value))
-    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'text-chat', 'history'].includes(item.id)))
-    const customRechargeAmount = computed(() => Number(rechargeState.customAmount) || 0)
-    const customRechargeCredits = computed(() => customRechargeAmount.value * Number(settings.value?.rechargeRate || 0))
+    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'announcements', 'chat', 'plaza', 'history', 'invite', 'profile'].includes(item.id)))
+    const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'history', 'profile'].includes(item.id)))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
-    const userBalanceText = computed(() => {
-      const credits = Number(currentUser.value?.credits)
-      return userSynced.value && Number.isFinite(credits) ? `${formatAmount(credits)} ${creditName.value}` : '同步中'
+    const topAccountSubscription = computed(() => currentUser.value?.subscription || null)
+    const topAccountIsVip = computed(() => isPaidSubscription(topAccountSubscription.value))
+    const topAccountPlanText = computed(() => {
+      const subscription = topAccountSubscription.value || {}
+      return subscription.planName || subscription.plan?.name || subscription.name || ''
+    })
+    const topAccountStatusText = computed(() => {
+      if (!topAccountIsVip.value) {
+        const remaining = effectiveQuotaRemaining(topAccountSubscription.value)
+        return `免费版 · 可用 ${remaining} 张`
+      }
+      return topAccountPlanText.value ? `${topAccountPlanText.value} · 已开通` : '会员已开通'
     })
     const supportItems = computed(() => {
       const config = settings.value || {}
@@ -150,7 +147,7 @@ export const RootApp = {
         register: {
           eyebrow: 'Create account',
           title: '注册账号',
-          subtitle: '创建账号即可保存作品、管理积分和创作会话',
+          subtitle: '创建账号即可保存作品、管理订阅和创作会话',
           icon: 'ti-user-plus',
           submit: '立即注册',
         },
@@ -172,7 +169,7 @@ export const RootApp = {
       return metaMap[authMode.value] || metaMap.login
     })
     const shortSiteName = computed(() => {
-      const name = String(siteName.value || 'AIπ').trim()
+      const name = displayBrandName(siteName.value)
       return name.split(/[·-]/)[0]?.trim() || name
     })
     const oauthParams = computed(() => {
@@ -191,10 +188,139 @@ export const RootApp = {
       return value === true || value === 'true' || value === 1 || value === '1'
     }
 
+    function isPaidSubscription(subscription) {
+      return Boolean(subscription?.isPaid || subscription?.tier === 'paid' || (subscription?.status === 'active' && subscription?.planId))
+    }
+
+    function positiveNumber(value, fallback = 0) {
+      const number = Number(value)
+      return Number.isFinite(number) && number > 0 ? number : fallback
+    }
+
+    function freeQuotaLimit(scope = 'month') {
+      const keyMap = {
+        hour: 'freeHourlyGenerationQuota',
+        day: 'freeDailyGenerationQuota',
+        month: 'freeGenerationQuota',
+      }
+      const fallbackMap = { hour: 2, day: 5, month: 10 }
+      const key = keyMap[scope] || keyMap.month
+      const number = Number(settings.value?.[key])
+      return Number.isFinite(number) && number >= 0 ? number : (fallbackMap[scope] || fallbackMap.month)
+    }
+
+    function freeQuotaWindow(scope, label) {
+      const limit = freeQuotaLimit(scope)
+      return {
+        key: scope,
+        label,
+        quotaLimit: limit,
+        quotaUsed: 0,
+        quotaRemaining: limit,
+      }
+    }
+
+    function fallbackFreeQuotaWindows() {
+      return [
+        freeQuotaWindow('hour', '小时'),
+        freeQuotaWindow('day', '今日'),
+        freeQuotaWindow('month', '本月'),
+      ]
+    }
+
+    function fallbackFreeSubscription() {
+      const limit = freeQuotaLimit('month')
+      const quotaWindows = fallbackFreeQuotaWindows()
+      return {
+        status: 'free',
+        tier: 'free',
+        isPaid: false,
+        planName: '免费版',
+        quotaImages: limit,
+        quotaLimit: limit,
+        quotaUsed: 0,
+        quotaRemaining: limit,
+        effectiveQuotaRemaining: Math.min(...quotaWindows.map((item) => item.quotaRemaining)),
+        quotaWindows,
+      }
+    }
+
+    function inferredPlanQuota(plan) {
+      const explicit = positiveNumber(plan?.quotaImages, 0)
+      if (explicit > 0) return explicit
+      const days = Number(plan?.durationDays || 0)
+      if (days <= 1) return 20
+      if (days <= 31) return 300
+      if (days <= 92) return 1000
+      return 100
+    }
+
+    function planForSubscription(subscription) {
+      const id = subscription?.planId || subscription?.plan?.id || ''
+      return subscriptionState.plans.find((plan) => plan.id === id) || null
+    }
+
+    function quotaLimit(subscription) {
+      if (!subscription) return freeQuotaLimit('month')
+      if (isPaidSubscription(subscription)) {
+        const explicit = positiveNumber(subscription.quotaLimit || subscription.quotaImages, 0)
+        return explicit || inferredPlanQuota(planForSubscription(subscription))
+      }
+      return positiveNumber(subscription.quotaLimit || subscription.quotaImages, freeQuotaLimit('month'))
+    }
+
+    function quotaRemaining(subscription) {
+      if (!subscription) return freeQuotaLimit('month')
+      const fallback = quotaLimit(subscription)
+      const value = Number(subscription.quotaRemaining)
+      return Number.isFinite(value) && value >= 0 ? value : fallback
+    }
+
+    function freeQuotaWindows(subscription) {
+      const windows = Array.isArray(subscription?.quotaWindows) ? subscription.quotaWindows : []
+      if (windows.length) return windows
+      return fallbackFreeQuotaWindows()
+    }
+
+    function effectiveQuotaRemaining(subscription) {
+      const explicit = Number(subscription?.effectiveQuotaRemaining)
+      if (Number.isFinite(explicit) && explicit >= 0) return explicit
+      if (subscription && !isPaidSubscription(subscription)) {
+        const values = freeQuotaWindows(subscription).map((item) => Number(item.quotaRemaining)).filter((value) => Number.isFinite(value) && value >= 0)
+        if (values.length) return Math.min(...values)
+      }
+      return quotaRemaining(subscription)
+    }
+
+    function subscriptionQuotaText(subscription) {
+      return `${quotaRemaining(subscription)} / ${quotaLimit(subscription)} 张`
+    }
+
+    function freeQuotaSummary(subscription) {
+      return freeQuotaWindows(subscription).map((item) => {
+        const label = item.label || ({ hour: '小时', day: '今日', month: '本月' }[item.key] || '周期')
+        const remaining = Number.isFinite(Number(item.quotaRemaining)) ? Number(item.quotaRemaining) : Number(item.quotaLimit || 0)
+        const limit = Number.isFinite(Number(item.quotaLimit)) ? Number(item.quotaLimit) : 0
+        return `${label} ${remaining}/${limit} 张`
+      }).join(' · ')
+    }
+
+    function planQuotaText(plan) {
+      return `${inferredPlanQuota(plan)} 张/周期`
+    }
+
+    function planDescription(plan) {
+      const text = String(plan?.description || '').trim()
+      if (!text || /无限|不限/.test(text)) {
+        const days = Number(plan?.durationDays || 0)
+        return `${days || ''}天内可生成 ${inferredPlanQuota(plan)} 张图片`.trim()
+      }
+      return text
+    }
+
     function setPage(page) {
       activePage.value = page
       window.location.hash = `/${page}`
-      navMoreOpen.value = false
       mobileMenuOpen.value = false
     }
 
@@ -210,11 +336,9 @@ export const RootApp = {
     function logout() {
       clearCurrentUser()
       currentUser.value = null
-      activityStatus.value = null
       userSynced.value = true
       accountMenuOpen.value = false
       mobileMenuOpen.value = false
-      navMoreOpen.value = false
       disconnectGenerationTaskSocket()
       disconnectCurrentUserSocket()
       notifySuccess('已退出登录')
@@ -223,7 +347,6 @@ export const RootApp = {
     function closeNavMenus() {
       accountMenuOpen.value = false
       mobileMenuOpen.value = false
-      navMoreOpen.value = false
     }
 
     function runNavAction(action) {
@@ -233,7 +356,6 @@ export const RootApp = {
 
     function closeFloatingMenusOnOutsideClick(event) {
       const target = event.target
-      if (!target?.closest?.('.nav-more-wrap')) navMoreOpen.value = false
       if (!target?.closest?.('.account-menu-wrap')) accountMenuOpen.value = false
     }
 
@@ -254,7 +376,7 @@ export const RootApp = {
     async function manualRefreshUser() {
       if (!currentUser.value?.id || userRefreshing.value) return
       await refreshUser()
-      notifySuccess('余额已刷新')
+      notifySuccess('账号状态已刷新')
     }
 
     function refreshUserQuietly() {
@@ -274,19 +396,6 @@ export const RootApp = {
     function updateCurrentUser(user) {
       currentUser.value = saveCurrentUser(user)
       userSynced.value = true
-    }
-
-    async function loadActivityStatus() {
-      if (!currentUser.value?.id) {
-        activityStatus.value = null
-        return
-      }
-      try {
-        const response = await clientApi.getIncentiveStatus(currentUser.value.id)
-        activityStatus.value = response.data || null
-      } catch {
-        activityStatus.value = null
-      }
     }
 
     async function loadOAuthClient() {
@@ -327,21 +436,21 @@ export const RootApp = {
     function closePaidRecharge(order) {
       const paidOrder = order || rechargeState.order
       const orderId = paidOrder?.id || ''
-      const shouldNotify = orderId ? paidRechargeNoticeOrderId !== orderId : rechargeOpen.value
+      const shouldNotify = orderId ? paidRechargeNoticeOrderId !== orderId : subscriptionOpen.value
       rechargeState.order = paidOrder
       stopRechargePolling()
-      rechargeOpen.value = false
+      subscriptionPaymentOpen.value = false
       rechargeState.qrImage = ''
       if (shouldNotify) {
         paidRechargeNoticeOrderId = orderId || 'unknown'
-        notifySuccess(paidOrder?.orderType === 'subscription' ? '订阅已开通' : '充值已到账')
+        notifySuccess('订阅已开通')
       }
     }
 
     function handleUserSocketUpdate(user) {
       if (!currentUser.value?.id || user?.id !== currentUser.value.id) return
       updateCurrentUser(user)
-      if (rechargeOpen.value && rechargeState.order?.status === 'pending') {
+      if ((subscriptionOpen.value || subscriptionPaymentOpen.value) && rechargeState.order?.status === 'pending') {
         syncRechargeOrder(false)
       }
     }
@@ -380,7 +489,7 @@ export const RootApp = {
     function startRechargePolling() {
       stopRechargePolling()
       rechargePollingTimer = setInterval(() => {
-        if ((!rechargeOpen.value && !subscriptionOpen.value) || rechargeState.order?.status !== 'pending') {
+        if ((!subscriptionOpen.value && !subscriptionPaymentOpen.value) || rechargeState.order?.status !== 'pending') {
           stopRechargePolling()
           return
         }
@@ -390,16 +499,13 @@ export const RootApp = {
 
     function applyBootstrapData(data = {}) {
       settings.value = data.settings || settings.value
-      siteName.value = settings.value?.siteName || siteName.value || 'AIπ'
-      logoText.value = settings.value?.logoText || logoText.value || siteName.value
-      creditName.value = settings.value?.creditName || creditName.value || '积分'
-      activityStatus.value = data.activityStatus || null
+      siteName.value = displayBrandName(settings.value?.siteName || siteName.value)
+      logoText.value = displayBrandName(settings.value?.logoText || logoText.value || siteName.value)
       announcements.value = (data.announcements || [])
         .filter((item) => item.status === 'active')
         .filter((item) => !localReceipts().has(receiptKey(item)))
-      promotions.value = data.promotions || []
       subscriptionPlans.value = data.subscriptionPlans || []
-      document.title = `${siteName.value} 生图工作台`
+      document.title = `${displayBrandName(siteName.value)} 生图工作台`
     }
 
     async function loadBaseData() {
@@ -412,10 +518,9 @@ export const RootApp = {
         try {
           const response = await clientApi.getSettings()
           settings.value = response.data
-          siteName.value = response.data.siteName || 'AIπ'
-          logoText.value = response.data.logoText || siteName.value
-          creditName.value = response.data.creditName || '积分'
-          document.title = `${siteName.value} 生图工作台`
+          siteName.value = displayBrandName(response.data.siteName)
+          logoText.value = displayBrandName(response.data.logoText || siteName.value)
+          document.title = `${displayBrandName(siteName.value)} 生图工作台`
         } catch {}
       }
     }
@@ -457,10 +562,23 @@ export const RootApp = {
       return renderMarkdown(item?.content || '')
     }
 
+    function showVerificationRequired(data = {}) {
+      const message = data.message || '注册成功，请前往邮箱完成验证后再登录。'
+      antd.Modal.info({
+        title: '需要邮箱验证',
+        okText: '知道了',
+        content: message,
+      })
+    }
+
     function getInviteIdFromUrl() {
-      const inviteId = new URLSearchParams(location.search).get('invite')?.trim() || ''
-      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(inviteId)
-        ? inviteId
+      const inviteValue = new URLSearchParams(location.search).get('invite')?.trim() || ''
+      const inviteCode = inviteValue.toUpperCase()
+      if (/^[A-HJ-NP-Z2-9]{6,16}$/.test(inviteCode)) {
+        return inviteCode
+      }
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(inviteValue)
+        ? inviteValue
         : null
     }
 
@@ -490,6 +608,12 @@ export const RootApp = {
           ? clientApi.register({ email: authForm.email, password: authForm.password, inviterId: getInviteIdFromUrl() })
           : clientApi.login({ email: authForm.email, password: authForm.password })
         const response = await action
+        if (authMode.value === 'register' && response.data?.verificationRequired) {
+          showVerificationRequired(response.data)
+          authMode.value = 'login'
+          authForm.password = ''
+          return
+        }
         updateCurrentUser(response.data)
         loginOpen.value = false
         notifySuccess(authMode.value === 'register' ? '注册成功' : '登录成功')
@@ -503,23 +627,7 @@ export const RootApp = {
     }
 
     async function openRecharge() {
-      if (!requireLogin()) return
-      rechargeOpen.value = true
-      subscriptionOpen.value = false
-      rechargePanelMode.value = 'credits'
-      rechargeState.order = null
-      rechargeState.qrImage = ''
-      stopRechargePolling()
-      paidRechargeNoticeOrderId = ''
-      rechargeState.customAmount = ''
-      rechargeState.mode = 'product'
-      try {
-        const response = await clientApi.listRechargeProducts()
-        rechargeState.products = response.data || []
-        rechargeState.selectedProductId = rechargeState.products[0]?.id || ''
-      } catch (error) {
-        notifyError(error, '加载充值商品失败')
-      }
+      await openSubscription()
     }
 
     async function loadSubscriptionData() {
@@ -531,7 +639,7 @@ export const RootApp = {
           clientApi.getCurrentSubscription(currentUser.value.id).catch(() => ({ data: null })),
         ])
         subscriptionState.plans = plansResponse.data || []
-        subscriptionState.current = currentResponse.data || null
+        subscriptionState.current = currentResponse.data || fallbackFreeSubscription()
         subscriptionState.selectedPlanId = subscriptionState.plans[0]?.id || ''
       } catch (error) {
         notifyError(error, '加载订阅套餐失败')
@@ -540,20 +648,10 @@ export const RootApp = {
       }
     }
 
-    async function switchRechargePanel(mode) {
-      if (rechargePanelMode.value === mode) return
-      rechargePanelMode.value = mode
-      rechargeState.order = null
-      rechargeState.qrImage = ''
-      stopRechargePolling()
-      paidRechargeNoticeOrderId = ''
-      if (mode === 'subscription') await loadSubscriptionData()
-    }
-
     async function openSubscription() {
       if (!requireLogin()) return
       subscriptionOpen.value = true
-      rechargeOpen.value = false
+      subscriptionPaymentOpen.value = false
       rechargeState.order = null
       rechargeState.qrImage = ''
       stopRechargePolling()
@@ -563,13 +661,7 @@ export const RootApp = {
 
     async function createRechargeOrder() {
       if (!currentUser.value) return
-      const isCustom = rechargeState.mode === 'custom'
-      const isSubscription = subscriptionOpen.value || (rechargeOpen.value && rechargePanelMode.value === 'subscription')
-      if (isCustom && customRechargeAmount.value <= 0) {
-        ElementPlus.ElMessage.warning('请输入自定义充值金额')
-        return
-      }
-      if (isSubscription && !subscriptionState.selectedPlanId) {
+      if (!subscriptionState.selectedPlanId) {
         ElementPlus.ElMessage.warning('请选择订阅套餐')
         return
       }
@@ -577,16 +669,15 @@ export const RootApp = {
         rechargeState.loading = true
         const payload = {
           userId: currentUser.value.id,
-          ...(isSubscription
-            ? { subscriptionPlanId: subscriptionState.selectedPlanId }
-            : isCustom
-              ? { amount: customRechargeAmount.value }
-              : { productId: rechargeState.selectedProductId }),
+          subscriptionPlanId: subscriptionState.selectedPlanId,
         }
         const response = await clientApi.createRechargeOrder(payload)
         rechargeState.order = response.data
         paidRechargeNoticeOrderId = ''
         await renderRechargeQrCode(response.data)
+        if (response.data?.status === 'pending') {
+          subscriptionPaymentOpen.value = true
+        }
         if (response.data?.status === 'pending') startRechargePolling()
       } catch (error) {
         notifyError(error, '创建订单失败')
@@ -607,10 +698,11 @@ export const RootApp = {
           await refreshUser()
           if (response.data.orderType === 'subscription') {
             const currentResponse = await clientApi.getCurrentSubscription(currentUser.value.id).catch(() => ({ data: null }))
-            subscriptionState.current = currentResponse.data || null
+            subscriptionState.current = currentResponse.data || fallbackFreeSubscription()
           }
           closePaidRecharge(response.data)
           subscriptionOpen.value = false
+          subscriptionPaymentOpen.value = false
         } else {
           if (showMessage) notifySuccess('订单状态已刷新')
         }
@@ -621,147 +713,9 @@ export const RootApp = {
       }
     }
 
-    async function redeemCode() {
-      if (!currentUser.value) return
-      try {
-        const response = await clientApi.redeemCode({ userId: currentUser.value.id, code: redeemForm.code })
-        updateCurrentUser(response.data.user)
-        redeemOpen.value = false
-        redeemForm.code = ''
-        notifySuccess('兑换成功')
-      } catch (error) {
-        notifyError(error, '兑换失败')
-      }
-    }
-
-    async function openCheckin() {
+    function openInvite() {
       if (!requireLogin()) return
-      checkinOpen.value = true
-      checkinState.rolling = false
-      checkinState.rollingIndex = -1
-      checkinState.rewardCredits = null
-      try {
-        checkinState.loading = true
-        const response = await clientApi.getCheckinStatus(currentUser.value.id)
-        checkinState.status = response.data
-      } catch (error) {
-        notifyError(error, '加载签到失败')
-      } finally {
-        checkinState.loading = false
-      }
-    }
-
-    async function doCheckin() {
-      if (!currentUser.value) return
-      try {
-        checkinState.rolling = true
-        checkinState.rollingIndex = 0
-        checkinState.rewardCredits = null
-        const response = await clientApi.checkin(currentUser.value.id)
-        updateCurrentUser(response.data.user)
-        await playCheckinRoll(response.data.rewardCredits, response.data.rewards || checkinState.status?.rewards || [])
-        checkinState.rewardCredits = response.data.rewardCredits
-        checkinState.status = {
-          ...(checkinState.status || {}),
-          checkedIn: true,
-          rewards: response.data.rewards || checkinState.status?.rewards || [],
-          today: response.data.checkin,
-        }
-        notifySuccess(`签到成功，获得 ${formatAmount(response.data.rewardCredits)} ${creditName.value}`)
-      } catch (error) {
-        checkinState.rolling = false
-        checkinState.rollingIndex = -1
-        notifyError(error, '签到失败')
-      }
-    }
-
-    function playCheckinRoll(rewardCredits, rewards) {
-      return new Promise((resolve) => {
-        const rewardList = rewards?.length ? rewards : checkinState.status?.rewards || []
-        const targetIndex = Math.max(0, rewardList.findIndex((reward) => Number(reward) === Number(rewardCredits)))
-        const totalSteps = rewardList.length * 3 + targetIndex + 1
-        let step = 0
-        const tick = () => {
-          if (!rewardList.length) {
-            checkinState.rolling = false
-            resolve()
-            return
-          }
-          checkinState.rollingIndex = step % rewardList.length
-          step += 1
-          if (step > totalSteps) {
-            checkinState.rollingIndex = targetIndex
-            setTimeout(() => {
-              checkinState.rolling = false
-              resolve()
-            }, 420)
-            return
-          }
-          const delay = 70 + Math.min(170, Math.max(0, step - totalSteps + 8) * 24)
-          setTimeout(tick, delay)
-        }
-        tick()
-      })
-    }
-
-    async function openInvite() {
-      if (!requireLogin()) return
-      inviteOpen.value = true
-      try {
-        inviteState.loading = true
-        const response = await clientApi.getInviteSummary(currentUser.value.id)
-        inviteState.summary = response.data
-      } catch (error) {
-        notifyError(error, '加载邀请信息失败')
-      } finally {
-        inviteState.loading = false
-      }
-    }
-
-    async function copyInviteLink() {
-      const url = new URL(location.origin)
-      url.searchParams.set('invite', currentUser.value.id)
-      await navigator.clipboard.writeText(url.toString())
-      notifySuccess('邀请链接已复制')
-    }
-
-    function inviteLink() {
-      if (!currentUser.value?.id) return location.origin
-      const url = new URL(location.origin)
-      url.searchParams.set('invite', currentUser.value.id)
-      return url.toString()
-    }
-
-    function inviteMessageTemplates() {
-      const reward = formatAmount(inviteState.summary?.rewardCredits || settings.value?.inviteRewardCredits || 0)
-      const discount = formatAmount(activityStatus.value?.discountPercent || 0)
-      const today = Number(activityStatus.value?.todayImages || 0)
-      const nextRule = activityStatus.value?.nextRule
-      const gap = nextRule ? Math.max(0, Number(nextRule.minImages || 0) - today) : 0
-      const activityLine = discount > 0
-        ? `现在全站活动已解锁 ${discount}% 生图优惠`
-        : nextRule
-          ? `现在全站今日已生成 ${today} 张，再冲 ${gap} 张全员解锁 ${formatAmount(nextRule.discountPercent)}% 优惠`
-          : '现在有全站生图活动，大家一起生成越多，活动档位越高'
-      return [
-        {
-          title: '微信群简短版',
-          text: `${siteName.value} 最近有全站生图活动，${activityLine}。用我的链接注册体验，我还能拿 ${reward} ${creditName.value} 邀请奖励：${inviteLink()}`,
-        },
-        {
-          title: '朋友圈种草版',
-          text: `发现一个挺好用的 AI 生图工具：${siteName.value}。可以对话生图、参考图改图、下载高清图。现在是全站共同冲档活动，生成量越高全员价格越低，想试的走这个链接：${inviteLink()}`,
-        },
-        {
-          title: '客户转化版',
-          text: `如果你需要做门店海报、产品图、活动宣传图，可以试试 ${siteName.value}。目前有全站生图优惠活动，注册后就能参与，链接在这：${inviteLink()}`,
-        },
-      ]
-    }
-
-    async function copyInviteMessage(template) {
-      await navigator.clipboard.writeText(template.text)
-      notifySuccess(`${template.title} 已复制`)
+      setPage('invite')
     }
 
     async function copySupportValue(value) {
@@ -786,7 +740,11 @@ export const RootApp = {
       const verifyToken = params.get('verifyEmailToken')
       if (verifyToken) {
         clientApi.verifyEmail(verifyToken).then(() => {
+          const url = new URL(window.location.href)
+          url.searchParams.delete('verifyEmailToken')
+          window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
           notifySuccess('邮箱验证成功，请登录')
+          authMode.value = 'login'
           loginOpen.value = true
         }).catch((error) => notifyError(error, '邮箱验证失败'))
       }
@@ -795,23 +753,23 @@ export const RootApp = {
     })
 
     watch(() => activePage.value, (page) => {
-      document.body.classList.toggle('chat-page-active', page === 'chat' || page === 'text-chat')
+      document.body.classList.toggle('chat-page-active', page === 'chat')
+      document.body.classList.toggle('home-page-active', page === 'home')
     }, { immediate: true })
     watch(() => currentUser.value?.id || '', (userId, previousUserId) => {
       if (userId === previousUserId) return
       if (!userId) {
         announcements.value = []
-        activityStatus.value = null
         void loadBaseData()
         return
       }
       void loadBaseData()
     })
-    watch(rechargeOpen, (open) => {
-      if (!open) stopRechargePolling()
-    })
     watch(subscriptionOpen, (open) => {
-      if (!open && !rechargeOpen.value) stopRechargePolling()
+      if (!open && !subscriptionPaymentOpen.value) stopRechargePolling()
+    })
+    watch(subscriptionPaymentOpen, (open) => {
+      if (!open && !subscriptionOpen.value) stopRechargePolling()
     })
     watch(() => currentUser.value?.id || '', (userId) => {
       if (userId) subscribeCurrentUser(userId, handleUserSocketUpdate)
@@ -833,33 +791,31 @@ export const RootApp = {
       settings,
       siteName,
       logoText,
-      creditName,
       loginOpen,
       authMode,
       authForm,
-      rechargeOpen,
-      rechargePanelMode,
       subscriptionOpen,
+      subscriptionPaymentOpen,
       rechargeState,
       subscriptionState,
       selectedSubscriptionPlan,
-      customRechargeAmount,
-      customRechargeCredits,
-      redeemOpen,
-      redeemForm,
-      checkinOpen,
-      checkinState,
-      inviteOpen,
-      inviteState,
       supportOpen,
       supportItems,
       previewImage,
       activeAnnouncement,
       activeTopbarAnnouncement,
+      unreadAnnouncementCount,
       activeNav,
       authMeta,
       shortSiteName,
-      userBalanceText,
+      topAccountIsVip,
+      topAccountStatusText,
+      isPaidSubscription,
+      subscriptionQuotaText,
+      freeQuotaSummary,
+      effectiveQuotaRemaining,
+      planQuotaText,
+      planDescription,
       oauthClient,
       oauthLoading,
       oauthError,
@@ -869,14 +825,9 @@ export const RootApp = {
       userSynced,
       accountMenuOpen,
       mobileMenuOpen,
-      navMoreOpen,
-      promotions,
-      activityStatus,
       subscriptionPlans,
       navItems,
       primaryNavItems,
-      secondaryNavItems,
-      isSecondaryNavActive,
       bottomNavItems,
       setPage,
       requireLogin,
@@ -885,17 +836,9 @@ export const RootApp = {
       runNavAction,
       openRecharge,
       openSubscription,
-      switchRechargePanel,
       createRechargeOrder,
       syncRechargeOrder,
-      redeemCode,
-      openCheckin,
-      doCheckin,
-      playCheckinRoll,
       openInvite,
-      copyInviteLink,
-      copyInviteMessage,
-      inviteMessageTemplates,
       copySupportValue,
       rechargeStatusText,
       submitAuth,
@@ -906,7 +849,6 @@ export const RootApp = {
       approveOAuth,
       leaveOAuthPage,
       manualRefreshUser,
-      formatAmount,
       formatCurrency,
       formatDate,
     }
@@ -927,49 +869,35 @@ export const RootApp = {
             <button class="web-mobile-brand plain-btn" type="button" @click="setPage('home')">
               <img src="/favicon.svg" alt="" />
               <span>
-                <strong>{{ shortSiteName }}</strong>
+                <strong>{{ activePage === 'home' ? 'ai-pai' : shortSiteName }}</strong>
                 <small>创作工作台</small>
               </span>
             </button>
             <nav class="web-primary-nav" aria-label="用户端导航">
               <button v-for="item in primaryNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
                 <i :class="['ti', item.icon]"></i>
-                <span>{{ item.label }}</span>
+                <span class="web-nav-label">{{ item.label }}</span>
+                <span v-if="item.id === 'announcements' && unreadAnnouncementCount > 0" class="web-nav-badge" :title="unreadAnnouncementCount + ' 条未读公告'">
+                  {{ unreadAnnouncementCount > 9 ? '9+' : unreadAnnouncementCount }}
+                </span>
               </button>
-              <div class="nav-more-wrap">
-                <button :class="['nav-more-trigger', { active: isSecondaryNavActive || navMoreOpen }]" type="button" @click="navMoreOpen = !navMoreOpen; accountMenuOpen = false; mobileMenuOpen = false">
-                  <i class="ti ti-dots"></i>
-                  <span>更多</span>
-                  <i class="ti ti-chevron-down"></i>
-                </button>
-                <div v-if="navMoreOpen" class="nav-more-menu">
-                  <button v-for="item in secondaryNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
-                    <i :class="['ti', item.icon]"></i>
-                    <span>{{ item.label }}</span>
-                  </button>
-                </div>
-              </div>
             </nav>
           </div>
           <div class="web-top-actions">
             <template v-if="currentUser">
-              <span class="user-chip">
-                <span class="user-chip-label">余额</span>
-                <span class="user-balance">{{ userBalanceText }}</span>
-                <button class="balance-refresh" type="button" title="刷新余额" :disabled="userRefreshing" @click="manualRefreshUser">
-                  <i :class="['ti', 'ti-refresh', { 'is-spinning': userRefreshing }]"></i>
-                </button>
-              </span>
-              <el-button class="user-action primary-action nav-recharge-action" type="primary" @click="openRecharge">
-                <i class="ti ti-wallet"></i>
-                <span>充值</span>
+              <el-button class="user-action primary-action nav-recharge-action" type="primary" @click="openSubscription">
+                <i class="ti ti-crown"></i>
+                <span>订阅</span>
               </el-button>
               <div class="account-menu-wrap">
-                <button :class="['account-trigger', { active: accountMenuOpen }]" type="button" @click="accountMenuOpen = !accountMenuOpen; mobileMenuOpen = false">
+                <button :class="['account-trigger', { active: accountMenuOpen, vip: topAccountIsVip }]" type="button" @click="accountMenuOpen = !accountMenuOpen; mobileMenuOpen = false">
                   <span class="account-avatar">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
                   <span class="account-trigger-copy">
                     <strong>{{ currentUser.email }}</strong>
-                    <small>{{ currentUser.subscription?.status === 'active' ? '会员已开通' : '普通用户' }}</small>
+                    <small :class="['account-member-line', { vip: topAccountIsVip }]">
+                      <i v-if="topAccountIsVip" class="ti ti-crown"></i>
+                      <span>{{ topAccountStatusText }}</span>
+                    </small>
                   </span>
                   <i class="ti ti-chevron-down"></i>
                 </button>
@@ -978,7 +906,10 @@ export const RootApp = {
                     <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
                     <div>
                       <strong>{{ currentUser.email }}</strong>
-                      <small>{{ userBalanceText }}</small>
+                      <small :class="['account-menu-member', { vip: topAccountIsVip }]">
+                        <i v-if="topAccountIsVip" class="ti ti-crown"></i>
+                        <span>{{ topAccountStatusText }}</span>
+                      </small>
                     </div>
                   </div>
                   <button type="button" @click="runNavAction(openSubscription)">
@@ -993,14 +924,6 @@ export const RootApp = {
                   <button type="button" @click="runNavAction(() => setPage('history'))">
                     <i class="ti ti-photo-heart"></i>
                     <span>作品库</span>
-                  </button>
-                  <button type="button" @click="runNavAction(() => redeemOpen = true)">
-                    <i class="ti ti-ticket"></i>
-                    <span>兑换码</span>
-                  </button>
-                  <button type="button" @click="runNavAction(openCheckin)">
-                    <i class="ti ti-calendar-check"></i>
-                    <span>每日签到</span>
                   </button>
                   <button type="button" @click="runNavAction(openInvite)">
                     <i class="ti ti-user-plus"></i>
@@ -1023,18 +946,16 @@ export const RootApp = {
               <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
               <div>
                 <strong>{{ currentUser.email }}</strong>
-                <small>{{ userBalanceText }}</small>
+                <small :class="['account-menu-member', { vip: topAccountIsVip }]">
+                  <i v-if="topAccountIsVip" class="ti ti-crown"></i>
+                  <span>{{ topAccountStatusText }}</span>
+                </small>
               </div>
             </div>
             <div class="mobile-account-actions">
-              <button type="button" @click="runNavAction(openRecharge)"><i class="ti ti-wallet"></i><span>充值</span></button>
+              <button type="button" @click="runNavAction(openSubscription)"><i class="ti ti-crown"></i><span>订阅会员</span></button>
               <button type="button" @click="runNavAction(() => setPage('profile'))"><i class="ti ti-user-circle"></i><span>用户中心</span></button>
               <button type="button" @click="runNavAction(() => setPage('history'))"><i class="ti ti-photo-heart"></i><span>作品库</span></button>
-              <button type="button" @click="runNavAction(() => setPage('status'))"><i class="ti ti-activity-heartbeat"></i><span>状态</span></button>
-              <button type="button" @click="runNavAction(() => setPage('docs'))"><i class="ti ti-book-2"></i><span>文档</span></button>
-              <button type="button" @click="runNavAction(openSubscription)"><i class="ti ti-crown"></i><span>订阅</span></button>
-              <button type="button" @click="runNavAction(() => redeemOpen = true)"><i class="ti ti-ticket"></i><span>兑换</span></button>
-              <button type="button" @click="runNavAction(openCheckin)"><i class="ti ti-calendar-check"></i><span>签到</span></button>
               <button type="button" @click="runNavAction(openInvite)"><i class="ti ti-user-plus"></i><span>邀请</span></button>
               <button type="button" @click="logout"><i class="ti ti-logout"></i><span>退出</span></button>
             </div>
@@ -1046,13 +967,13 @@ export const RootApp = {
             <div class="oauth-mark"><i class="ti ti-plug-connected"></i></div>
             <span class="eyebrow">OAuth 授权</span>
             <h2>{{ oauthClient?.name || '第三方应用' }} 请求连接 {{ shortSiteName }}</h2>
-            <p>授权后，画布应用可以读取你的账号信息，并使用你的 API Key 同步创作能力。</p>
+            <p>授权后，画布应用可以读取你的账号信息，并同步创作能力。</p>
             <div v-if="oauthError" class="oauth-error">{{ oauthError }}</div>
             <div v-if="currentUser" class="oauth-user-card">
               <span class="account-avatar large">{{ currentUser.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
               <div>
                 <strong>{{ currentUser.email }}</strong>
-                <small>{{ userBalanceText }}</small>
+                <small>{{ topAccountStatusText }}</small>
               </div>
             </div>
             <div class="oauth-actions">
@@ -1062,16 +983,14 @@ export const RootApp = {
             </div>
           </section>
         </main>
-        <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' || activePage === 'text-chat' }]">
-          <home-page v-if="activePage === 'home'" :activity-status="activityStatus" :announcements="homeAnnouncements" :credit-name="creditName" :current-user="currentUser" :promotions="promotions" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @invite="openInvite" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
-          <chat-page v-if="activePage === 'chat'" :credit-name="creditName" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
-          <text-chat-page v-if="activePage === 'text-chat'" :credit-name="creditName" :current-user="currentUser" @login="loginOpen = true" @user-updated="updateCurrentUser" />
-          <reverse-prompt-page v-if="activePage === 'reverse'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
+        <main v-else :class="['web-content', { 'chat-content': activePage === 'chat' }]">
+          <home-page v-if="activePage === 'home'" :announcements="homeAnnouncements" :current-user="currentUser" :settings="settings" :site-name="siteName" :subscription-plans="subscriptionPlans" @announcement-close="closeAnnouncement" @go="setPage" @invite="openInvite" @login="loginOpen = true" @recharge="openRecharge" @subscribe="openSubscription" />
+          <announcements-page v-if="activePage === 'announcements'" :current-user="currentUser" />
+          <chat-page v-if="activePage === 'chat'" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
           <history-page v-if="activePage === 'history'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
-          <api-docs-page v-if="activePage === 'docs'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" />
-          <status-page v-if="activePage === 'status'" />
-          <profile-page v-if="activePage === 'profile'" :credit-name="creditName" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @user-updated="updateCurrentUser" />
+          <invite-page v-if="activePage === 'invite'" :current-user="currentUser" :site-name="siteName" @go="setPage" @login="loginOpen = true" />
+          <profile-page v-if="activePage === 'profile'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @subscribe="openSubscription" @user-updated="updateCurrentUser" />
         </main>
         <nav v-if="!isOAuthPage" class="web-bottom-nav" aria-label="移动端主导航">
           <button v-for="item in bottomNavItems" :key="item.id" :class="{ active: activePage === item.id }" type="button" @click="setPage(item.id)">
@@ -1081,7 +1000,7 @@ export const RootApp = {
         </nav>
       </section>
 
-      <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' || activePage === 'text-chat' }]" type="button" @click="supportOpen = true">
+      <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' }]" type="button" @click="supportOpen = true">
         <i class="ti ti-headset"></i>
         <span>联系客服</span>
       </button>
@@ -1103,7 +1022,7 @@ export const RootApp = {
             </div>
             <div class="auth-benefits">
               <span><i class="ti ti-cloud-check"></i> 保存创作记录</span>
-              <span><i class="ti ti-coins"></i> 管理{{ creditName }}</span>
+              <span><i class="ti ti-crown"></i> 管理订阅权益</span>
               <span><i class="ti ti-sparkles"></i> 解锁高清生成</span>
             </div>
           </aside>
@@ -1164,7 +1083,7 @@ export const RootApp = {
             <div>
               <span>Membership</span>
               <strong>会员订阅</strong>
-              <p>开通后享受模型折扣，套餐赠送额度会在支付成功后自动到账。</p>
+              <p>开通后即可使用订阅范围内的模型权益。</p>
             </div>
             <i class="ti ti-crown"></i>
           </div>
@@ -1172,250 +1091,70 @@ export const RootApp = {
         <div v-loading="subscriptionState.loading" class="subscription-body">
           <div class="subscription-status">
             <div>
-              <span>当前订阅</span>
-              <strong>{{ subscriptionState.current?.planName || '暂未开通' }}</strong>
-              <p v-if="subscriptionState.current">有效期至 {{ formatDate(subscriptionState.current.expiresAt) }}</p>
-              <p v-else>选择一个套餐后即可开通会员权益。</p>
+              <span>当前权益</span>
+              <strong>{{ subscriptionState.current?.planName || '免费版' }}</strong>
+              <p v-if="isPaidSubscription(subscriptionState.current)">有效期至 {{ formatDate(subscriptionState.current.expiresAt) }} · 剩余额度 {{ subscriptionQuotaText(subscriptionState.current) }}</p>
+              <p v-else>免费版当前可用 {{ effectiveQuotaRemaining(subscriptionState.current) }} 张 · {{ freeQuotaSummary(subscriptionState.current) }}</p>
             </div>
-            <i :class="['ti', subscriptionState.current ? 'ti-shield-check' : 'ti-shield-plus']"></i>
+            <i :class="['ti', isPaidSubscription(subscriptionState.current) ? 'ti-shield-check' : 'ti-shield-plus']"></i>
           </div>
           <div class="subscription-plans">
             <button v-for="plan in subscriptionState.plans" :key="plan.id" :class="{ active: subscriptionState.selectedPlanId === plan.id }" class="subscription-plan" type="button" @click="subscriptionState.selectedPlanId = plan.id">
               <span v-if="plan.badge" class="subscription-badge">{{ plan.badge }}</span>
               <strong>{{ plan.name }}</strong>
-              <p>{{ plan.description || '会员专属生成权益' }}</p>
+              <p>{{ planDescription(plan) }}</p>
               <div class="subscription-price">¥{{ formatCurrency(plan.amount) }}</div>
               <div class="subscription-benefits">
                 <span><i class="ti ti-calendar"></i>{{ plan.durationDays }} 天有效期</span>
-                <span><i class="ti ti-coins"></i>赠送 {{ formatAmount(plan.bonusCredits) }} {{ creditName }}</span>
-                <span><i class="ti ti-discount"></i>模型 {{ plan.discountPercent }}% 折扣</span>
+                <span><i class="ti ti-photo-spark"></i>{{ planQuotaText(plan) }}</span>
+                <span v-if="plan.discountPercent"><i class="ti ti-discount"></i>模型 {{ plan.discountPercent }}% 折扣</span>
               </div>
             </button>
-          </div>
-          <div v-if="rechargeState.order && subscriptionOpen" class="subscription-pay-panel">
-            <div>
-              <span>订阅订单</span>
-              <strong>{{ rechargeStatusText(rechargeState.order.status) }}</strong>
-              <p>支付 ¥{{ formatCurrency(rechargeState.order.amount) }}</p>
-            </div>
-            <div class="recharge-qr-wrap compact">
-              <div v-if="rechargeState.qrLoading" class="recharge-qr-loading"><i class="ti ti-loader-2"></i></div>
-              <img v-else-if="rechargeState.qrImage" :src="rechargeState.qrImage" alt="支付宝支付二维码" />
-              <span><i class="ti ti-brand-alipay"></i> 支付宝扫码</span>
-            </div>
-            <el-button :loading="rechargeState.syncing" @click="syncRechargeOrder(true)">已支付，刷新状态</el-button>
           </div>
         </div>
         <template #footer>
           <el-button @click="subscriptionOpen = false">取消</el-button>
+          <el-button v-if="rechargeState.order?.orderType === 'subscription'" @click="subscriptionPaymentOpen = true">
+            查看支付二维码
+          </el-button>
           <el-button type="primary" :loading="rechargeState.loading" :disabled="!selectedSubscriptionPlan" @click="createRechargeOrder">
             {{ rechargeState.order ? '重新创建订单' : '开通订阅' }}
           </el-button>
         </template>
       </el-dialog>
 
-      <el-dialog v-model="rechargeOpen" width="860px" class="recharge-dialog" custom-class="recharge-dialog-panel">
+      <el-dialog v-model="subscriptionPaymentOpen" width="430px" class="subscription-payment-dialog" custom-class="subscription-payment-panel" append-to-body :close-on-click-modal="false">
         <template #header>
-          <div class="recharge-head">
-            <div>
-              <span>{{ rechargePanelMode === 'subscription' ? 'Membership' : 'Recharge' }}</span>
-              <strong>{{ rechargePanelMode === 'subscription' ? '会员订阅' : '在线充值' }}</strong>
-              <p>{{ rechargePanelMode === 'subscription' ? '选择会员套餐后创建订单，支付成功会自动开通权益。' : '选择套餐后创建订单，支付完成会自动到账。' }}</p>
-            </div>
-            <i :class="['ti', rechargePanelMode === 'subscription' ? 'ti-crown' : 'ti-wallet']"></i>
+          <div class="subscription-payment-head">
+            <span><i class="ti ti-brand-alipay"></i> 支付宝扫码支付</span>
+            <strong>{{ rechargeState.order?.orderType === 'subscription' ? '订阅订单' : '支付订单' }}</strong>
+            <p v-if="rechargeState.order">支付 ¥{{ formatCurrency(rechargeState.order.amount) }}，完成后自动开通会员权益。</p>
           </div>
         </template>
-        <div class="recharge-body">
-          <div class="recharge-left">
-            <div class="recharge-mode-tabs">
-              <button :class="{ active: rechargePanelMode === 'credits' }" type="button" @click="switchRechargePanel('credits')">
-                <i class="ti ti-coins"></i>
-                积分充值
-              </button>
-              <button :class="{ active: rechargePanelMode === 'subscription' }" type="button" @click="switchRechargePanel('subscription')">
-                <i class="ti ti-crown"></i>
-                会员订阅
-              </button>
-            </div>
-            <template v-if="rechargePanelMode === 'credits'">
-            <div class="recharge-tabs">
-              <button :class="{ active: rechargeState.mode === 'product' }" type="button" @click="rechargeState.mode = 'product'; rechargeState.selectedProductId = rechargeState.products[0]?.id || ''">
-                <i class="ti ti-packages"></i>
-                套餐充值
-              </button>
-              <button :class="{ active: rechargeState.mode === 'custom' }" type="button" @click="rechargeState.mode = 'custom'">
-                <i class="ti ti-pencil-dollar"></i>
-                自定义金额
-              </button>
-            </div>
-            <div v-if="rechargeState.mode === 'product'" class="recharge-products">
-              <button v-for="product in rechargeState.products" :key="product.id" :class="{ active: rechargeState.selectedProductId === product.id }" class="recharge-product" type="button" @click="rechargeState.selectedProductId = product.id">
-                <span>{{ product.name }}</span>
-                <strong>¥{{ formatCurrency(product.amount) }}</strong>
-                <small>{{ formatAmount(product.credits) }} {{ creditName }}</small>
-              </button>
-            </div>
-            <div v-else class="recharge-custom-panel">
-              <div class="recharge-custom-card">
-                <span>自由充值</span>
-                <strong>按金额自动换算{{ creditName }}</strong>
-                <small>当前比例 1 元 = {{ settings?.rechargeRate || 1 }} {{ creditName }}</small>
-              </div>
-              <div class="recharge-custom">
-                <el-input v-model="rechargeState.customAmount" type="number" min="0" placeholder="请输入充值金额">
-                  <template #prefix>¥</template>
-                </el-input>
-                <span class="recharge-credit-preview">
-                  <i class="ti ti-coins"></i>
-                  <em>预计到账</em>
-                  <strong>{{ formatAmount(customRechargeCredits) }}</strong>
-                  <b>{{ creditName }}</b>
-                </span>
-              </div>
-            </div>
-            <el-button class="recharge-submit" type="primary" :loading="rechargeState.loading" :disabled="(rechargeState.mode === 'product' && !rechargeState.selectedProductId) || (rechargeState.mode === 'custom' && customRechargeAmount <= 0)" @click="createRechargeOrder">
-              创建充值订单
-            </el-button>
-            </template>
-            <template v-else>
-              <div v-loading="subscriptionState.loading" class="recharge-subscription-panel">
-                <div class="subscription-status">
-                  <div>
-                    <span>当前订阅</span>
-                    <strong>{{ subscriptionState.current?.planName || '暂未开通' }}</strong>
-                    <p v-if="subscriptionState.current">有效期至 {{ formatDate(subscriptionState.current.expiresAt) }}</p>
-                    <p v-else>选择一个套餐后即可开通会员权益。</p>
-                  </div>
-                  <i :class="['ti', subscriptionState.current ? 'ti-shield-check' : 'ti-shield-plus']"></i>
-                </div>
-                <div class="subscription-plans recharge-subscription-plans">
-                  <button v-for="plan in subscriptionState.plans" :key="plan.id" :class="{ active: subscriptionState.selectedPlanId === plan.id }" class="subscription-plan" type="button" @click="subscriptionState.selectedPlanId = plan.id">
-                    <span v-if="plan.badge" class="subscription-badge">{{ plan.badge }}</span>
-                    <strong>{{ plan.name }}</strong>
-                    <p>{{ plan.description || '会员专属生成权益' }}</p>
-                    <div class="subscription-price">¥{{ formatCurrency(plan.amount) }}</div>
-                    <div class="subscription-benefits">
-                      <span><i class="ti ti-calendar"></i>{{ plan.durationDays }} 天有效期</span>
-                      <span><i class="ti ti-coins"></i>赠送 {{ formatAmount(plan.bonusCredits) }} {{ creditName }}</span>
-                      <span><i class="ti ti-discount"></i>模型 {{ plan.discountPercent }}% 折扣</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-              <el-button class="recharge-submit" type="primary" :loading="rechargeState.loading" :disabled="!selectedSubscriptionPlan" @click="createRechargeOrder">
-                {{ rechargeState.order ? '重新创建订阅订单' : '开通订阅' }}
-              </el-button>
-            </template>
+        <div class="subscription-payment-body">
+          <div class="subscription-payment-status">
+            <span>订单状态</span>
+            <strong>{{ rechargeStatusText(rechargeState.order?.status) }}</strong>
           </div>
-          <div :class="{ empty: !rechargeState.order }" class="recharge-order">
-            <template v-if="rechargeState.order">
-              <div class="recharge-order-info">
-                <span>{{ rechargePanelMode === 'subscription' ? '订阅订单' : '订单状态' }}</span>
-                <strong>{{ rechargeStatusText(rechargeState.order.status) }}</strong>
-                <p>支付 ¥{{ formatCurrency(rechargeState.order.amount) }}</p>
-                <p v-if="rechargePanelMode === 'credits'">到账 {{ formatAmount(rechargeState.order.credits) }} {{ creditName }}</p>
-                <p v-else>支付完成后自动开通会员权益</p>
-              </div>
-              <div class="recharge-qr-wrap">
-                <div v-if="rechargeState.qrLoading" class="recharge-qr-loading"><i class="ti ti-loader-2"></i></div>
-                <img v-else-if="rechargeState.qrImage" :src="rechargeState.qrImage" alt="支付宝支付二维码" />
-                <span><i class="ti ti-brand-alipay"></i> 请使用支付宝扫码支付</span>
-              </div>
-              <el-button :loading="rechargeState.syncing" @click="syncRechargeOrder(true)">支付宝已支付，刷新状态</el-button>
-            </template>
-            <template v-else>
-              <div class="recharge-order-empty">
-                <i class="ti ti-qrcode"></i>
-                <strong>二维码将在这里显示</strong>
-                <p>{{ rechargePanelMode === 'subscription' ? '选择会员套餐并创建订单后，右侧会显示支付宝支付二维码。' : '选择套餐并创建订单后，右侧会显示支付宝支付二维码。' }}</p>
-              </div>
-            </template>
+          <div class="subscription-payment-qr">
+            <div v-if="rechargeState.qrLoading" class="recharge-qr-loading"><i class="ti ti-loader-2"></i></div>
+            <img v-else-if="rechargeState.qrImage" :src="rechargeState.qrImage" alt="支付宝支付二维码" />
+            <div v-else class="subscription-payment-empty">
+              <i class="ti ti-qrcode-off"></i>
+              <span>二维码生成中</span>
+            </div>
           </div>
+          <p class="subscription-payment-tip">
+            <i class="ti ti-shield-check"></i>
+            仅开放支付宝支付，支付成功后请点击刷新状态。
+          </p>
         </div>
-      </el-dialog>
-
-      <el-dialog v-model="redeemOpen" width="420px" title="卡密兑换">
-        <el-input v-model="redeemForm.code" placeholder="请输入卡密" />
-        <template #footer><el-button type="primary" @click="redeemCode">立即兑换</el-button></template>
-      </el-dialog>
-
-      <el-dialog v-model="checkinOpen" width="480px" class="checkin-dialog" custom-class="checkin-dialog-panel">
-        <template #header>
-          <div class="checkin-head">
-            <div>
-              <span>Daily reward</span>
-              <strong>每日签到</strong>
-              <p>每天签到一次，随机获得一份{{ creditName }}奖励。</p>
-            </div>
-            <i class="ti ti-award"></i>
-          </div>
-        </template>
-        <div v-loading="checkinState.loading" class="checkin-body">
-          <div v-if="checkinState.status" :class="{ done: checkinState.status.checkedIn }" class="checkin-status">
-            <i :class="['ti', checkinState.status.checkedIn ? 'ti-circle-check' : 'ti-sparkles']"></i>
-            <div>
-              <span>今日状态</span>
-              <strong>{{ checkinState.status.checkedIn ? '已签到' : '待签到' }}</strong>
-            </div>
-          </div>
-          <div class="checkin-rewards">
-            <div v-for="(reward, index) in checkinState.status?.rewards || []" :key="reward" :class="{ active: checkinState.rolling && checkinState.rollingIndex === index, won: !checkinState.rolling && checkinState.rewardCredits !== null && Number(checkinState.rewardCredits) === Number(reward) }" class="checkin-reward">
-              <span>{{ reward }}</span>
-              <small>{{ creditName }}</small>
-            </div>
-          </div>
-          <el-button class="checkin-submit" type="primary" :loading="checkinState.rolling" :disabled="checkinState.status?.checkedIn || checkinState.rolling" @click="doCheckin">
-            {{ checkinState.rolling ? '抽取中...' : checkinState.status?.checkedIn ? '今日已签到' : '立即签到' }}
+        <template #footer>
+          <el-button @click="subscriptionPaymentOpen = false">稍后支付</el-button>
+          <el-button type="primary" :loading="rechargeState.syncing" @click="syncRechargeOrder(true)">
+            已支付，刷新状态
           </el-button>
-        </div>
-      </el-dialog>
-
-      <el-dialog v-model="inviteOpen" width="520px" class="invite-dialog" custom-class="invite-dialog-panel">
-        <template #header>
-          <div class="invite-head">
-            <div>
-              <span>Invite friends</span>
-              <strong>邀请好友</strong>
-              <p>复制专属链接给好友，好友注册后你将获得奖励。</p>
-            </div>
-            <i class="ti ti-share-3"></i>
-          </div>
         </template>
-        <div v-loading="inviteState.loading" class="invite-body">
-          <div class="invite-hero">
-            <span>单次邀请奖励</span>
-            <strong>{{ formatAmount(inviteState.summary?.rewardCredits || 0) }}</strong>
-            <small>{{ creditName }}</small>
-          </div>
-          <div class="invite-stats">
-            <div>
-              <span>已邀请</span>
-              <strong>{{ inviteState.summary?.total || 0 }}</strong>
-              <small>人</small>
-            </div>
-            <div>
-              <span>累计奖励</span>
-              <strong>{{ formatAmount(inviteState.summary?.totalRewardCredits || 0) }}</strong>
-              <small>{{ creditName }}</small>
-            </div>
-          </div>
-          <div class="invite-tip">
-            <i class="ti ti-link"></i>
-            <span>邀请链接会自动带上你的用户标识，好友注册成功后会统计到这里。</span>
-          </div>
-          <div class="invite-message-panel">
-            <div class="invite-message-head">
-              <span>群发话术</span>
-              <small>复制后可直接发到微信群、朋友圈或客户群</small>
-            </div>
-            <button v-for="template in inviteMessageTemplates()" :key="template.title" class="invite-message-card" type="button" @click="copyInviteMessage(template)">
-              <strong>{{ template.title }}</strong>
-              <p>{{ template.text }}</p>
-              <em>一键复制</em>
-            </button>
-          </div>
-          <el-button class="invite-submit" type="primary" @click="copyInviteLink">复制邀请链接</el-button>
-        </div>
       </el-dialog>
 
       <el-dialog v-model="supportOpen" width="430px" class="support-dialog" custom-class="support-dialog-panel">
@@ -1465,3 +1204,4 @@ export const RootApp = {
     </main>
   `,
 }
+

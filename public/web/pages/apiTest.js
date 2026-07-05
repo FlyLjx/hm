@@ -1,6 +1,4 @@
-import { clientApi } from '../common/api.js'
-
-const { computed, onMounted, reactive, ref, watch } = Vue
+const { computed, reactive, ref } = Vue
 
 function stringifyJson(value) {
   return JSON.stringify(value, null, 2)
@@ -23,7 +21,7 @@ function uniqueModels(models) {
 }
 
 function isGetEndpoint(path) {
-  return ['/v1/models', '/v1/balance', '/v1/credits'].includes(path)
+  return path === '/v1/models'
 }
 
 async function openaiRequest(path, apiKey, body) {
@@ -47,14 +45,11 @@ export const ApiTestPage = {
   emits: ['login', 'go'],
   setup(props, { emit }) {
     const apiKey = ref('')
-    const keys = ref([])
     const models = ref([])
     const loading = ref(false)
     const responseText = ref('')
     const errorText = ref('')
     const imageResults = ref([])
-    const newKey = ref(null)
-    const keyForm = reactive({ name: 'API 测试 Key' })
     const form = reactive({
       endpoint: '/v1/images/generations',
       model: '',
@@ -68,7 +63,6 @@ export const ApiTestPage = {
 
     const selectedEndpointLabel = computed(() => ({
       '/v1/models': '模型列表',
-      '/v1/balance': '余额查询',
       '/v1/images/generations': '图片生成',
       '/v1/images/edits': '图片编辑',
       '/v1/chat/completions': '聊天接口',
@@ -114,34 +108,6 @@ export const ApiTestPage = {
         messages: [
           { role: 'user', content: form.chatPrompt },
         ],
-      }
-    }
-
-    async function loadKeys() {
-      if (!props.currentUser?.id) {
-        keys.value = []
-        return
-      }
-      const response = await clientApi.listApiKeys(props.currentUser.id)
-      keys.value = response.data || []
-    }
-
-    async function createKey() {
-      if (!props.currentUser?.id) {
-        emit('login')
-        return
-      }
-      loading.value = true
-      try {
-        const response = await clientApi.createApiKey(props.currentUser.id, { name: keyForm.name || 'API 测试 Key' })
-        newKey.value = response.data
-        apiKey.value = response.data?.key || ''
-        await loadKeys()
-        ElementPlus.ElMessage.success('Key 已生成并填入测试框')
-      } catch (error) {
-        ElementPlus.ElMessage.error(error.message || '生成 Key 失败')
-      } finally {
-        loading.value = false
       }
     }
 
@@ -193,27 +159,18 @@ export const ApiTestPage = {
       }
     }
 
-    onMounted(() => {
-      loadKeys().catch(() => {})
-    })
-    watch(() => props.currentUser?.id || '', () => loadKeys().catch(() => {}))
-
     return {
       apiKey,
-      keys,
       models,
       loading,
       responseText,
       errorText,
       imageResults,
-      newKey,
-      keyForm,
       form,
       selectedEndpointLabel,
       canRun,
       curlText,
       buildBody,
-      createKey,
       copyText,
       loadModels,
       runTest,
@@ -221,63 +178,28 @@ export const ApiTestPage = {
   },
   template: `
     <section class="api-test-page page-stack">
-      <section class="api-test-hero">
-        <div>
-          <span class="eyebrow"><i class="ti ti-api"></i> OpenAI Compatible API</span>
-          <h2>API 测试</h2>
-          <p>生成用户 Key 后，可以在这里直接测试模型列表、图片生成、图片编辑和聊天接口。</p>
-        </div>
-        <div class="api-price-note">
-          <span>价格来源</span>
-          <strong>后台模型管理</strong>
-          <small>图片按模型 1K/2K/4K 价格和 n 数量扣费；聊天按该模型 1K 档价格按次扣费。</small>
-        </div>
-      </section>
-
-      <section v-if="!currentUser" class="profile-empty">
+      <section v-if="!currentUser" class="auth-required-panel api-test-auth">
         <i class="ti ti-user-circle"></i>
-        <strong>登录后才能生成和测试 Key</strong>
-        <p>API 调用会绑定到当前用户，并从当前账户余额扣费。</p>
-        <button class="result-action primary" type="button" @click="$emit('login')">去登录</button>
+        <strong>登录后才能测试接口</strong>
+        <p>请粘贴已有 API Key 后再测试模型列表、图片生成和图片编辑接口。</p>
+        <button class="auth-required-button" type="button" @click="$emit('login')">去登录</button>
       </section>
 
       <template v-else>
-        <section class="api-test-grid">
-          <article class="api-test-panel">
-            <header class="api-test-panel-head">
-              <div>
-                <span>Key Manager</span>
-                <h3>Key 管理与生成</h3>
-              </div>
-              <button class="result-action" type="button" @click="$emit('go', 'profile')">
-                <i class="ti ti-user-circle"></i>
-                用户中心
-              </button>
-            </header>
-            <p>Key 在前台用户中心生成和管理；后台用户明细可查看 Key 前缀、状态和最近使用时间。完整 Key 只会在生成时显示一次。</p>
-            <div class="api-test-key-create">
-              <el-input v-model="keyForm.name" placeholder="Key 名称" />
-              <button class="result-action primary" type="button" :disabled="loading" @click="createKey">
-                <i class="ti ti-key"></i>
-                生成测试 Key
-              </button>
-            </div>
-            <div v-if="newKey?.key" class="api-test-secret">
-              <code>{{ newKey.key }}</code>
-              <button class="result-action primary" type="button" @click="copyText(newKey.key)">
-                <i class="ti ti-copy"></i>
-                复制
-              </button>
-            </div>
-            <div class="api-test-key-list">
-              <article v-for="key in keys" :key="key.id">
-                <strong>{{ key.name }}</strong>
-                <span>{{ key.keyPrefix }}******** · {{ key.status === 'active' ? '启用' : '停用' }}</span>
-              </article>
-              <div v-if="!keys.length" class="profile-mini-empty">还没有 API Key</div>
-            </div>
-          </article>
+        <section class="api-test-hero">
+          <div>
+            <span class="eyebrow"><i class="ti ti-api"></i> OpenAI Compatible API</span>
+            <h2>API 测试</h2>
+            <p>粘贴已有 API Key 后，可以在这里测试模型列表、图片生成和图片编辑接口。</p>
+          </div>
+          <div class="api-price-note">
+            <span>价格来源</span>
+            <strong>后台模型管理</strong>
+            <small>接口调用需要账号具备有效订阅，模型范围以订阅套餐配置为准。</small>
+          </div>
+        </section>
 
+        <section class="api-test-grid">
           <article class="api-test-panel">
             <header class="api-test-panel-head">
               <div>
@@ -298,14 +220,13 @@ export const ApiTestPage = {
                 <span>接口</span>
                 <el-select v-model="form.endpoint" style="width:100%">
                   <el-option label="GET /v1/models" value="/v1/models" />
-                  <el-option label="GET /v1/balance" value="/v1/balance" />
                   <el-option label="POST /v1/images/generations" value="/v1/images/generations" />
                   <el-option label="POST /v1/images/edits" value="/v1/images/edits" />
                   <el-option label="POST /v1/chat/completions" value="/v1/chat/completions" />
                   <el-option label="POST /v1/responses" value="/v1/responses" />
                 </el-select>
               </label>
-              <label v-if="!['/v1/models', '/v1/balance', '/v1/credits'].includes(form.endpoint)">
+              <label v-if="form.endpoint !== '/v1/models'">
                 <span>模型</span>
                 <el-select v-model="form.model" allow-create filterable placeholder="先读取模型或手动输入" style="width:100%">
                   <el-option v-for="model in models" :key="model.id" :label="model.id" :value="model.id" />

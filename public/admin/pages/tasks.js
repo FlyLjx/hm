@@ -95,7 +95,7 @@ export const TasksPage = {
       if (!canCancelTask(row)) return
       Modal.confirm({
         title: '取消任务',
-        content: `确定取消任务「${row.id}」吗？取消后不会扣费，已完成的上游请求可能仍会返回但不会覆盖任务状态。`,
+        content: `确定取消任务「${row.id}」吗？已完成的上游请求可能仍会返回但不会覆盖任务状态。`,
         okText: '取消任务',
         okType: 'danger',
         cancelText: '关闭',
@@ -182,7 +182,7 @@ export const TasksPage = {
     <div v-if="!isImages" class="page-stack">
       <a-card class="admin-view-card" :bordered="false">
         <div class="admin-card-hero">
-          <div><div class="page-kicker">Task Center</div><div class="page-title">任务列表</div><div class="page-desc">查看生成任务、任务状态、扣费和取消异常任务。</div></div>
+          <div><div class="page-kicker">Task Center</div><div class="page-title">任务列表</div><div class="page-desc">查看生成任务、任务状态和取消异常任务。</div></div>
           <a-button :loading="taskLoading" @click="loadTasks">刷新</a-button>
         </div>
       </a-card>
@@ -204,9 +204,6 @@ export const TasksPage = {
             <template #default="{ record }">{{ (record.sizeTier || '-') + ' / ' + (record.size || '-') }}</template>
           </a-table-column>
           <a-table-column title="数量" data-index="quantity" :width="70" />
-          <a-table-column title="扣费" key="credits" :width="90">
-            <template #default="{ record }">{{ amount(record.costCredits) }}</template>
-          </a-table-column>
           <a-table-column title="耗时" key="duration" :width="100">
             <template #default="{ record }">{{ formatDuration(record.durationSeconds) }}</template>
           </a-table-column>

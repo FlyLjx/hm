@@ -72,6 +72,6 @@ func (r *Router) sendCurrentUserSnapshot(ctx context.Context, writeMu *sync.Mute
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	writeMu.Lock()
-	_ = conn.WriteJSON(users.Message{Type: "user", Data: users.ToPublicUser(user)})
+	_ = conn.WriteJSON(users.Message{Type: "user", Data: r.publicUserWithSubscription(userCtx, user)})
 	writeMu.Unlock()
 }

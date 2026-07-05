@@ -1,15 +1,7 @@
 import { clientApi } from '../common/api.js'
-import { formatAmount, formatDate } from '../common/format.js'
+import { formatDate } from '../common/format.js'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
-
-function creditLogLabel(type) {
-  const labels = {
-    recharge: '收入',
-    deduct: '支出',
-  }
-  return labels[type] || type || '-'
-}
 
 function taskStatusLabel(status) {
   const labels = {
@@ -30,20 +22,14 @@ function taskStatusClass(status) {
 }
 
 export const ProfilePage = {
-  props: ['currentUser', 'creditName'],
-  emits: ['login', 'user-updated', 'go'],
+  props: ['currentUser'],
+  emits: ['login', 'user-updated', 'go', 'subscribe'],
   setup(props, { emit }) {
     const loading = ref(false)
     const details = ref(null)
     const passwordLoading = ref(false)
-    const apiKeys = ref([])
-    const apiKeyLoading = ref(false)
-    const newApiKey = ref(null)
-    const apiKeyForm = reactive({ name: 'API Key' })
-    const creditPage = ref(1)
     const taskPage = ref(1)
-    const creditPageSize = 10
-    const taskPageSize = 10
+    const taskPageSize = 5
     const passwordForm = reactive({
       oldPassword: '',
       password: '',
@@ -51,30 +37,74 @@ export const ProfilePage = {
     })
 
     const user = computed(() => details.value?.user || props.currentUser || null)
-    const creditLogs = computed(() => details.value?.creditLogs || [])
     const tasks = computed(() => details.value?.tasks || [])
-    const creditLogsPagination = computed(() => details.value?.creditLogsPagination || null)
     const tasksPagination = computed(() => details.value?.tasksPagination || null)
     const successfulTasks = computed(() => tasks.value.filter((task) => task.status === 'success').length)
-    const spentCredits = computed(() => tasks.value.reduce((total, task) => total + Number(task.costCredits || 0), 0))
     const subscription = computed(() => user.value?.subscription || null)
-    const hasApiKey = computed(() => apiKeys.value.length > 0)
-
-    async function loadApiKeys() {
-      if (!props.currentUser?.id) {
-        apiKeys.value = []
-        return
+    const activeSubscription = computed(() => Boolean(subscription.value?.isPaid || subscription.value?.tier === 'paid' || (subscription.value?.status === 'active' && subscription.value?.planId)))
+    const accountIdText = computed(() => {
+      const id = String(user.value?.id || '').trim()
+      if (!id) return '-'
+      return id.length > 12 ? id.split('-')[0] || id.slice(0, 8) : id
+    })
+    const memberPlanText = computed(() => subscription.value?.planName || '免费版')
+    const quotaLimitValue = computed(() => {
+      const value = Number(subscription.value?.quotaLimit || subscription.value?.quotaImages)
+      return Number.isFinite(value) && value > 0 ? value : 10
+    })
+    const quotaRemainingValue = computed(() => {
+      const value = Number(subscription.value?.quotaRemaining)
+      return Number.isFinite(value) && value >= 0 ? value : quotaLimitValue.value
+    })
+    const quotaWindows = computed(() => Array.isArray(subscription.value?.quotaWindows) ? subscription.value.quotaWindows : [])
+    const effectiveQuotaRemainingValue = computed(() => {
+      const value = Number(subscription.value?.effectiveQuotaRemaining)
+      if (Number.isFinite(value) && value >= 0) return value
+      const values = quotaWindows.value.map((item) => Number(item.quotaRemaining)).filter((item) => Number.isFinite(item) && item >= 0)
+      return values.length ? Math.min(...values) : quotaRemainingValue.value
+    })
+    const quotaLimitText = computed(() => `${quotaLimitValue.value} 张`)
+    const quotaUsedText = computed(() => `${Number(subscription.value?.quotaUsed || 0)} 张`)
+    const quotaRemainingText = computed(() => `${quotaRemainingValue.value} 张`)
+    const effectiveQuotaRemainingText = computed(() => `${effectiveQuotaRemainingValue.value} 张`)
+    const quotaUsageRows = computed(() => {
+      if (!activeSubscription.value && quotaWindows.value.length) {
+        const rows = quotaWindows.value.map((window) => quotaUsageRow(
+          window.key || window.label,
+          quotaUsageLabel(window.label || window.key),
+          window.quotaUsed,
+          window.quotaLimit,
+          window.quotaRemaining,
+          window.periodEndsAt,
+        ))
+        return decorateFreeQuotaRows(rows, effectiveQuotaRemainingValue.value)
       }
-      apiKeyLoading.value = true
-      try {
-        const response = await clientApi.listApiKeys(props.currentUser.id)
-        apiKeys.value = response.data || []
-      } catch (error) {
-        ElementPlus.ElMessage.error(error.message || 'API Key 加载失败')
-      } finally {
-        apiKeyLoading.value = false
+      const limit = quotaLimitValue.value
+      const remaining = quotaRemainingValue.value
+      const used = Number(subscription.value?.quotaUsed)
+      const fallbackUsed = Math.max(0, limit - remaining)
+      return [quotaUsageRow(
+        'period',
+        activeSubscription.value ? '周期额度' : '免费额度',
+        Number.isFinite(used) ? used : fallbackUsed,
+        limit,
+        remaining,
+        subscription.value?.periodEndsAt || subscription.value?.expiresAt,
+      )]
+    })
+    const nextQuotaRecoveryText = computed(() => {
+      const rows = quotaUsageRows.value
+        .filter((row) => row.remaining <= 0 && row.resetAt)
+        .sort((left, right) => left.resetAt - right.resetAt)
+      return rows[0]?.resetText || ''
+    })
+    const quotaSummaryHint = computed(() => {
+      if (activeSubscription.value) return '订阅周期额度'
+      if (effectiveQuotaRemainingValue.value <= 0 && nextQuotaRecoveryText.value) {
+        return `最近恢复：${nextQuotaRecoveryText.value}`
       }
-    }
+      return '受小时、今日、本月额度共同限制'
+    })
 
     async function loadDetails() {
       if (!props.currentUser?.id) {
@@ -84,83 +114,16 @@ export const ProfilePage = {
       loading.value = true
       try {
         const response = await clientApi.getUserDetails(props.currentUser.id, {
-          creditPage: creditPage.value,
-          creditPageSize,
           taskPage: taskPage.value,
           taskPageSize,
         })
         details.value = response.data || null
         if (response.data?.user) emit('user-updated', response.data.user)
-        await loadApiKeys()
       } catch (error) {
         ElementPlus.ElMessage.error(error.message || '账户明细加载失败')
       } finally {
         loading.value = false
       }
-    }
-
-    async function createApiKey() {
-      if (!props.currentUser?.id) {
-        emit('login')
-        return
-      }
-      if (hasApiKey.value) {
-        ElementPlus.ElMessage.warning('每个用户只允许生成一个 API Key')
-        return
-      }
-      try {
-        apiKeyLoading.value = true
-        const response = await clientApi.createApiKey(props.currentUser.id, { name: apiKeyForm.name || 'API Key' })
-        newApiKey.value = response.data
-        apiKeyForm.name = 'API Key'
-        await loadApiKeys()
-        ElementPlus.ElMessage.success('API Key 已生成，请及时复制保存')
-      } catch (error) {
-        ElementPlus.ElMessage.error(error.message || 'API Key 创建失败')
-      } finally {
-        apiKeyLoading.value = false
-      }
-    }
-
-    async function toggleApiKey(key) {
-      if (!props.currentUser?.id) return
-      try {
-        const nextStatus = key.status === 'active' ? 'disabled' : 'active'
-        await clientApi.updateApiKeyStatus(props.currentUser.id, key.id, { status: nextStatus })
-        await loadApiKeys()
-      } catch (error) {
-        ElementPlus.ElMessage.error(error.message || 'API Key 更新失败')
-      }
-    }
-
-    async function deleteApiKey(key) {
-      if (!props.currentUser?.id) return
-      try {
-        await clientApi.deleteApiKey(props.currentUser.id, key.id)
-        await loadApiKeys()
-        ElementPlus.ElMessage.success('API Key 已删除')
-      } catch (error) {
-        if (/不存在|已删除|404/i.test(error.message || '')) {
-          await loadApiKeys()
-          ElementPlus.ElMessage.warning('API Key 已不存在，列表已刷新')
-          return
-        }
-        ElementPlus.ElMessage.error(error.message || 'API Key 删除失败')
-      }
-    }
-
-    async function copyText(value) {
-      await navigator.clipboard?.writeText(value)
-      ElementPlus.ElMessage.success('已复制')
-    }
-
-    function apiKeyValue(key) {
-      return key?.keyPlain || `${key?.keyPrefix || ''}********（历史 Key 无法查看完整值，请重新生成）`
-    }
-
-    async function changeCreditPage(page) {
-      creditPage.value = page
-      await loadDetails()
     }
 
     async function changeTaskPage(page) {
@@ -178,12 +141,6 @@ export const ProfilePage = {
       const start = (page - 1) * pageSize + 1
       const end = Math.min(total, page * pageSize)
       return `${start}-${end} / 共 ${total} 条`
-    }
-
-    function changeCreditPageBy(delta) {
-      const nextPage = Math.min(pageCount(creditLogsPagination.value, creditPageSize), Math.max(1, creditPage.value + delta))
-      if (nextPage === creditPage.value) return
-      changeCreditPage(nextPage)
     }
 
     function changeTaskPageBy(delta) {
@@ -243,13 +200,110 @@ export const ProfilePage = {
       emit('go', 'chat')
     }
 
-    function scrollToApiKeys() {
-      document.getElementById('profile-api-keys')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    function goHistory() {
+      emit('go', 'history')
+    }
+
+    function openSubscribe() {
+      emit('subscribe')
+    }
+
+    function quotaUsageRow(key, label, used, limit, remaining, periodEndsAt = '') {
+      const safeLimit = Math.max(0, Number(limit) || 0)
+      const usedValue = Number(used)
+      const remainingValue = Number(remaining)
+      const resetAt = parseTime(periodEndsAt)
+      const safeRemaining = Number.isFinite(remainingValue)
+        ? Math.min(safeLimit || remainingValue, Math.max(0, remainingValue))
+        : Math.max(0, safeLimit - (Number.isFinite(usedValue) ? Math.max(0, usedValue) : 0))
+      const safeUsed = Number.isFinite(usedValue)
+        ? Math.min(safeLimit || usedValue, Math.max(0, usedValue))
+        : Math.max(0, safeLimit - safeRemaining)
+      const usedPercent = safeLimit > 0 ? Math.min(100, Math.round((safeUsed / safeLimit) * 100)) : 0
+      const remainingPercent = safeLimit > 0 ? Math.min(100, Math.round((safeRemaining / safeLimit) * 100)) : 0
+      return {
+        key: key || label,
+        label,
+        used: safeUsed,
+        limit: safeLimit,
+        remaining: safeRemaining,
+        displayRemaining: safeRemaining,
+        percent: usedPercent,
+        percentLabel: safeLimit > 0 ? `${usedPercent}%` : '未设置',
+        resetAt,
+        resetText: resetAt ? formatRecoveryTime(resetAt) : '',
+        limitNote: '',
+        remainingNote: '',
+        status: safeRemaining <= 0 ? 'danger' : remainingPercent <= 20 ? 'warning' : 'normal',
+      }
+    }
+
+    function decorateFreeQuotaRows(rows, effectiveRemaining) {
+      const effectiveValue = Math.max(0, Number(effectiveRemaining) || 0)
+      const limitingRow = quotaLimitingRow(rows, effectiveValue)
+      return rows.map((row) => {
+        const displayRemaining = Math.min(row.remaining, effectiveValue)
+        const limitedByOtherWindow = limitingRow && limitingRow.key !== row.key && displayRemaining < row.remaining
+        return {
+          ...row,
+          displayRemaining,
+          limitNote: limitedByOtherWindow ? `受${limitingRow.label.replace(/额度$/, '')}限制` : '',
+          remainingNote: limitedByOtherWindow ? `周期剩余 ${row.remaining} 张` : '',
+          status: displayRemaining <= 0 ? 'danger' : limitedByOtherWindow ? 'warning' : row.status,
+        }
+      })
+    }
+
+    function quotaLimitingRow(rows, effectiveRemaining) {
+      if (!rows.length) return null
+      const order = { hour: 1, day: 2, month: 3 }
+      const candidates = rows
+        .filter((row) => row.remaining === effectiveRemaining)
+        .sort((left, right) => (order[left.key] || 99) - (order[right.key] || 99))
+      if (candidates.length) return candidates[0]
+      return [...rows].sort((left, right) => left.remaining - right.remaining)[0]
+    }
+
+    function parseTime(value) {
+      if (!value) return null
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return null
+      return date
+    }
+
+    function startOfDay(date) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+    }
+
+    function padTime(value) {
+      return String(value).padStart(2, '0')
+    }
+
+    function formatTimeOnly(date) {
+      return `${padTime(date.getHours())}:${padTime(date.getMinutes())}`
+    }
+
+    function formatRecoveryTime(date) {
+      const now = new Date()
+      const today = startOfDay(now)
+      const target = startOfDay(date)
+      const time = formatTimeOnly(date)
+      if (target === today) return `今天 ${time}`
+      if (target === today + 24 * 60 * 60 * 1000) return `明天 ${time}`
+      const monthDay = `${date.getMonth() + 1}/${date.getDate()} ${time}`
+      if (date.getFullYear() === now.getFullYear()) return monthDay
+      return `${date.getFullYear()}/${monthDay}`
+    }
+
+    function quotaUsageLabel(value) {
+      const label = String(value || '').trim()
+      if (!label) return '周期额度'
+      if (label.includes('额度')) return label
+      return `${label}额度`
     }
 
     onMounted(loadDetails)
     watch(() => props.currentUser?.id || '', () => {
-      creditPage.value = 1
       taskPage.value = 1
       loadDetails()
     })
@@ -257,28 +311,26 @@ export const ProfilePage = {
     return {
       loading,
       user,
-      creditLogs,
       tasks,
-      creditLogsPagination,
       tasksPagination,
       successfulTasks,
-      spentCredits,
       subscription,
-      apiKeys,
-      hasApiKey,
-      apiKeyLoading,
-      newApiKey,
-      apiKeyForm,
-      creditPage,
+      activeSubscription,
+      accountIdText,
+      memberPlanText,
+      quotaLimitText,
+      quotaUsedText,
+      quotaRemainingText,
+      effectiveQuotaRemainingText,
+      quotaWindows,
+      quotaUsageRows,
+      quotaSummaryHint,
       taskPage,
-      creditPageSize,
       taskPageSize,
       passwordForm,
       passwordLoading,
       loadDetails,
-      changeCreditPage,
       changeTaskPage,
-      changeCreditPageBy,
       changeTaskPageBy,
       pageCount,
       paginationText,
@@ -286,282 +338,198 @@ export const ProfilePage = {
       canNext,
       submitPassword,
       resetPasswordForm,
-      loadApiKeys,
-      createApiKey,
-      toggleApiKey,
-      deleteApiKey,
-      copyText,
-      apiKeyValue,
       goChat,
-      scrollToApiKeys,
-      formatAmount,
+      goHistory,
+      openSubscribe,
       formatDate,
-      creditLogLabel,
       taskStatusLabel,
       taskStatusClass,
     }
   },
   template: `
-    <div class="page-stack profile-page">
-      <section class="profile-hero">
-        <div>
-          <span class="eyebrow">Account</span>
-          <h2>用户中心</h2>
-          <p>查看账户余额、额度明细、最近生成记录，并维护登录密码。</p>
-        </div>
-        <div class="profile-hero-actions">
-          <button class="result-action" type="button" @click="loadDetails">
-            <i class="ti ti-refresh"></i>
-            刷新
-          </button>
-          <button class="result-action" type="button" @click="scrollToApiKeys">
-            <i class="ti ti-key"></i>
-            接口 Key
-          </button>
-          <button class="result-action primary" type="button" @click="goChat">
-            <i class="ti ti-wand"></i>
-            去创作
-          </button>
-        </div>
-      </section>
-
-      <section v-if="!currentUser" class="profile-empty">
+    <div class="profile-v2-page">
+      <section v-if="!currentUser" class="auth-required-panel profile-v2-empty">
         <i class="ti ti-user-circle"></i>
         <strong>登录后进入用户中心</strong>
-        <p>账户明细、余额和密码设置会跟随你的账号保存。</p>
-        <button class="result-action primary" type="button" @click="$emit('login')">去登录</button>
+        <p>账户信息、会员状态和生成记录会跟随你的账号保存。</p>
+        <button class="auth-required-button" type="button" @click="$emit('login')">去登录</button>
       </section>
 
       <template v-else>
-        <section v-loading="loading" class="profile-overview">
-          <article class="profile-account-card">
-            <div class="profile-avatar">{{ user?.email?.slice(0, 1)?.toUpperCase() || 'U' }}</div>
-            <div class="profile-account-copy">
-              <span>当前账号</span>
-              <strong>{{ user?.email }}</strong>
-              <small>{{ user?.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证' }} · {{ user?.status === 'active' ? '账号正常' : '账号已停用' }}</small>
+        <main class="profile-v2-main">
+          <header class="profile-v2-header">
+            <div>
+              <h2>账户总览</h2>
+              <p>查看账户信息，管理设置，追踪你的创作活动。</p>
             </div>
-          </article>
-          <article class="profile-stat-card primary">
-            <span>{{ creditName || '积分' }}余额</span>
-            <strong>{{ formatAmount(user?.credits) }}</strong>
-            <small>可用于图片生成与编辑</small>
-          </article>
-          <article class="profile-stat-card">
-            <span>最近成功</span>
-            <strong>{{ successfulTasks }}</strong>
-            <small>最近记录中的成功任务</small>
-          </article>
-          <article class="profile-stat-card">
-            <span>最近消耗</span>
-            <strong>{{ formatAmount(spentCredits) }}</strong>
-            <small>{{ creditName || '积分' }}扣费汇总</small>
-          </article>
-        </section>
+            <button class="result-action" type="button" :disabled="loading" @click="loadDetails">
+              <i :class="['ti', 'ti-refresh', { 'is-spinning': loading }]"></i>
+              刷新
+            </button>
+          </header>
 
-        <section id="profile-api-keys" class="profile-grid profile-api-grid">
-          <article class="profile-panel profile-api-keys">
-            <header class="profile-panel-head">
-              <div>
-                <span>API Keys</span>
-                <h3>接口 Key</h3>
-              </div>
-              <button class="result-action" type="button" :disabled="apiKeyLoading" @click="loadApiKeys">
-                <i class="ti ti-refresh"></i>
-                刷新
-              </button>
-            </header>
-            <p class="profile-panel-desc">用于调用 /v1 图片生成、图片编辑和聊天接口，消耗当前账号{{ creditName || '积分' }}。每个用户只允许生成一个 Key。</p>
-            <div class="api-key-endpoints">
-              <span><i class="ti ti-database-search"></i> GET /v1/models</span>
-              <span><i class="ti ti-photo-plus"></i> POST /v1/images/generations</span>
-              <span><i class="ti ti-photo-edit"></i> POST /v1/images/edits</span>
-              <span><i class="ti ti-message-2"></i> POST /v1/chat/completions</span>
-            </div>
-            <div v-if="newApiKey?.key" class="api-key-secret">
-              <span>新 Key 只显示一次</span>
-              <code>{{ newApiKey.key }}</code>
-              <button class="result-action primary" type="button" @click="copyText(newApiKey.key)">
-                <i class="ti ti-copy"></i>
-                复制
-              </button>
-            </div>
-            <div v-if="!hasApiKey" class="api-key-create">
-              <el-input v-model="apiKeyForm.name" placeholder="Key 名称" />
-              <button class="result-action primary" type="button" :disabled="apiKeyLoading" @click="createApiKey">
-                <i class="ti ti-plus"></i>
-                生成 Key
-              </button>
-            </div>
-            <div v-else class="api-key-limit-note">
-              <i class="ti ti-info-circle"></i>
-              当前账号已生成 API Key，如需更换请先删除旧 Key。
-            </div>
-            <div v-loading="apiKeyLoading" class="api-key-list">
-              <div v-if="!apiKeys.length" class="profile-mini-empty">暂无 API Key</div>
-              <article v-for="key in apiKeys" :key="key.id" class="api-key-row">
+          <section id="profile-account-summary" v-loading="loading" class="profile-v2-summary">
+            <article class="profile-v2-card profile-v2-identity">
+              <span class="profile-v2-avatar">{{ user?.email?.slice(0, 1)?.toUpperCase() || 'U' }}</span>
+              <div class="profile-v2-identity-copy">
                 <div>
-                  <strong>{{ key.name }}</strong>
-                  <span :class="['api-key-status', key.status === 'active' ? 'active' : 'disabled']">{{ key.status === 'active' ? '启用' : '停用' }}</span>
-                  <code :class="['api-key-full-value', { muted: !key.keyPlain }]">{{ apiKeyValue(key) }}</code>
-                  <small>创建 {{ formatDate(key.createdAt) }} · 最近使用 {{ key.lastUsedAt ? formatDate(key.lastUsedAt) : '暂无' }}</small>
+                  <strong>{{ user?.email }}</strong>
                 </div>
-                <div class="api-key-actions">
-                  <button v-if="key.keyPlain" class="result-action" type="button" @click="copyText(key.keyPlain)">
-                    <i class="ti ti-copy"></i>
-                    复制
-                  </button>
-                  <button class="result-action" type="button" @click="toggleApiKey(key)">{{ key.status === 'active' ? '停用' : '启用' }}</button>
-                  <button class="result-action danger" type="button" @click="deleteApiKey(key)">删除</button>
-                </div>
-              </article>
-            </div>
-          </article>
-        </section>
+                <p>ID：{{ accountIdText }}</p>
+                <p>注册时间：{{ formatDate(user?.createdAt) }}</p>
+              </div>
+            </article>
 
-        <section class="profile-grid">
-          <article class="profile-panel profile-security">
-            <header class="profile-panel-head">
-              <div>
-                <span>Security</span>
-                <h3>修改密码</h3>
+            <article class="profile-v2-card profile-v2-metrics">
+              <div class="profile-v2-metric">
+                <span><i class="ti ti-crown"></i></span>
+                <div>
+                  <strong>{{ activeSubscription ? '已开通' : '免费版' }}</strong>
+                  <small>{{ activeSubscription ? memberPlanText : '当前订阅状态' }}</small>
+                </div>
               </div>
-              <i class="ti ti-shield-lock"></i>
-            </header>
-            <el-form class="profile-password-form" label-position="top" @submit.prevent>
-              <el-form-item label="当前密码">
-                <el-input v-model="passwordForm.oldPassword" type="password" show-password placeholder="请输入当前密码">
-                  <template #prefix><i class="ti ti-lock"></i></template>
-                </el-input>
-              </el-form-item>
-              <el-form-item label="新密码">
-                <el-input v-model="passwordForm.password" type="password" show-password placeholder="至少 6 个字符">
-                  <template #prefix><i class="ti ti-key"></i></template>
-                </el-input>
-              </el-form-item>
-              <el-form-item label="确认新密码">
-                <el-input v-model="passwordForm.confirmPassword" type="password" show-password placeholder="请再次输入新密码">
-                  <template #prefix><i class="ti ti-shield-check"></i></template>
-                </el-input>
-              </el-form-item>
-            </el-form>
-            <div class="profile-form-actions">
-              <button class="result-action" type="button" @click="resetPasswordForm">清空</button>
-              <el-button class="profile-submit-btn" type="primary" :loading="passwordLoading" @click="submitPassword">
-                <i class="ti ti-device-floppy"></i>
-                保存密码
-              </el-button>
-            </div>
-          </article>
+              <div class="profile-v2-metric">
+                <span class="blue"><i class="ti ti-edit"></i></span>
+                <div>
+                  <strong>{{ successfulTasks }}</strong>
+                  <small>最近记录中的成功任务</small>
+                </div>
+              </div>
+              <div class="profile-v2-metric">
+                <span class="blue"><i class="ti ti-clock"></i></span>
+                <div>
+                  <strong>{{ tasks.length }}</strong>
+                  <small>最近记录中的生成任务</small>
+                </div>
+              </div>
+            </article>
+          </section>
 
-          <article class="profile-panel profile-membership">
-            <header class="profile-panel-head">
-              <div>
-                <span>Membership</span>
-                <h3>会员信息</h3>
-              </div>
-              <i class="ti ti-crown"></i>
-            </header>
-            <div class="profile-membership-body">
-              <div :class="['profile-membership-badge', { active: subscription?.status === 'active' }]">
-                <i :class="['ti', subscription?.status === 'active' ? 'ti-shield-check' : 'ti-shield-plus']"></i>
+          <section class="profile-v2-grid profile-v2-security-row">
+            <article id="profile-security" class="profile-v2-card profile-v2-panel profile-v2-security profile-v2-security-wide">
+              <header class="profile-v2-panel-head">
+                <h3><i class="ti ti-shield-check"></i>安全设置</h3>
+              </header>
+              <el-form class="profile-v2-password-form" @submit.prevent>
+                <div class="profile-v2-password-field">
+                  <span class="profile-v2-password-label">当前密码</span>
+                  <el-input v-model="passwordForm.oldPassword" type="password" show-password placeholder="请输入当前密码" aria-label="当前密码" />
+                </div>
+                <div class="profile-v2-password-field">
+                  <span class="profile-v2-password-label">新密码</span>
+                  <el-input v-model="passwordForm.password" type="password" show-password placeholder="至少 6 个字符" aria-label="新密码" />
+                </div>
+                <div class="profile-v2-password-field">
+                  <span class="profile-v2-password-label">确认密码</span>
+                  <el-input v-model="passwordForm.confirmPassword" type="password" show-password placeholder="再次输入新密码" aria-label="确认密码" />
+                </div>
+              </el-form>
+              <div class="profile-v2-password-foot">
+                <ul>
+                  <li><i class="ti ti-circle-check-filled"></i>至少 6 个字符</li>
+                  <li><i class="ti ti-circle-check-filled"></i>包含字母和数字</li>
+                  <li><i class="ti ti-circle-check-filled"></i>区分大小写</li>
+                </ul>
                 <div>
-                  <span>{{ subscription?.status === 'active' ? '会员已开通' : '普通用户' }}</span>
-                  <strong>{{ subscription?.planName || '暂无订阅套餐' }}</strong>
+                  <button class="result-action" type="button" @click="resetPasswordForm">清空</button>
+                  <el-button class="profile-submit-btn" type="primary" :loading="passwordLoading" @click="submitPassword">更新密码</el-button>
                 </div>
               </div>
-              <dl>
-                <div>
-                  <dt>折扣</dt>
-                  <dd>{{ subscription?.discountPercent ? subscription.discountPercent + '%' : '-' }}</dd>
-                </div>
-                <div>
-                  <dt>到期时间</dt>
-                  <dd>{{ formatDate(subscription?.expiresAt) }}</dd>
-                </div>
-                <div>
-                  <dt>注册时间</dt>
-                  <dd>{{ formatDate(user?.createdAt) }}</dd>
-                </div>
-              </dl>
-            </div>
-          </article>
-        </section>
+            </article>
 
-        <section class="profile-grid profile-detail-grid">
-          <article class="profile-panel">
-            <header class="profile-panel-head">
-              <div>
-                <span>Credits</span>
-                <h3>{{ creditName || '积分' }}明细</h3>
-              </div>
-              <i class="ti ti-coins"></i>
-            </header>
-            <div v-if="creditLogs.length" class="profile-log-list">
-              <div v-for="log in creditLogs" :key="log.id" class="profile-log-row">
-                <span :class="['profile-log-type', log.type]">{{ creditLogLabel(log.type) }}</span>
-                <div>
-                  <strong>{{ log.remark || creditLogLabel(log.type) }}</strong>
-                  <small>{{ formatDate(log.createdAt) }}</small>
-                </div>
-                <em :class="log.type === 'deduct' ? 'negative' : 'positive'">
-                  {{ log.type === 'deduct' ? '-' : '+' }}{{ formatAmount(log.amount) }}
-                </em>
-                <small class="profile-log-balance">余额 {{ formatAmount(log.balanceAfter) }}</small>
-              </div>
-            </div>
-            <div v-else class="profile-mini-empty">暂无{{ creditName || '积分' }}明细</div>
-            <div v-if="creditLogsPagination" class="profile-pagination">
-              <span>{{ paginationText(creditLogsPagination, creditPage, creditPageSize) }}</span>
-              <div>
-                <button class="result-action" type="button" :disabled="!canPrev(creditPage)" @click="changeCreditPageBy(-1)">
-                  <i class="ti ti-chevron-left"></i>
-                  上一页
-                </button>
-                <strong>{{ creditPage }} / {{ pageCount(creditLogsPagination, creditPageSize) }}</strong>
-                <button class="result-action" type="button" :disabled="!canNext(creditLogsPagination, creditPage, creditPageSize)" @click="changeCreditPageBy(1)">
-                  下一页
-                  <i class="ti ti-chevron-right"></i>
-                </button>
-              </div>
-            </div>
-          </article>
+          </section>
 
-          <article class="profile-panel">
-            <header class="profile-panel-head">
-              <div>
-                <span>Tasks</span>
-                <h3>最近生成</h3>
-              </div>
-              <i class="ti ti-photo-spark"></i>
-            </header>
-            <div v-if="tasks.length" class="profile-task-list">
-              <div v-for="task in tasks" :key="task.id" class="profile-task-row">
-                <span :class="['profile-task-status', taskStatusClass(task.status)]">{{ taskStatusLabel(task.status) }}</span>
+          <section class="profile-v2-grid profile-v2-work-grid">
+            <article id="profile-membership" :class="['profile-v2-card', 'profile-v2-panel', 'profile-v2-membership', { active: activeSubscription }]">
+              <header class="profile-v2-panel-head">
+                <h3><i class="ti ti-crown"></i>会员信息</h3>
+                <span v-if="activeSubscription" class="profile-v2-member-badge">
+                  <i class="ti ti-sparkles"></i>
+                  订阅已生效
+                </span>
+              </header>
+              <div :class="['profile-v2-plan-card', { active: activeSubscription }]">
                 <div>
-                  <strong>{{ task.prompt || '图片生成任务' }}</strong>
-                  <small>{{ task.modelDisplayName || task.modelName || '模型' }} · {{ formatDate(task.createdAt) }}</small>
+                  <span>{{ activeSubscription ? '当前订阅' : '当前套餐' }}</span>
+                  <strong>{{ memberPlanText }}</strong>
+                  <em v-if="activeSubscription" class="profile-v2-plan-status">
+                    <i class="ti ti-crown"></i>
+                    会员权益已启用
+                  </em>
+                  <em v-else class="profile-v2-plan-status">
+                    <i class="ti ti-sparkles"></i>
+                    免费额度可用
+                  </em>
                 </div>
-                <em>{{ formatAmount(task.costCredits) }} {{ creditName || '积分' }}</em>
+                <button class="result-action profile-v2-subscribe-btn" type="button" @click="openSubscribe">{{ activeSubscription ? '续费会员' : '升级订阅' }}</button>
               </div>
-            </div>
-            <div v-else class="profile-mini-empty">暂无生成记录</div>
-            <div v-if="tasksPagination" class="profile-pagination">
-              <span>{{ paginationText(tasksPagination, taskPage, taskPageSize) }}</span>
-              <div>
-                <button class="result-action" type="button" :disabled="!canPrev(taskPage)" @click="changeTaskPageBy(-1)">
-                  <i class="ti ti-chevron-left"></i>
-                  上一页
-                </button>
-                <strong>{{ taskPage }} / {{ pageCount(tasksPagination, taskPageSize) }}</strong>
-                <button class="result-action" type="button" :disabled="!canNext(tasksPagination, taskPage, taskPageSize)" @click="changeTaskPageBy(1)">
-                  下一页
-                  <i class="ti ti-chevron-right"></i>
-                </button>
+              <div class="profile-v2-quota-card">
+                <div class="profile-v2-quota-summary">
+                  <div>
+                    <span>{{ activeSubscription ? '本周期剩余' : '当前可用' }}</span>
+                    <strong>{{ activeSubscription ? quotaRemainingText : effectiveQuotaRemainingText }}</strong>
+                  </div>
+                  <em>{{ quotaSummaryHint }}</em>
+                </div>
+                <div class="profile-v2-quota-bars">
+                  <div v-for="row in quotaUsageRows" :key="row.key" :class="['profile-v2-quota-row', row.status]">
+                    <div class="profile-v2-quota-row-head">
+                      <span class="profile-v2-quota-row-title">
+                        <span>{{ row.label }}</span>
+                        <b v-if="row.limitNote">{{ row.limitNote }}</b>
+                      </span>
+                      <strong>{{ row.displayRemaining }} / {{ row.limit }} 张</strong>
+                    </div>
+                    <div class="profile-v2-quota-track">
+                      <span :style="{ width: row.percent + '%' }"></span>
+                    </div>
+                    <div class="profile-v2-quota-row-foot">
+                      <small>已用 {{ row.used }} 张<span v-if="row.remainingNote"> · {{ row.remainingNote }}</span></small>
+                      <span v-if="row.resetText" class="profile-v2-quota-reset">
+                        <i class="ti ti-clock"></i>
+                        {{ activeSubscription ? '周期结束' : '恢复' }}：{{ row.resetText }}
+                      </span>
+                      <em>已用 {{ row.percentLabel }}</em>
+                    </div>
+                  </div>
+                </div>
+                <div class="profile-v2-quota-end">
+                  <span>{{ activeSubscription ? '订阅到期' : '月度周期' }}</span>
+                  <strong>{{ formatDate(subscription?.periodEndsAt || subscription?.expiresAt) }}</strong>
+                </div>
               </div>
-            </div>
-          </article>
-        </section>
+            </article>
+
+            <article id="profile-tasks" class="profile-v2-card profile-v2-panel profile-v2-recent">
+              <header class="profile-v2-panel-head">
+                <h3><i class="ti ti-photo-spark"></i>最近生成</h3>
+                <button class="profile-v2-link" type="button" @click="goHistory">查看全部</button>
+              </header>
+              <div v-if="tasks.length" class="profile-v2-task-list">
+                <div v-for="task in tasks" :key="task.id" class="profile-v2-task-row">
+                  <span :class="['profile-v2-task-status', taskStatusClass(task.status)]">{{ taskStatusLabel(task.status) }}</span>
+                  <div>
+                    <strong>{{ task.prompt || '图片生成任务' }}</strong>
+                    <small>{{ task.modelDisplayName || task.modelName || '模型' }} · {{ formatDate(task.createdAt) }}</small>
+                  </div>
+                  <em>{{ task.quantity || 1 }} 张</em>
+                </div>
+              </div>
+              <div v-else class="profile-v2-empty-box compact">
+                <i class="ti ti-photo-off"></i>
+                <span>暂无生成记录</span>
+              </div>
+              <div v-if="tasksPagination" class="profile-v2-pagination compact">
+                <span>{{ paginationText(tasksPagination, taskPage, taskPageSize) }}</span>
+                <div>
+                  <button class="result-action" type="button" :disabled="!canPrev(taskPage)" @click="changeTaskPageBy(-1)">上一页</button>
+                  <strong>{{ taskPage }} / {{ pageCount(tasksPagination, taskPageSize) }}</strong>
+                  <button class="result-action" type="button" :disabled="!canNext(tasksPagination, taskPage, taskPageSize)" @click="changeTaskPageBy(1)">下一页</button>
+                </div>
+              </div>
+            </article>
+          </section>
+        </main>
       </template>
     </div>
   `,

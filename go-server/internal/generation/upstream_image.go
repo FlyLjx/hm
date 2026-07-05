@@ -34,13 +34,23 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	if len(input.ReferenceImageURLs) > 0 {
 		items := make([]map[string]string, 0, len(input.ReferenceImageURLs))
 		urls := make([]string, 0, len(input.ReferenceImageURLs))
+		base64Images := make([]string, 0, len(input.ReferenceImageURLs))
 		for _, url := range input.ReferenceImageURLs {
 			if strings.TrimSpace(url) == "" {
 				continue
 			}
 			cleanURL := strings.TrimSpace(url)
-			urls = append(urls, cleanURL)
-			items = append(items, map[string]string{"url": cleanURL})
+			upstreamURL := cleanURL
+			if input.Operation == "edit" {
+				inlineImage, err := inlineEditImageData(ctx, cleanURL)
+				if err != nil {
+					return nil, err
+				}
+				upstreamURL = inlineImage.DataURL
+				base64Images = append(base64Images, inlineImage.Base64)
+			}
+			urls = append(urls, upstreamURL)
+			items = append(items, map[string]string{"url": upstreamURL})
 		}
 		if len(items) > 0 {
 			body["referenceImages"] = items
@@ -50,13 +60,26 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 			}
 			if input.Operation == "edit" {
 				body["image_url"] = urls[0]
-				body["image"] = urls[0]
+				if len(base64Images) > 0 {
+					body["image"] = base64Images[0]
+				} else {
+					body["image"] = urls[0]
+				}
 				body["image_urls"] = urls
 			}
 		}
 	}
 	if strings.TrimSpace(input.MaskImageURL) != "" {
-		body["maskImage"] = map[string]string{"url": strings.TrimSpace(input.MaskImageURL)}
+		maskURL := strings.TrimSpace(input.MaskImageURL)
+		if input.Operation == "edit" {
+			inlineMask, err := inlineEditImageData(ctx, maskURL)
+			if err != nil {
+				return nil, err
+			}
+			maskURL = inlineMask.DataURL
+			body["mask"] = inlineMask.Base64
+		}
+		body["maskImage"] = map[string]string{"url": maskURL}
 	}
 	payload, _ := json.Marshal(body)
 	endpoint := imageEndpoint(input.Provider, input.Operation)

@@ -102,7 +102,6 @@ export const adminApi = {
   login: (input) => request('/api/admin/login', json('POST', input)),
   getSession: () => request('/api/admin/session'),
   getDashboard: (params) => request(`/api/dashboard${query(params)}`),
-  getCostStats: (params) => request(`/api/finance-stats/costs${query(params)}`),
   listUsers: () => cachedGet('/api/users', 15000),
   createUser: (input) => request('/api/users', json('POST', input)),
   updateUser: (id, input) => request(`/api/users/${pathId(id)}`, json('PATCH', input)).then((result) => {
@@ -110,10 +109,6 @@ export const adminApi = {
     return result
   }),
   deleteUser: (id) => request(`/api/users/${pathId(id)}`, { method: 'DELETE' }).then((result) => {
-    clearAdminCache(['/api/users'])
-    return result
-  }),
-  rechargeUser: (id, input) => request(`/api/users/${pathId(id)}/recharge`, json('POST', input)).then((result) => {
     clearAdminCache(['/api/users'])
     return result
   }),
@@ -159,56 +154,27 @@ export const adminApi = {
   cancelTask: (id) => request(`/api/tasks/${pathId(id)}/cancel`, json('POST')),
   updateTaskDisplay: (id, input) => request(`/api/tasks/${pathId(id)}/display`, json('PATCH', input)),
   reviewTaskPublic: (id, input) => request(`/api/tasks/${pathId(id)}/public-review`, json('PATCH', input)),
-  listApiKeys: (params) => request(`/api/api-keys${query(params)}`),
-  updateApiKeyStatus: (id, input) => request(`/api/api-keys/${pathId(id)}`, json('PATCH', input)),
-  deleteApiKey: (id) => request(`/api/api-keys/${pathId(id)}`, { method: 'DELETE' }),
-  listApiKeyLogs: (id, params) => request(`/api/api-keys/${pathId(id)}/logs${query(params)}`),
-  listApiLogs: (params) => request(`/api/api-logs${query(params)}`),
-  getApiLogStats: (params) => request(`/api/api-logs/stats${query(params)}`),
-  getApiLogDetail: (id) => request(`/api/api-logs/${pathId(id)}`),
-  cleanupApiLogs: () => request('/api/api-logs/cleanup', json('POST')),
-  listCreditLogs: (params) => request(`/api/credit-logs${query(params)}`),
-  getCreditLogStats: (params) => request(`/api/credit-logs/stats${query(params)}`),
-  deleteCreditLog: (id) => request(`/api/credit-logs/${pathId(id)}`, { method: 'DELETE' }),
 
   listRechargeOrders: (params) => request(`/api/recharge/orders${query(params)}`),
-  listRechargeProducts: () => request('/api/shop/recharge-products'),
-  createRechargeProduct: (input) => request('/api/shop/recharge-products', json('POST', input)),
-  updateRechargeProduct: (id, input) => request(`/api/shop/recharge-products/${pathId(id)}`, json('PATCH', input)),
-  deleteRechargeProduct: (id) => request(`/api/shop/recharge-products/${pathId(id)}`, { method: 'DELETE' }),
   listSubscriptionPlans: () => request('/api/subscriptions/plans'),
   createSubscriptionPlan: (input) => request('/api/subscriptions/plans', json('POST', input)),
   updateSubscriptionPlan: (id, input) => request(`/api/subscriptions/plans/${pathId(id)}`, json('PATCH', input)),
   deleteSubscriptionPlan: (id) => request(`/api/subscriptions/plans/${pathId(id)}`, { method: 'DELETE' }),
 
-  listRedeemCodes: (params) => request(`/api/redeem-codes${query(params)}`),
-  createRedeemCodes: (input) => request('/api/redeem-codes', json('POST', input)),
-  updateRedeemCode: (id, input) => request(`/api/redeem-codes/${pathId(id)}`, json('PATCH', input)),
-  deleteRedeemCode: (id) => request(`/api/redeem-codes/${pathId(id)}`, { method: 'DELETE' }),
-
-  listCheckins: (params) => request(`/api/checkins${query(params)}`),
-  deleteCheckin: (id) => request(`/api/checkins/${pathId(id)}`, { method: 'DELETE' }),
   listInvites: (params) => request(`/api/invites${query(params)}`),
   deleteInvite: (id) => request(`/api/invites/${pathId(id)}`, { method: 'DELETE' }),
   listUserActivityRanking: (params) => request(`/api/users/activity-ranking${query(params)}`),
 
   listAnnouncements: () => request('/api/announcements'),
-  generateAnnouncement: (input) => request('/api/announcements/generate', json('POST', input)),
   createAnnouncement: (input) => request('/api/announcements', json('POST', input)),
   updateAnnouncement: (id, input) => request(`/api/announcements/${pathId(id)}`, json('PATCH', input)),
   deleteAnnouncement: (id) => request(`/api/announcements/${pathId(id)}`, { method: 'DELETE' }),
-
-  listPromotions: () => request('/api/promotions'),
-  createPromotion: (input) => request('/api/promotions', json('POST', input)),
-  updatePromotion: (id, input) => request(`/api/promotions/${pathId(id)}`, json('PATCH', input)),
-  deletePromotion: (id) => request(`/api/promotions/${pathId(id)}`, { method: 'DELETE' }),
 
   getSettings: () => cachedGet('/api/settings', 10000),
   updateSettings: (input) => request('/api/settings', json('PATCH', input)).then((result) => {
     clearAdminCache(['/api/settings'])
     return result
   }),
-  sendTestBark: () => request('/api/settings/test-bark', json('POST')),
   getAccountPoolSettings: () => cachedGet('/api/settings/account-pool', 10000),
   updateAccountPoolSettings: (input) => request('/api/settings/account-pool', json('PATCH', input)).then((result) => {
     clearAdminCache(['/api/settings/account-pool'])

@@ -108,56 +108,58 @@ export const FavoritesPage = {
   },
   template: `
     <div class="page-stack">
-      <section class="favorites-hero">
-        <div>
-          <span class="eyebrow">Collection</span>
-          <h2>我的收藏</h2>
-          <p>把满意的生成结果收进这里，继续改图、提交公开审核，或者回看高清原图。</p>
-        </div>
-        <button class="result-action primary" type="button" @click="loadFavorites">
-          <i class="ti ti-refresh"></i>
-          刷新
-        </button>
-      </section>
-
-      <section v-if="!currentUser" class="favorites-empty">
+      <section v-if="!currentUser" class="auth-required-panel favorites-auth">
         <i class="ti ti-heart"></i>
         <strong>登录后查看收藏</strong>
         <p>收藏会跟随账号保存，方便你后续继续创作。</p>
-        <button class="result-action primary" type="button" @click="$emit('login')">去登录</button>
+        <button class="auth-required-button" type="button" @click="$emit('login')">去登录</button>
       </section>
 
-      <section v-else v-loading="loading" class="favorite-board">
-        <article v-for="task in items" :key="task.id" class="favorite-card">
-          <button class="favorite-cover plain-btn" type="button" @click="previewTask(task)">
-            <img :src="task.thumbnailUrl || task.resultUrl" :alt="task.displayNote || task.prompt || '收藏作品'" />
-            <span>{{ publicStatusLabel(task.publicStatus) }}</span>
+      <template v-else>
+        <section class="favorites-hero">
+          <div>
+            <span class="eyebrow">Collection</span>
+            <h2>我的收藏</h2>
+            <p>把满意的生成结果收进这里，继续改图、提交公开审核，或者回看高清原图。</p>
+          </div>
+          <button class="result-action primary" type="button" @click="loadFavorites">
+            <i class="ti ti-refresh"></i>
+            刷新
           </button>
-          <div class="favorite-body">
-            <strong>{{ task.displayNote || '收藏作品' }}</strong>
-            <p>{{ task.prompt }}</p>
-            <div class="favorite-meta">
-              <span>{{ task.modelDisplayName || task.modelName || '模型' }}</span>
-              <span>{{ task.size || task.sizeTier }}</span>
-            </div>
-          </div>
-          <div class="favorite-actions">
-            <button class="result-action" type="button" @click="previewTask(task)"><i class="ti ti-maximize"></i>预览</button>
-            <button class="result-action primary" type="button" @click="editTask(task)"><i class="ti ti-wand"></i>继续改</button>
-            <button class="result-action" type="button" :disabled="task.publicStatus === 'pending' || task.publicStatus === 'approved'" @click="requestPublic(task)">
-              <i class="ti ti-world-upload"></i>{{ task.publicStatus === 'pending' ? '审核中' : task.publicStatus === 'approved' ? '已公开' : '公开' }}
-            </button>
-            <button class="result-action danger-soft" type="button" @click="unFavorite(task)"><i class="ti ti-heart-off"></i>移除</button>
-          </div>
-        </article>
-        <div v-if="!hasItems && !loading" class="favorites-empty">
-          <i class="ti ti-folder-heart"></i>
-          <strong>还没有收藏作品</strong>
-          <p>在生图结果上点击收藏后，会显示在这里。</p>
-        </div>
-      </section>
+        </section>
 
-      <div v-if="pagination && pagination.total > pageSize" class="favorites-pagination">
+        <section v-loading="loading" class="favorite-board">
+          <article v-for="task in items" :key="task.id" class="favorite-card">
+            <button class="favorite-cover plain-btn" type="button" @click="previewTask(task)">
+              <img :src="task.thumbnailUrl || task.resultUrl" :alt="task.displayNote || task.prompt || '收藏作品'" />
+              <span>{{ publicStatusLabel(task.publicStatus) }}</span>
+            </button>
+            <div class="favorite-body">
+              <strong>{{ task.displayNote || '收藏作品' }}</strong>
+              <p>{{ task.prompt }}</p>
+              <div class="favorite-meta">
+                <span>{{ task.modelDisplayName || task.modelName || '模型' }}</span>
+                <span>{{ task.size || task.sizeTier }}</span>
+              </div>
+            </div>
+            <div class="favorite-actions">
+              <button class="result-action" type="button" @click="previewTask(task)"><i class="ti ti-maximize"></i>预览</button>
+              <button class="result-action primary" type="button" @click="editTask(task)"><i class="ti ti-wand"></i>继续改</button>
+              <button class="result-action" type="button" :disabled="task.publicStatus === 'pending' || task.publicStatus === 'approved'" @click="requestPublic(task)">
+                <i class="ti ti-world-upload"></i>{{ task.publicStatus === 'pending' ? '审核中' : task.publicStatus === 'approved' ? '已公开' : '公开' }}
+              </button>
+              <button class="result-action danger-soft" type="button" @click="unFavorite(task)"><i class="ti ti-heart-off"></i>移除</button>
+            </div>
+          </article>
+          <div v-if="!hasItems && !loading" class="favorites-empty">
+            <i class="ti ti-folder-heart"></i>
+            <strong>还没有收藏作品</strong>
+            <p>在生图结果上点击收藏后，会显示在这里。</p>
+          </div>
+        </section>
+      </template>
+
+      <div v-if="currentUser && pagination && pagination.total > pageSize" class="favorites-pagination">
         <el-pagination v-model:current-page="page" :page-size="pageSize" :total="pagination.total" layout="prev, pager, next" @current-change="loadFavorites" />
       </div>
     </div>

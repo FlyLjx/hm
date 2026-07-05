@@ -10,7 +10,9 @@ export function readTransferredPrompt() {
     if (!raw) return null
     sessionStorage.removeItem(PROMPT_TRANSFER_KEY)
     const parsed = JSON.parse(raw)
-    return typeof parsed.prompt === 'string' && parsed.prompt.trim() ? parsed : null
+    const hasPrompt = typeof parsed.prompt === 'string' && parsed.prompt.trim()
+    const hasGenerationOptions = Boolean(parsed.modelId || parsed.model || parsed.ratio || parsed.sizeTier || parsed.imageUrl)
+    return hasPrompt || hasGenerationOptions ? parsed : null
   } catch {
     sessionStorage.removeItem(PROMPT_TRANSFER_KEY)
     return null

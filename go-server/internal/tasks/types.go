@@ -63,9 +63,9 @@ type PublicTask struct {
 	TransparentBackground bool     `json:"transparentBackground"`
 	Quantity              int      `json:"quantity"`
 	UserIP                string   `json:"userIp"`
-	CostCredits           float64  `json:"costCredits"`
-	ModelCostCredits      float64  `json:"modelCostCredits"`
-	RemainingCredits      float64  `json:"remainingCredits"`
+	CostCredits           float64  `json:"-"`
+	ModelCostCredits      float64  `json:"-"`
+	RemainingCredits      float64  `json:"-"`
 	DurationSeconds       float64  `json:"durationSeconds"`
 	Status                Status   `json:"status"`
 	ErrorMessage          *string  `json:"errorMessage"`
@@ -91,22 +91,22 @@ type PublicTask struct {
 }
 
 type AdminTaskListItem struct {
-	ID                       string   `json:"id"`
-	UserID                   string   `json:"userId"`
-	UserEmail                *string  `json:"userEmail,omitempty"`
-	ModelID                  string   `json:"modelId"`
-	ModelName                *string  `json:"modelName,omitempty"`
-	ModelDisplayName         *string  `json:"modelDisplayName,omitempty"`
-	SizeTier                 string   `json:"sizeTier"`
-	Size                     *string  `json:"size"`
-	Quantity                 int      `json:"quantity"`
-	UserIP                   string   `json:"userIp"`
-	CostCredits              float64  `json:"costCredits"`
-	DurationSeconds          float64  `json:"durationSeconds"`
-	Status                   Status   `json:"status"`
-	ErrorMessage             *string  `json:"errorMessage"`
-	CreatedAt                string   `json:"createdAt"`
-	UserSubscriptionPlanName *string  `json:"userSubscriptionPlanName,omitempty"`
+	ID                       string  `json:"id"`
+	UserID                   string  `json:"userId"`
+	UserEmail                *string `json:"userEmail,omitempty"`
+	ModelID                  string  `json:"modelId"`
+	ModelName                *string `json:"modelName,omitempty"`
+	ModelDisplayName         *string `json:"modelDisplayName,omitempty"`
+	SizeTier                 string  `json:"sizeTier"`
+	Size                     *string `json:"size"`
+	Quantity                 int     `json:"quantity"`
+	UserIP                   string  `json:"userIp"`
+	CostCredits              float64 `json:"-"`
+	DurationSeconds          float64 `json:"durationSeconds"`
+	Status                   Status  `json:"status"`
+	ErrorMessage             *string `json:"errorMessage"`
+	CreatedAt                string  `json:"createdAt"`
+	UserSubscriptionPlanName *string `json:"userSubscriptionPlanName,omitempty"`
 }
 
 func ToPublic(task *Task) PublicTask {
@@ -133,6 +133,10 @@ func ToPublic(task *Task) PublicTask {
 	if len(directResultURLs) > 0 {
 		directResultURL = &directResultURLs[0]
 	}
+	displayQuantity := task.Quantity
+	if task.Status == StatusSuccess && len(directResultURLs) > 0 {
+		displayQuantity = len(directResultURLs)
+	}
 	publicRequestedAt := formatOptionalTime(task.PublicRequestedAt)
 	publicReviewedAt := formatOptionalTime(task.PublicReviewedAt)
 	return PublicTask{
@@ -147,7 +151,7 @@ func ToPublic(task *Task) PublicTask {
 		Size:                  task.Size,
 		OutputFormat:          task.OutputFormat,
 		TransparentBackground: task.TransparentBackground,
-		Quantity:              task.Quantity,
+		Quantity:              displayQuantity,
 		UserIP:                task.UserIP,
 		CostCredits:           task.CostCredits,
 		ModelCostCredits:      task.ModelCostCredits,

@@ -1,45 +1,38 @@
 import { adminApi } from '../api.js'
-import { amount, formatDate, text } from '../format.js'
+import { formatDate, text } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
-const { computed, onMounted, ref } = Vue
+const { computed, onMounted, reactive, ref, watch } = Vue
+const { message } = antd
 
 export const OperationsPage = {
   components: { CrudPage },
   props: { mode: String },
   setup(props) {
-    const mode = computed(() => props.mode || 'checkins')
+    const mode = computed(() => props.mode || 'announcements')
     const userOptions = ref([])
-    const promotionIconOptions = [
-      { label: '公告', value: 'ti-speakerphone' },
-      { label: '闪电', value: 'ti-bolt' },
-      { label: '礼物', value: 'ti-gift' },
-      { label: '折扣', value: 'ti-discount-2' },
-      { label: '火热', value: 'ti-flame' },
-      { label: '星光', value: 'ti-sparkles' },
-      { label: '皇冠', value: 'ti-crown' },
-      { label: '图片', value: 'ti-photo' },
-      { label: '钱包', value: 'ti-wallet' },
-      { label: '火箭', value: 'ti-rocket' },
-    ]
+    const subscriptionPlans = ref([])
+    const settingsLoading = ref(false)
+    const settingsSaving = ref(false)
+    const inviteSettingsVisible = ref(false)
+    const operationSettings = reactive({
+      inviteEnabled: true,
+      inviteRewardPlanId: '',
+    })
+    const subscriptionPlanOptions = computed(() => subscriptionPlans.value.map((plan) => ({
+      label: `${plan.name} / ${plan.durationDays} 天`,
+      value: plan.id,
+      searchText: `${plan.name} ${plan.description || ''}`,
+    })))
     const announcementFields = computed(() => [
       { key: 'title', label: '标题', required: true },
-      { key: 'content', label: '内容（Markdown）', type: 'textarea', rows: 12, preview: 'markdown', required: true, full: true, aiGenerate: adminApi.generateAnnouncement },
+      { key: 'content', label: '内容（Markdown）', type: 'textarea', rows: 12, preview: 'markdown', required: true, full: true },
       { key: 'displayMode', label: '展示方式', type: 'select', defaultValue: 'popup', options: [{ label: '弹窗公告', value: 'popup' }, { label: '首页横幅', value: 'home' }, { label: '顶部通知条', value: 'topbar' }] },
       { key: 'targetType', label: '展示范围', type: 'select', defaultValue: 'all', options: [{ label: '全部用户', value: 'all' }, { label: '指定用户', value: 'specific' }] },
       { key: 'userIds', label: '指定用户', type: 'multiple-select', options: userOptions.value, placeholder: '搜索邮箱或用户ID，可多选', full: true },
       { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
       { key: 'sortOrder', label: '排序', type: 'number', number: true, defaultValue: 0 },
     ])
-    const promotionFields = [
-      { key: 'title', label: '标题', required: true },
-      { key: 'content', label: '内容', type: 'textarea', required: true, full: true },
-      { key: 'badge', label: '图标', type: 'select', defaultValue: 'ti-speakerphone', options: promotionIconOptions },
-      { key: 'actionText', label: '按钮文字', nullable: true },
-      { key: 'actionUrl', label: '跳转地址', type: 'url', nullable: true, full: true },
-      { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
-      { key: 'sortOrder', label: '排序', type: 'number', number: true, defaultValue: 0 },
-    ]
     function normalizeAnnouncement(input) {
       const userIds = Array.isArray(input.userIds)
         ? input.userIds.filter(Boolean)
@@ -54,8 +47,69 @@ export const OperationsPage = {
         value: user.id,
       }))
     }
-    onMounted(loadUsers)
-    return { mode, adminApi, announcementFields, promotionFields, normalizeAnnouncement, amount, formatDate, text }
+    async function loadSubscriptionPlans() {
+      if (mode.value !== 'invites') return
+      try {
+        const response = await adminApi.listSubscriptionPlans()
+        subscriptionPlans.value = (response.data || []).filter((plan) => plan.status === 'active')
+      } catch {
+        subscriptionPlans.value = []
+      }
+    }
+    async function loadFeatureSettings() {
+      if (mode.value !== 'invites') return
+      settingsLoading.value = true
+      try {
+        const response = await adminApi.getSettings()
+        const data = response.data || {}
+        operationSettings.inviteEnabled = data.inviteEnabled !== false
+        operationSettings.inviteRewardPlanId = data.inviteRewardPlanId || ''
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '运营配置加载失败')
+      } finally {
+        settingsLoading.value = false
+      }
+    }
+    async function saveInviteSettings() {
+      if (!operationSettings.inviteRewardPlanId) {
+        message.warning('请选择要赠送的订阅套餐')
+        return
+      }
+      settingsSaving.value = true
+      try {
+        await adminApi.updateSettings({
+          inviteEnabled: operationSettings.inviteEnabled === true,
+          inviteRewardType: 'subscription',
+          inviteRewardPlanId: operationSettings.inviteRewardPlanId || '',
+        })
+        message.success('邀请配置已保存')
+        inviteSettingsVisible.value = false
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '邀请配置保存失败')
+      } finally {
+        settingsSaving.value = false
+      }
+    }
+    function openInviteSettings() {
+      inviteSettingsVisible.value = true
+    }
+    function closeInviteSettings() {
+      inviteSettingsVisible.value = false
+    }
+    const inviteActions = computed(() => [
+      { key: 'invite-settings', label: '邀请配置', icon: 'ti-settings', onClick: openInviteSettings },
+    ])
+    onMounted(() => {
+      loadUsers()
+      loadSubscriptionPlans()
+      loadFeatureSettings()
+    })
+    watch(() => props.mode, () => {
+      loadUsers()
+      loadSubscriptionPlans()
+      loadFeatureSettings()
+    })
+    return { mode, adminApi, announcementFields, closeInviteSettings, inviteActions, inviteSettingsVisible, normalizeAnnouncement, operationSettings, formatDate, saveInviteSettings, settingsLoading, settingsSaving, subscriptionPlanOptions, text }
   },
   template: `
     <CrudPage v-if="mode === 'announcements'" title="公告管理" singular="公告" description="管理前台弹窗公告。"
@@ -71,34 +125,54 @@ export const OperationsPage = {
         { label: '更新时间', key: 'updatedAt', format: 'date' },
       ]"
     />
-    <CrudPage v-else-if="mode === 'promotions'" title="促销管理" singular="促销" description="维护前台运营活动。"
-      :list="adminApi.listPromotions" :create="adminApi.createPromotion" :update="adminApi.updatePromotion" :delete="adminApi.deletePromotion" :fields="promotionFields"
-      :columns="[
-        { label: '标题', key: 'title' },
-        { label: '内容', key: 'content' },
-        { label: '图标', key: 'badge' },
-        { label: '按钮', key: 'actionText' },
-        { label: '排序', key: 'sortOrder' },
-        { label: '状态', key: 'status', format: 'status' },
-      ]"
-    />
-    <CrudPage v-else-if="mode === 'invites'" title="邀请管理" description="查看邀请奖励、邀请人、被邀请人和来源 IP，删除后会自动扣回奖励积分。" paginated search :list="adminApi.listInvites" :delete="adminApi.deleteInvite"
-      :columns="[
-        { label: '邀请人', render: row => text(row.inviterEmail || row.inviterId) },
-        { label: '被邀请人', render: row => text(row.inviteeEmail || row.inviteeId) },
-        { label: '奖励额度', render: row => '+' + amount(row.rewardCredits) },
-        { label: '被邀请IP', key: 'inviteeIp' },
-        { label: '创建时间', key: 'createdAt', format: 'date' },
-      ]"
-    />
-    <CrudPage v-else title="签到管理" description="查看签到记录，删除后会按后端规则扣回奖励额度。" paginated search :list="adminApi.listCheckins" :delete="adminApi.deleteCheckin"
-      :columns="[
-        { label: '用户', render: row => text(row.userEmail || row.userId) },
-        { label: '奖励额度', render: row => '+' + amount(row.rewardCredits) },
-        { label: '签到日期', key: 'checkinDate' },
-        { label: 'IP', key: 'userIp' },
-        { label: '创建时间', key: 'createdAt', format: 'date' },
-      ]"
-    />
+    <div v-else-if="mode === 'invites'" class="feature-page-stack">
+      <CrudPage title="邀请管理" description="查看邀请奖励、邀请人、被邀请人和来源 IP。" paginated search :list="adminApi.listInvites" :delete="adminApi.deleteInvite"
+        :actions="inviteActions"
+        :columns="[
+          { label: '邀请人', render: row => text(row.inviterEmail || row.inviterId) },
+          { label: '被邀请人', render: row => text(row.inviteeEmail || row.inviteeId) },
+          { label: '奖励', render: row => '订阅：' + (row.rewardLabel || '-') },
+          { label: '被邀请IP', key: 'inviteeIp' },
+          { label: '创建时间', key: 'createdAt', format: 'date' },
+        ]"
+      />
+      <a-drawer
+        :open="inviteSettingsVisible"
+        title="邀请配置"
+        width="min(92vw, 520px)"
+        class="admin-edit-drawer invite-settings-drawer"
+        destroy-on-close
+        @close="closeInviteSettings"
+      >
+        <div class="invite-settings-drawer-body">
+          <div class="invite-drawer-summary">
+            <div>
+              <span>当前状态</span>
+              <strong>{{ operationSettings.inviteEnabled ? '邀请入口已开启' : '邀请入口已关闭' }}</strong>
+            </div>
+            <a-switch v-model:checked="operationSettings.inviteEnabled" checked-children="开" un-checked-children="关" />
+          </div>
+
+          <label class="invite-drawer-field">
+            <span>赠送套餐</span>
+            <a-select v-model:value="operationSettings.inviteRewardPlanId" show-search allow-clear option-filter-prop="searchText" placeholder="选择要赠送的订阅套餐" style="width:100%">
+              <a-select-option v-for="plan in subscriptionPlanOptions" :key="plan.value" :value="plan.value" :label="plan.label" :search-text="plan.searchText">{{ plan.label }}</a-select-option>
+            </a-select>
+          </label>
+
+          <div class="invite-settings-note">
+            <i class="ti ti-info-circle"></i>
+            <span>好友通过邀请链接注册并完成邮箱验证后，邀请人会获得所选订阅套餐。</span>
+          </div>
+        </div>
+        <template #footer>
+          <div class="drawer-footer-actions">
+            <a-button @click="closeInviteSettings">取消</a-button>
+            <a-button type="primary" :loading="settingsSaving" :disabled="settingsLoading" @click="saveInviteSettings">保存配置</a-button>
+          </div>
+        </template>
+      </a-drawer>
+    </div>
+    <a-empty v-else description="该模块已移除" />
   `,
 }

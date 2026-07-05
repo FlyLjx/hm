@@ -13,8 +13,7 @@ export const DashboardPage = {
     const orders = ref([])
     const tasks = ref([])
     const dashboard = ref(null)
-    const creditName = computed(() => props.settings?.creditName || '积分')
-    const stats = computed(() => dashboard.value?.taskStats || { total: 0, queued: 0, pending: 0, processing: 0, success: 0, failed: 0, canceled: 0, totalImages: 0, totalCredits: 0 })
+    const stats = computed(() => dashboard.value?.taskStats || { total: 0, queued: 0, pending: 0, processing: 0, success: 0, failed: 0, canceled: 0, totalImages: 0 })
     const taskSuccessRate = computed(() => stats.value.total ? Math.round((stats.value.success / stats.value.total) * 100) : 0)
     const today = computed(() => dashboard.value?.today || {})
     const pending = computed(() => dashboard.value?.pending || {})
@@ -31,14 +30,13 @@ export const DashboardPage = {
       { label: '用户总数', value: amount(dashboard.value?.users?.total || 0), note: `启用 ${dashboard.value?.users?.active || 0} 人`, icon: 'ti-users', tone: 'blue' },
       { label: '订单总数', value: amount(dashboard.value?.orders?.all || 0), note: `已支付 ${dashboard.value?.orders?.paid || 0} 单`, icon: 'ti-shopping-cart', tone: 'green' },
       { label: '任务成功率', value: `${taskSuccessRate.value}%`, note: `成功 ${stats.value.success} / 总计 ${stats.value.total}`, icon: 'ti-chart-dots', tone: taskSuccessRate.value >= 90 ? 'green' : 'orange' },
-      { label: `消耗${creditName.value}`, value: amount(stats.value.totalCredits), note: `生成 ${stats.value.totalImages} 张图片`, icon: 'ti-coins', tone: 'violet' },
+      { label: '生成图片', value: amount(stats.value.totalImages), note: `成功任务 ${stats.value.success} 个`, icon: 'ti-photo-spark', tone: 'violet' },
       { label: '接口服务商', value: amount(system.value.activeProviders || 0), note: `禁用 ${system.value.disabledProviders || 0} 个`, icon: 'ti-plug-connected', tone: Number(system.value.disabledProviders || 0) ? 'orange' : 'green' },
       { label: '生图模型', value: amount(system.value.activeModels || 0), note: `禁用 ${system.value.disabledModels || 0} 个`, icon: 'ti-robot', tone: Number(system.value.disabledModels || 0) ? 'orange' : 'blue' },
     ])
     const orderColumns = [
       { title: '用户', key: 'user', width: 180 },
       { title: '金额', key: 'amount', width: 90 },
-      { title: creditName.value, key: 'credits', width: 90 },
       { title: '状态', key: 'status', width: 90 },
       { title: '时间', key: 'time', width: 150 },
     ]
@@ -46,7 +44,6 @@ export const DashboardPage = {
       { title: '用户', key: 'user', width: 170 },
       { title: '模型', key: 'model', width: 160 },
       { title: '数量', key: 'quantity', width: 70 },
-      { title: `扣除${creditName.value}`, key: 'cost', width: 90 },
       { title: '状态', key: 'status', width: 90 },
       { title: '时间', key: 'time', width: 150 },
     ]
@@ -99,7 +96,6 @@ export const DashboardPage = {
       formatCurrency,
       amount,
       statusItem,
-      creditName,
     }
   },
   template: `
@@ -171,7 +167,6 @@ export const DashboardPage = {
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'user'"><span class="cell-ellipsis">{{ record.userEmail || record.userId }}</span></template>
               <template v-else-if="column.key === 'amount'">¥{{ formatCurrency(record.amount) }}</template>
-              <template v-else-if="column.key === 'credits'">{{ amount(record.credits) }}</template>
               <template v-else-if="column.key === 'status'"><a-tag :color="statusItem('order', record.status).color">{{ statusItem('order', record.status).label }}</a-tag></template>
               <template v-else-if="column.key === 'time'">{{ formatDate(record.createdAt) }}</template>
             </template>
@@ -180,12 +175,11 @@ export const DashboardPage = {
 
         <a-card class="dashboard-section-card dashboard-table-panel" :bordered="false">
           <template #title>最近任务</template>
-          <a-table :columns="taskColumns" :data-source="tasks" :pagination="false" :scroll="{ x: 730 }" row-key="id" size="small">
+          <a-table :columns="taskColumns" :data-source="tasks" :pagination="false" :scroll="{ x: 640 }" row-key="id" size="small">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'user'"><span class="cell-ellipsis">{{ record.userEmail || record.userId }}</span></template>
               <template v-else-if="column.key === 'model'"><span class="cell-ellipsis">{{ record.modelDisplayName || record.modelName || record.modelId }}</span></template>
               <template v-else-if="column.key === 'quantity'">{{ record.quantity }}</template>
-              <template v-else-if="column.key === 'cost'">{{ amount(record.costCredits) }}</template>
               <template v-else-if="column.key === 'status'"><a-tag :color="statusItem('task', record.status).color">{{ statusItem('task', record.status).label }}</a-tag></template>
               <template v-else-if="column.key === 'time'">{{ formatDate(record.createdAt) }}</template>
             </template>

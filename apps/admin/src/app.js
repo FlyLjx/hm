@@ -2,7 +2,7 @@ import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.j
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260617-01'
+const ADMIN_ASSET_VERSION = '20260705-ai-pai-brand-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -30,9 +30,6 @@ const DashboardPage = lazyPage(() => import(`./pages/dashboard.js?v=${ADMIN_ASSE
 const UsersPage = lazyPage(() => import(`./pages/users.js?v=${ADMIN_ASSET_VERSION}`), 'UsersPage')
 const ModelCenterPage = lazyPage(() => import(`./pages/model-center.js?v=${ADMIN_ASSET_VERSION}`), 'ModelCenterPage')
 const TasksPage = lazyPage(() => import(`./pages/tasks.js?v=${ADMIN_ASSET_VERSION}`), 'TasksPage')
-const ApiKeysPage = lazyPage(() => import(`./pages/api-keys.js?v=${ADMIN_ASSET_VERSION}`), 'ApiKeysPage')
-const ApiLogsPage = lazyPage(() => import(`./pages/api-logs.js?v=${ADMIN_ASSET_VERSION}`), 'ApiLogsPage')
-const CreditCenterPage = lazyPage(() => import(`./pages/credit-center.js?v=${ADMIN_ASSET_VERSION}`), 'CreditCenterPage')
 const FinancePage = lazyPage(() => import(`./pages/finance.js?v=${ADMIN_ASSET_VERSION}`), 'FinancePage')
 const OperationsPage = lazyPage(() => import(`./pages/operations.js?v=${ADMIN_ASSET_VERSION}`), 'OperationsPage')
 const SettingsPage = lazyPage(() => import(`./pages/settings.js?v=${ADMIN_ASSET_VERSION}`), 'SettingsPage')
@@ -47,20 +44,13 @@ const menuGroups = [
   ] },
   { title: '创作内容', items: [
     { id: 'tasks', label: '任务列表', desc: '生成记录', icon: 'ti-list-check', component: TasksPage },
-    { id: 'api-keys', label: 'Key 管理', desc: '用户接口 Key', icon: 'ti-key', component: ApiKeysPage },
-    { id: 'api-logs', label: 'API 日志', desc: '图片与操作', icon: 'ti-activity-heartbeat', component: ApiLogsPage },
     { id: 'images', label: '图片管理', desc: '公开展示', icon: 'ti-photo', component: TasksPage, props: { mode: 'images' } },
     { id: 'announcements', label: '公告管理', desc: '弹层签收', icon: 'ti-speakerphone', component: OperationsPage, props: { mode: 'announcements' } },
-    { id: 'promotions', label: '促销管理', desc: '活动广告', icon: 'ti-discount-2', component: OperationsPage, props: { mode: 'promotions' } },
   ] },
   { title: '运营财务', items: [
-    { id: 'credit-center', label: '积分与统计', desc: '收入、成本、流水', icon: 'ti-chart-bar', component: CreditCenterPage },
     { id: 'orders', label: '订单列表', desc: '支付订单', icon: 'ti-receipt', component: FinancePage, props: { mode: 'orders' } },
-    { id: 'redeem-codes', label: '卡密兑换', desc: '兑换码', icon: 'ti-ticket', component: FinancePage, props: { mode: 'redeem' } },
     { id: 'subscriptions', label: '订阅套餐', desc: '会员权益', icon: 'ti-crown', component: FinancePage, props: { mode: 'subscriptions' } },
-    { id: 'checkins', label: '签到管理', desc: '签到记录', icon: 'ti-calendar-check', component: OperationsPage, props: { mode: 'checkins' } },
     { id: 'invites', label: '邀请管理', desc: '邀请奖励', icon: 'ti-user-plus', component: OperationsPage, props: { mode: 'invites' } },
-    { id: 'shop', label: '商品管理', desc: '充值套餐', icon: 'ti-shopping-bag', component: FinancePage, props: { mode: 'shop' } },
   ] },
   { title: '系统管理', items: [
     { id: 'mail-broadcast', label: '邮件群发', desc: '用户通知', icon: 'ti-mail', component: MailBroadcastPage },
@@ -75,8 +65,6 @@ const legacyRoutes = new Map([
   ['models', { id: 'models', label: '模型管理', component: ModelCenterPage, props: { initialTab: 'models' }, menuId: 'model-center' }],
   ['model-mappings', { id: 'model-mappings', label: '模型映射', component: ModelCenterPage, props: { initialTab: 'mappings' }, menuId: 'model-center' }],
   ['account-pool', { id: 'account-pool', label: '号池管理', component: ModelCenterPage, props: { initialTab: 'account-pool' }, menuId: 'model-center' }],
-  ['cost-stats', { id: 'cost-stats', label: '成本统计', component: CreditCenterPage, props: { initialTab: 'stats' }, menuId: 'credit-center' }],
-  ['credit-logs', { id: 'credit-logs', label: '积分流水', component: CreditCenterPage, props: { initialTab: 'logs' }, menuId: 'credit-center' }],
 ])
 const routes = new Map([...visibleRoutes, ...legacyRoutes])
 
@@ -87,7 +75,7 @@ function getRouteId() {
 
 const App = {
   setup() {
-    const settings = ref({ logoText: 'AIπ', creditName: '积分' })
+    const settings = ref({ logoText: 'ai-pai' })
     const authed = ref(Boolean(getAdminToken()))
     const authChecking = ref(Boolean(getAdminToken()))
     const loginLoading = ref(false)
@@ -179,7 +167,7 @@ const App = {
     <div v-if="authChecking" class="admin-login-page"><div class="admin-login-card"><div class="admin-login-title">正在验证后台登录</div></div></div>
     <div v-else-if="!authed" class="admin-login-page">
       <form class="admin-login-card" @submit.prevent="login">
-        <div class="admin-login-logo">AIπ</div>
+        <div class="admin-login-logo">ai-pai</div>
         <div class="admin-login-title">后台管理登录</div>
         <div class="admin-login-subtitle">请使用管理员账号进入控制台</div>
         <a-input v-model:value="loginForm.email" size="large" placeholder="管理员账号 / 邮箱" autocomplete="username" />
@@ -190,7 +178,7 @@ const App = {
     <div v-else class="admin-shell">
       <div class="admin-mobile-scrim" :class="{ 'is-open': mobileMenuOpen }" @click="closeMobileMenu"></div>
       <aside class="admin-sidebar" :class="{ 'is-open': mobileMenuOpen }">
-        <a class="admin-brand" href="#/console"><span class="admin-brand-mark">AIπ</span><span>{{ settings.logoText || 'AIπ' }} Admin</span></a>
+        <a class="admin-brand" href="#/console"><span class="admin-brand-mark">ai-pai</span><span>{{ settings.logoText || 'ai-pai' }} Admin</span></a>
         <div v-for="group in menuGroups" :key="group.title" class="admin-menu-group">
           <div class="admin-menu-title">{{ group.title }}</div>
           <div v-for="item in group.items" :key="item.id" class="admin-menu-item" :class="{ 'is-active': activeMenuId === item.id }" @click="navigate(item.id)">

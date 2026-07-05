@@ -1,5 +1,7 @@
+name: ai-pai
+
 services:
-  aipi:
+  ai-pai:
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,4 +14,4 @@ services:
         no_proxy: ${no_proxy:-}
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.org}
-    image: aipi-go:latest
+    image: ai-pai:latest

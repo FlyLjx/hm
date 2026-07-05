@@ -68,7 +68,7 @@ func createAlipayPrecreateOrder(ctx context.Context, settings alipaySettings, ou
 	bizContent, _ := json.Marshal(map[string]string{
 		"out_trade_no": outTradeNo,
 		"total_amount": fmt.Sprintf("%.2f", amount),
-		"subject":      defaultString(subject, defaultString(settings.SiteName, "AIπ")+"充值"),
+		"subject":      defaultString(subject, defaultString(settings.SiteName, "ai-pai")+"订阅"),
 	})
 	payload, err := callAlipay(ctx, settings, "alipay.trade.precreate", notifyURL, string(bizContent))
 	if err != nil {

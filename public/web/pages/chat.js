@@ -1,6 +1,6 @@
 import { clientApi } from '../common/api.js'
 import { chatStoragePrefix, createClientId, createSession, taskImages } from '../common/chatSession.js'
-import { formatAmount, resolveOriginalImageUrl, resolveThumbnailImageUrl } from '../common/format.js'
+import { resolveOriginalImageUrl, resolveThumbnailImageUrl } from '../common/format.js'
 import {
   getActiveModelsByCapability,
   getAvailableRatioOptions,
@@ -10,7 +10,7 @@ import {
   getSizeForRatio,
   quantityOptions,
 } from '../common/options.js'
-import { readTransferredPrompt } from '../common/promptTransfer.js'
+import { readTransferredPrompt } from '../common/promptTransfer.js?v=20260704-brand-ai-pai'
 import { subscribeGenerationTask } from '../common/taskSocket.js'
 
 const { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } = Vue
@@ -19,7 +19,6 @@ const generatingStatuses = ['waiting', 'queued', 'pending', 'running', 'processi
 const orphanWaitingExpireMs = 3 * 60 * 1000
 const maxReferenceImages = 10
 const maxReferenceImageBytes = 5 * 1024 * 1024
-const slowModelDurationMs = 10000
 const maskBrushRgb = '22, 163, 91'
 const maskPreviewColor = '#16a35b'
 const nonPassiveTouchListener = { passive: false }
@@ -58,30 +57,9 @@ const generatingStages = [
     key: 'finalizing',
     title: '正在整理最终结果...',
     detail: '图片已经生成，正在保存结果',
-    tags: ['保存', '扣费', '完成'],
+    tags: ['保存', '同步', '完成'],
   },
 ]
-const starterTemplates = [
-  {
-    icon: 'ti-package',
-    title: '产品海报',
-    desc: '新品主视觉、促销海报、门店宣传',
-    prompt: '为一家奶茶店生成一张清爽的新品海报，主题是青柠气泡茶，绿色系，画面干净高级，商品主体清晰，留白充足，适合门店宣传。',
-  },
-  {
-    icon: 'ti-user-square-rounded',
-    title: '头像写真',
-    desc: '职业头像、社媒头像、人物写真',
-    prompt: '生成一张干净高级的人像写真头像，柔和自然光，背景简洁，人物气质专业亲和，适合作为社交媒体头像。',
-  },
-  {
-    icon: 'ti-building-store',
-    title: '门店物料',
-    desc: '菜单、展架、活动易拉宝',
-    prompt: '生成一张适合广告店制作的门店活动宣传物料，版式清晰，标题醒目，商业感强，适合打印展示。',
-  },
-]
-
 function isTerminalTaskStatus(status) {
   return terminalTaskStatuses.includes(status)
 }
@@ -118,11 +96,10 @@ function imageExtensionFromUrl(value) {
 }
 
 export const ChatPage = {
-  props: ['creditName', 'currentUser', 'settings', 'siteName'],
+  props: ['currentUser', 'settings', 'siteName'],
   emits: ['login', 'preview', 'user-updated'],
   setup(props, { emit }) {
     const models = ref([])
-    const providerStatuses = ref({})
     const modelId = ref('')
     const ratio = ref('1:1')
     const sizeTier = ref('2k')
@@ -131,7 +108,6 @@ export const ChatPage = {
     const transparentBackground = ref(false)
     const prompt = ref('')
     const messages = ref([])
-    const incentiveStatus = ref(null)
     const sessions = ref([createSession(1)])
     const activeSessionId = ref(sessions.value[0].id)
     const referenceImages = ref([])
@@ -146,7 +122,6 @@ export const ChatPage = {
     const perspectiveCanvas = ref(null)
     const perspectiveOverlayCanvas = ref(null)
     let perspectiveDragListening = false
-    let providerStatusTimer = null
     const unsubscribers = new Map()
     const failedTaskNotices = new Set()
     const storageKey = computed(() => props.currentUser?.id ? `${chatStoragePrefix}:${props.currentUser.id}` : '')
@@ -155,22 +130,9 @@ export const ChatPage = {
     const availableRatios = computed(() => getAvailableRatioOptions(selectedModel.value))
     const availableSizeTiers = computed(() => getAvailableSizeTierOptions(selectedModel.value, ratio.value))
     const outputSize = computed(() => getSizeForRatio(ratio.value, sizeTier.value))
+    const currentSubscription = computed(() => props.currentUser?.subscription || null)
     const subscriptionDiscountPercent = computed(() => Number(props.currentUser?.subscription?.discountPercent || 0))
     const hasSubscriptionDiscount = computed(() => modelHasSubscriptionDiscount(selectedModel.value))
-    const originalEstimatedCost = computed(() => getModelVariantPrice(selectedModel.value, ratio.value, sizeTier.value) * quantity.value)
-    const estimatedCost = computed(() => incentiveTotalCost.value)
-    const incentivePrice = computed(() => {
-      const model = selectedModel.value
-      if (!model) return 0
-      const unit = getModelVariantPrice(model, ratio.value, sizeTier.value)
-      const discount = Number(incentiveStatus.value?.discountPercent || 0)
-      const subscriptionDiscount = Number(props.currentUser?.subscription?.discountPercent || 0)
-      const best = Math.max(discount, subscriptionDiscount)
-      const minUnit = Number(incentiveStatus.value?.minUnitPrice || 0.001)
-      if (best <= 0) return unit
-      return Math.max(minUnit, Number((unit * (1 - best / 100)).toFixed(4)))
-    })
-    const incentiveTotalCost = computed(() => incentivePrice.value * quantity.value)
     const activeSession = computed(() => sessions.value.find((item) => item.id === activeSessionId.value) || sessions.value[0])
     const orderedSessions = computed(() => [...sessions.value].sort((a, b) => (a.no || 0) - (b.no || 0)))
     const activeSessionLoading = computed(() => messages.value.some((message) => isGeneratingStatus(message.status)))
@@ -186,10 +148,6 @@ export const ChatPage = {
     watch(outputFormat, (format) => {
       transparentBackground.value = format === 'png'
     })
-    function applyStarterTemplate(template) {
-      prompt.value = template?.prompt || ''
-    }
-
     watch(availableSizeTiers, (items) => {
       if (items.length && !items.includes(sizeTier.value)) {
         sizeTier.value = items[0]
@@ -492,12 +450,17 @@ export const ChatPage = {
     function discountedPrice(value) {
       const price = Number(value || 0)
       if (!hasSubscriptionDiscount.value) return price
+      if (subscriptionDiscountPercent.value >= 100) return 0
       return Number((price * (1 - subscriptionDiscountPercent.value / 100)).toFixed(4))
+    }
+
+    function subscriptionIsPaid(subscription) {
+      return Boolean(subscription?.isPaid || subscription?.tier === 'paid' || (subscription?.status === 'active' && subscription?.planId))
     }
 
     function subscriptionAllowedForModel(model) {
       const subscription = props.currentUser?.subscription
-      if (!subscription || subscription.status !== 'active' || !model) return false
+      if (!subscriptionIsPaid(subscription) || !model) return false
       const providerIds = Array.isArray(subscription.allowedProviderIds) ? subscription.allowedProviderIds : []
       const modelIds = Array.isArray(subscription.allowedModelIds) ? subscription.allowedModelIds : []
       const providerAllowed = providerIds.length === 0 || providerIds.includes(model.providerId)
@@ -516,16 +479,10 @@ export const ChatPage = {
 
     function modelUnitPrice(model) {
       const price = modelUnitOriginalPrice(model)
-      const incentiveDiscount = Number(incentiveStatus.value?.discountPercent || 0)
       const subscriptionDiscount = modelHasSubscriptionDiscount(model) ? subscriptionDiscountPercent.value : 0
-      const bestDiscount = Math.max(incentiveDiscount, subscriptionDiscount)
-      if (bestDiscount <= 0) return price
-      const minUnit = Number(incentiveStatus.value?.minUnitPrice || 0.001)
-      return Math.max(minUnit, Number((price * (1 - bestDiscount / 100)).toFixed(4)))
-    }
-
-    function hasIncentiveDiscount() {
-      return Boolean(incentiveStatus.value?.active && Number(incentiveStatus.value?.discountPercent || 0) > 0)
+      if (subscriptionDiscount <= 0) return price
+      if (subscriptionDiscount >= 100) return 0
+      return Number((price * (1 - subscriptionDiscount / 100)).toFixed(4))
     }
 
     function hasAnyDiscount(model = selectedModel.value) {
@@ -533,77 +490,182 @@ export const ChatPage = {
     }
 
     function priceBadgeText(model = selectedModel.value) {
-      const incentiveDiscount = Number(incentiveStatus.value?.discountPercent || 0)
       const subscriptionDiscount = modelHasSubscriptionDiscount(model) ? subscriptionDiscountPercent.value : 0
-      if (incentiveDiscount >= subscriptionDiscount && incentiveDiscount > 0) return `活动 ${formatAmount(incentiveDiscount)}%`
       if (subscriptionDiscount > 0) return '会员价'
       return ''
     }
 
-    function incentiveSummaryText() {
-      const item = incentiveStatus.value
-      if (!item?.active) return ''
-      const today = Number(item.todayImages || 0)
-      const discount = Number(item.discountPercent || 0)
-      if (discount > 0) return `全站今日已生成 ${today} 张，活动价 ${formatAmount(discount)}% 优惠`
-      if (item.nextRule) return `全站今日已生成 ${today} 张，满 ${item.nextRule.minImages} 张享 ${formatAmount(item.nextRule.discountPercent)}% 活动优惠`
-      return `全站今日已生成 ${today} 张`
+    function quotaRemaining() {
+      if (!currentSubscription.value) return freeQuotaLimit()
+      const value = Number(currentSubscription.value?.quotaRemaining)
+      return Number.isFinite(value) && value >= 0 ? value : quotaLimit()
     }
 
-    function modelPriceChange(model) {
-      const value = Number(model?.priceChangePercent || 0)
-      if (value > 0) return { type: 'up', text: `涨 ${formatAmount(value)}%` }
-      if (value < 0) return { type: 'down', text: `降 ${formatAmount(Math.abs(value))}%` }
-      return { type: 'flat', text: '持平' }
+    function quotaLimit() {
+      if (!currentSubscription.value) return freeQuotaLimit()
+      const fallback = subscriptionIsPaid(currentSubscription.value) ? 0 : freeQuotaLimit()
+      const value = Number(currentSubscription.value?.quotaLimit || currentSubscription.value?.quotaImages)
+      return Number.isFinite(value) && value > 0 ? value : fallback
     }
 
-    function recentHistoryStats(provider) {
-      const items = (provider?.history || []).filter((item) => item?.status && item.status !== 'unknown').slice(-60)
-      const total = items.length
-      const success = items.filter((item) => item.status === 'success').length
-      return { total, success, successRate: total ? (success / total) * 100 : 0 }
-    }
-
-    function modelProviderStatus(model) {
-      return providerStatuses.value?.[model?.providerId || ''] || null
-    }
-
-    function modelLinkState(model) {
-      const provider = modelProviderStatus(model)
-      if (!provider) return { level: 'unknown', text: '待监控' }
-      if (provider.providerStatus === 'disabled') return { level: 'disabled', text: '已停用' }
-      const stats = recentHistoryStats(provider)
-      if (!stats.total) return { level: 'unknown', text: '待监控' }
-      const durationMs = Number(provider.lastDurationMs || provider.avgDurationMs || 0)
-      if (provider.lastStatus === 'success') {
-        if (durationMs >= slowModelDurationMs) return { level: 'warning', text: '延迟高' }
-        return { level: 'online', text: '已连接' }
+    function freeQuotaLimit(scope = 'month') {
+      const keyMap = {
+        hour: 'freeHourlyGenerationQuota',
+        day: 'freeDailyGenerationQuota',
+        month: 'freeGenerationQuota',
       }
-      return { level: 'error', text: '连接异常' }
+      const fallbackMap = { hour: 2, day: 5, month: 10 }
+      const key = keyMap[scope] || keyMap.month
+      const value = Number(props.settings?.[key])
+      return Number.isFinite(value) && value >= 0 ? value : (fallbackMap[scope] || fallbackMap.month)
     }
 
-    function formatModelDuration(value) {
-      const ms = Math.round(Number(value || 0))
-      if (!ms) return '暂无耗时'
-      if (ms < 1000) return `${ms}ms`
-      return `${(ms / 1000).toFixed(2)}s`
+    function fallbackFreeQuotaWindows() {
+      return [
+        { key: 'hour', label: '小时', quotaLimit: freeQuotaLimit('hour'), quotaUsed: 0, quotaRemaining: freeQuotaLimit('hour') },
+        { key: 'day', label: '今日', quotaLimit: freeQuotaLimit('day'), quotaUsed: 0, quotaRemaining: freeQuotaLimit('day') },
+        { key: 'month', label: '本月', quotaLimit: freeQuotaLimit('month'), quotaUsed: 0, quotaRemaining: freeQuotaLimit('month') },
+      ]
     }
 
-    function modelRecentDuration(model) {
-      const provider = modelProviderStatus(model)
-      return formatModelDuration(provider?.lastDurationMs || provider?.avgDurationMs)
+    function freeQuotaWindows() {
+      const windows = Array.isArray(currentSubscription.value?.quotaWindows) ? currentSubscription.value.quotaWindows : []
+      return windows.length ? windows : fallbackFreeQuotaWindows()
     }
 
-    function modelLinkTitle(model) {
-      const state = modelLinkState(model)
-      const duration = modelRecentDuration(model)
-      return `连接状态：${state.text}，最近耗时：${duration}`
+    function freeEffectiveQuotaRemaining() {
+      const explicit = Number(currentSubscription.value?.effectiveQuotaRemaining)
+      if (Number.isFinite(explicit) && explicit >= 0) return explicit
+      const values = freeQuotaWindows().map((item) => Number(item.quotaRemaining)).filter((value) => Number.isFinite(value) && value >= 0)
+      return values.length ? Math.min(...values) : freeQuotaLimit()
+    }
+
+    function freeQuotaRows() {
+      return freeQuotaWindows().map((item) => {
+        const label = item.label || ({ hour: '小时', day: '今日', month: '本月' }[item.key] || '周期')
+        const remaining = Number.isFinite(Number(item.quotaRemaining)) ? Math.max(0, Number(item.quotaRemaining)) : Number(item.quotaLimit || 0)
+        const limit = Number.isFinite(Number(item.quotaLimit)) ? Math.max(0, Number(item.quotaLimit)) : 0
+        return { key: item.key || label, label, remaining, limit }
+      })
+    }
+
+    function freeQuotaLimitingRow(rows, effectiveRemaining) {
+      if (!rows.length) return null
+      const order = { hour: 1, day: 2, month: 3 }
+      const candidates = rows
+        .filter((row) => row.remaining === effectiveRemaining)
+        .sort((left, right) => (order[left.key] || 99) - (order[right.key] || 99))
+      if (candidates.length) return candidates[0]
+      return [...rows].sort((left, right) => left.remaining - right.remaining)[0]
+    }
+
+    function decoratedFreeQuotaRows() {
+      const rows = freeQuotaRows()
+      const effective = Math.max(0, Number(freeEffectiveQuotaRemaining()) || 0)
+      const limiting = freeQuotaLimitingRow(rows, effective)
+      return rows.map((row) => {
+        const displayRemaining = Math.min(row.remaining, effective)
+        const limitedByOtherWindow = limiting && limiting.key !== row.key && displayRemaining < row.remaining
+        return {
+          ...row,
+          remaining: displayRemaining,
+          rawRemaining: row.remaining,
+          limitNote: limitedByOtherWindow ? `受${limiting.label}限制` : '',
+          empty: displayRemaining <= 0,
+        }
+      })
+    }
+
+    function freeQuotaSummary() {
+      return decoratedFreeQuotaRows().map((item) => {
+        const suffix = item.limitNote ? `（${item.limitNote}）` : ''
+        return `${item.label} ${item.remaining}/${item.limit}${suffix}`
+      }).join(' · ')
+    }
+
+    function quotaChipText() {
+      const remaining = subscriptionIsPaid(currentSubscription.value) ? quotaRemaining() : freeEffectiveQuotaRemaining()
+      return subscriptionIsPaid(currentSubscription.value) ? `本周期剩余 ${remaining} 张` : `免费额度剩余 ${remaining} 张`
+    }
+
+    function quotaChipTitle() {
+      return subscriptionIsPaid(currentSubscription.value) ? '订阅额度' : '免费额度'
+    }
+
+    function quotaChipValue() {
+      const remaining = subscriptionIsPaid(currentSubscription.value) ? quotaRemaining() : freeEffectiveQuotaRemaining()
+      return `${remaining} 张`
+    }
+
+    function quotaWindowPills() {
+      if (subscriptionIsPaid(currentSubscription.value)) return []
+      return decoratedFreeQuotaRows()
+    }
+
+    function quotaChipNote() {
+      if (!subscriptionIsPaid(currentSubscription.value)) {
+        return `本次消耗 ${Number(quantity.value || 1)} 张 · ${freeQuotaSummary()}`
+      }
+      return `本次消耗 ${Number(quantity.value || 1)} 张 · 周期额度 ${quotaLimit()} 张`
+    }
+
+    function hasEnoughGenerationQuota() {
+      const remaining = subscriptionIsPaid(currentSubscription.value) ? quotaRemaining() : freeEffectiveQuotaRemaining()
+      return remaining >= Number(quantity.value || 1)
+    }
+
+    function quotaInsufficientMessage() {
+      return subscriptionIsPaid(currentSubscription.value)
+        ? '本周期生成额度不足，请续费或升级订阅'
+        : '免费版额度不足，请稍后再试或开通订阅'
+    }
+
+    function refreshCurrentUser() {
+      if (!props.currentUser?.id) return
+      clientApi.getCurrentUser(props.currentUser.id).then((response) => {
+        emit('user-updated', response.data)
+      }).catch(() => {})
     }
 
     function modelSelectLabel(model) {
       if (!model) return ''
-      const state = modelLinkState(model)
-      return `${getModelLabel(model)} · ${state.text} · ${modelRecentDuration(model)}`
+      return getModelLabel(model)
+    }
+
+    function resolveTransferredModelId(input) {
+      const candidates = [input?.modelId, input?.model]
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+      if (!candidates.length) return ''
+      const model = chatModels.value.find((item) => {
+        const values = [item.id, item.modelName, item.displayName, getModelLabel(item)]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
+        return values.some((value) => candidates.includes(value))
+      })
+      return model?.id || ''
+    }
+
+    function applyTransferredGenerationOptions(input) {
+      const transferredModelId = resolveTransferredModelId(input)
+      const fallbackModelId = chatModels.value[0]?.id || ''
+      modelId.value = transferredModelId || fallbackModelId
+
+      const ratios = getAvailableRatioOptions(selectedModel.value)
+      const transferredRatio = String(input?.ratio || '').trim()
+      if (transferredRatio && ratios.includes(transferredRatio)) {
+        ratio.value = transferredRatio
+      } else if (ratios.length && !ratios.includes(ratio.value)) {
+        ratio.value = ratios[0]
+      }
+
+      const tiers = getAvailableSizeTierOptions(selectedModel.value, ratio.value)
+      const transferredSizeTier = String(input?.sizeTier || '').trim()
+      if (transferredSizeTier && tiers.includes(transferredSizeTier)) {
+        sizeTier.value = transferredSizeTier
+      } else if (tiers.length && !tiers.includes(sizeTier.value)) {
+        sizeTier.value = tiers[0]
+      }
     }
 
     function ratioIconStyle(value) {
@@ -846,16 +908,6 @@ export const ChatPage = {
       syncSessionMessages(sessionId, sessionMessages)
     }
 
-    function syncUserCreditsFromTask(task) {
-      if (!props.currentUser || task.status !== 'success') return
-      const remainingCredits = Number(task.remainingCredits)
-      if (!Number.isFinite(remainingCredits)) return
-      emit('user-updated', {
-        ...props.currentUser,
-        credits: remainingCredits,
-      })
-    }
-
     function applyTask(task, sessionId = findSessionIdByTaskId(task?.id)) {
       if (task?.__progress) {
         applyProgress(task, sessionId)
@@ -869,7 +921,6 @@ export const ChatPage = {
       const shouldKeepBottom = sessionId === activeSessionId.value && isThreadNearBottom()
       syncSessionMessages(sessionId, sessionMessages)
       if (shouldKeepBottom) nextTick(scrollBottom)
-      syncUserCreditsFromTask(task)
       if (task.status === 'failed' && task.errorMessage && !failedTaskNotices.has(task.id)) {
         failedTaskNotices.add(task.id)
         ElementPlus.ElMessage.error(cleanDisplayErrorMessage(task.errorMessage))
@@ -877,11 +928,8 @@ export const ChatPage = {
       if (isTerminalTaskStatus(task.status)) {
         unsubscribers.get(task.id)?.()
         unsubscribers.delete(task.id)
-        if (task.status === 'success' && props.currentUser?.id) {
-          clientApi.getCurrentUser(props.currentUser.id).then((response) => {
-            emit('user-updated', response.data)
-          }).catch(() => {})
-          void loadIncentiveStatus()
+        if (props.currentUser?.id) {
+          refreshCurrentUser()
         }
       }
     }
@@ -972,17 +1020,23 @@ export const ChatPage = {
         const response = await clientApi.generateImage(payload)
         bindWaitingMessageToTask(waitingId, response.data, sessionId)
         applyTask(response.data, sessionId)
+        refreshCurrentUser()
         if (!isTerminalTaskStatus(response.data.status)) subscribeTask(response.data.id, sessionId)
         return response.data
       }
 
       let firstTask = null
+      let quotaRefreshed = false
       try {
         const response = await clientApi.generateImageStream(payload)
         await readGenerationStream(response, (task) => {
           firstTask ||= task
           bindWaitingMessageToTask(waitingId, task, sessionId)
           applyTask(task, sessionId)
+          if (!quotaRefreshed) {
+            quotaRefreshed = true
+            refreshCurrentUser()
+          }
           if (!isTerminalTaskStatus(task.status)) subscribeTask(task.id, sessionId)
         }, sessionId)
         if (firstTask && !isTerminalTaskStatus(firstTask.status)) subscribeTask(firstTask.id, sessionId)
@@ -995,6 +1049,7 @@ export const ChatPage = {
         const response = await clientApi.generateImage(payload)
         bindWaitingMessageToTask(waitingId, response.data, sessionId)
         applyTask(response.data, sessionId)
+        refreshCurrentUser()
         if (!isTerminalTaskStatus(response.data.status)) subscribeTask(response.data.id, sessionId)
         return response.data
       }
@@ -1003,6 +1058,10 @@ export const ChatPage = {
     async function handleGenerate(text = prompt.value, extraPayload = {}, options = {}) {
       if (!props.currentUser) {
         emit('login')
+        return
+      }
+      if (!hasEnoughGenerationQuota()) {
+        ElementPlus.ElMessage.warning(quotaInsufficientMessage())
         return
       }
       if (!text.trim()) {
@@ -1751,35 +1810,13 @@ export const ChatPage = {
       }
     }
 
-    async function loadProviderStatuses() {
-      try {
-        const response = await clientApi.getServiceStatus()
-        const providers = response.data?.providers || []
-        providerStatuses.value = Object.fromEntries(providers.map((provider) => [provider.providerId, provider]))
-      } catch {
-        providerStatuses.value = {}
-      }
-    }
-
-    async function loadIncentiveStatus() {
-      if (!props.currentUser?.id) {
-        incentiveStatus.value = null
-        return
-      }
-      try {
-        const response = await clientApi.getIncentiveStatus(props.currentUser.id)
-        incentiveStatus.value = response.data || null
-      } catch {
-        incentiveStatus.value = null
-      }
-    }
-
     onMounted(async () => {
       window.addEventListener('paste', handlePasteReferenceImage)
       loadState()
       const transferred = readTransferredPrompt()
       if (transferred) {
-        prompt.value = transferred.prompt
+        const transferredPrompt = String(transferred.prompt || '').trim()
+        if (transferredPrompt) prompt.value = transferredPrompt
         if (transferred.imageUrl) {
           referenceImages.value = [{ url: transferred.imageUrl, name: transferred.title || '广场图片', source: 'result' }]
         }
@@ -1787,17 +1824,13 @@ export const ChatPage = {
       try {
         const response = await clientApi.listModels()
         models.value = response.data || []
-        modelId.value = chatModels.value[0]?.id || ''
+        applyTransferredGenerationOptions(transferred)
       } catch (error) {
         ElementPlus.ElMessage.error(error.message || '模型加载失败')
       }
-      await loadProviderStatuses()
-      await loadIncentiveStatus()
-      providerStatusTimer = setInterval(loadProviderStatuses, 60000)
     })
     onBeforeUnmount(() => {
       window.removeEventListener('paste', handlePasteReferenceImage)
-      if (providerStatusTimer) clearInterval(providerStatusTimer)
       removePerspectiveDragListeners()
       for (const unsubscribe of unsubscribers.values()) unsubscribe()
       unsubscribers.clear()
@@ -1805,11 +1838,9 @@ export const ChatPage = {
     watch([messages, prompt, referenceImages], syncActiveSession, { deep: true })
     watch(() => props.currentUser?.id || '', () => {
       loadState()
-      void loadIncentiveStatus()
     })
     return {
       models,
-      providerStatuses,
       modelId,
       ratio,
       sizeTier,
@@ -1840,25 +1871,20 @@ export const ChatPage = {
       availableSizeTiers,
       quantityOptions,
       outputFormatOptions,
-      starterTemplates,
       outputSize,
-      estimatedCost,
-      originalEstimatedCost,
-      incentiveStatus,
       activeSession,
       hasSubscriptionDiscount,
       subscriptionDiscountPercent,
       modelHasSubscriptionDiscount,
       modelUnitOriginalPrice,
       modelUnitPrice,
-      hasIncentiveDiscount,
       hasAnyDiscount,
       priceBadgeText,
-      incentiveSummaryText,
-      modelPriceChange,
-      modelLinkState,
-      modelRecentDuration,
-      modelLinkTitle,
+      quotaChipTitle,
+      quotaChipText,
+      quotaChipValue,
+      quotaChipNote,
+      quotaWindowPills,
       modelSelectLabel,
       getModelLabel,
       getModelVariantPrice,
@@ -1889,7 +1915,6 @@ export const ChatPage = {
       rememberResultImageRatio,
       cleanDisplayErrorMessage,
       handleGenerate,
-      applyStarterTemplate,
       useAsReference,
       toggleFavorite,
       requestPublic,
@@ -1913,7 +1938,6 @@ export const ChatPage = {
       handleFile,
       resolveOriginalImageUrl,
       resolveThumbnailImageUrl,
-      formatAmount,
     }
   },
   template: `
@@ -1957,7 +1981,16 @@ export const ChatPage = {
         <header class="chat-header">
           <div class="chat-header-copy">
             <strong>{{ activeSession?.title || '当前会话' }}</strong>
-            <small>{{ getModelLabel(selectedModel) }} · {{ ratio }} · {{ outputSize }}</small>
+            <div class="chat-session-meta-row">
+              <small>{{ getModelLabel(selectedModel) }} · {{ ratio }} · {{ outputSize }}</small>
+              <span v-if="quotaWindowPills().length" class="session-quota-list">
+                <span v-for="item in quotaWindowPills()" :key="item.key" :class="{ empty: item.empty, limited: item.limitNote }" class="session-quota-pill">
+                  <b>{{ item.label }}</b><em>{{ item.remaining }}/{{ item.limit }}</em>
+                  <small v-if="item.limitNote">{{ item.limitNote }}</small>
+                </span>
+              </span>
+              <small v-else class="session-quota-note">{{ quotaChipNote() }}</small>
+            </div>
           </div>
           <div class="chat-header-actions">
             <button type="button" title="重命名会话" aria-label="重命名会话" @click="renameSession(activeSession)">
@@ -1969,63 +2002,8 @@ export const ChatPage = {
           </div>
         </header>
         <div class="chat-thread" ref="chatThread">
-          <div v-if="messages.length === 0" class="chat-empty">
-            <div class="chat-empty-showcase">
-              <div class="chat-empty-art" aria-hidden="true">
-                <div class="empty-art-window">
-                  <div class="empty-art-toolbar">
-                    <span></span><span></span><span></span>
-                    <em>AIπ Studio</em>
-                  </div>
-                  <div class="empty-art-canvas">
-                    <div class="empty-art-glow"></div>
-                    <div class="empty-art-brand">AIπ</div>
-                    <div class="empty-art-copy">
-                      <i class="ti ti-photo-plus"></i>
-                      <b>Fresh Lime Tea</b>
-                      <small>商业海报 · 清爽绿调</small>
-                    </div>
-                    <div class="empty-art-specs">
-                      <span>2K</span>
-                      <span>1:1</span>
-                      <span>JPEG</span>
-                    </div>
-                    <div class="empty-art-prompt">青柠气泡茶，干净高级，留白充足</div>
-                  </div>
-                  <div class="empty-art-footer">
-                    <span>构图</span>
-                    <span>光影</span>
-                    <span>细节</span>
-                  </div>
-                </div>
-              </div>
-              <div class="chat-empty-copy">
-                <div class="chat-empty-kicker">
-                  <span><i class="ti ti-sparkles"></i> 图像工作台</span>
-                  <em>Ready</em>
-                </div>
-                <strong>开始一次图像创作</strong>
-                <p>输入提示词，选择比例和清晰度，就可以生成图片。也可以上传参考图继续改图。</p>
-                <div class="chat-empty-steps">
-                  <span><i class="ti ti-pencil"></i> 写需求</span>
-                  <span><i class="ti ti-adjustments-horizontal"></i> 选规格</span>
-                  <span><i class="ti ti-wand"></i> 出成图</span>
-                </div>
-              </div>
-            </div>
-            <div class="empty-template-grid">
-              <button v-for="item in starterTemplates" :key="item.title" type="button" @click="applyStarterTemplate(item)">
-                <i :class="['ti', item.icon]"></i>
-                <span>
-                  <strong>{{ item.title }}</strong>
-                  <small>{{ item.desc }}</small>
-                </span>
-                <em>套用</em>
-              </button>
-            </div>
-          </div>
           <div v-for="message in messages" :key="message.id" :class="['message', message.role]">
-            <div class="avatar">{{ message.role === 'user' ? '我' : 'AIπ' }}</div>
+            <div class="avatar">{{ message.role === 'user' ? '我' : 'ai-pai' }}</div>
             <div :class="['bubble', { 'generating-bubble': isGeneratingStatus(message.status) }]">
               <template v-if="isGeneratingStatus(message.status)">
                 <div class="generating-card">
@@ -2136,7 +2114,7 @@ export const ChatPage = {
           <div class="composer-grid">
             <div class="composer-field composer-model">
               <span>模型</span>
-              <el-select v-model="modelId" :class="selectedModel ? 'model-select-link is-' + modelLinkState(selectedModel).level : ''" placeholder="选择模型" popper-class="composer-select-popper model-select-popper">
+              <el-select v-model="modelId" class="model-select-link" placeholder="选择模型" popper-class="composer-select-popper model-select-popper">
                 <template #label="{ label }">
                   <span class="composer-selected model-selected">
                     <i class="ti ti-robot composer-select-icon"></i>
@@ -2144,26 +2122,10 @@ export const ChatPage = {
                   </span>
                 </template>
                 <el-option v-for="model in chatModels" :key="model.id" :label="modelSelectLabel(model)" :value="model.id">
-                  <span class="composer-option model-option" :title="modelLinkTitle(model)">
+                  <span class="composer-option model-option" :title="getModelLabel(model)">
                     <i class="ti ti-robot composer-select-icon"></i>
                     <span class="model-option-copy">
                       <span class="model-option-main">{{ getModelLabel(model) }}</span>
-                      <span class="model-option-meta">
-                        <small class="model-option-change" :class="'is-' + modelPriceChange(model).type">{{ modelPriceChange(model).text }}</small>
-                        <small :class="['model-option-link', 'is-' + modelLinkState(model).level]">
-                          <i></i>{{ modelLinkState(model).text }}
-                        </small>
-                      </span>
-                    </span>
-                    <span class="model-option-price">
-                      <template v-if="hasAnyDiscount(model)">
-                        <em>{{ priceBadgeText(model) }}</em>
-                        <del>{{ formatAmount(modelUnitOriginalPrice(model)) }}</del>
-                        <b>{{ formatAmount(modelUnitPrice(model)) }}</b>
-                      </template>
-                      <template v-else>{{ formatAmount(modelUnitOriginalPrice(model)) }}</template>
-                      {{ creditName }}
-                      <small>{{ modelRecentDuration(model) }}</small>
                     </span>
                   </span>
                 </el-option>
@@ -2245,22 +2207,14 @@ export const ChatPage = {
                 <el-switch v-model="transparentBackground" :disabled="outputFormat === 'png'" active-text="开" inactive-text="关" />
               </label>
             </div>
-            <span class="cost-chip" :class="{ 'cost-chip-discount': hasAnyDiscount(selectedModel) }">
+            <span class="cost-chip subscription-chip" :class="{ 'free-quota-chip': quotaWindowPills().length }">
               <span class="cost-chip-main">
-                <i class="ti ti-coins"></i>
-                <template v-if="hasAnyDiscount(selectedModel)">
-                  <em>{{ priceBadgeText(selectedModel) }}</em>
-                  <span class="cost-chip-prices">
-                    <del>{{ formatAmount(originalEstimatedCost) }}</del>
-                    <strong>{{ formatAmount(estimatedCost) }}</strong>
-                    <span class="cost-chip-unit">{{ creditName }}</span>
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="cost-chip-plain">扣费 <strong>{{ formatAmount(estimatedCost) }}</strong> {{ creditName }}</span>
-                </template>
+                <i :class="['ti', quotaWindowPills().length ? 'ti-sparkles' : 'ti-crown']"></i>
+                <span class="quota-chip-copy">
+                  <span class="quota-chip-title">{{ quotaChipTitle() }}</span>
+                  <strong>{{ quotaChipValue() }}</strong>
+                </span>
               </span>
-              <small v-if="incentiveSummaryText()" class="cost-chip-note">{{ incentiveSummaryText() }}</small>
             </span>
           </div>
           <div v-if="referenceImages.length" class="composer-reference-card">

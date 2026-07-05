@@ -1,4 +1,4 @@
-# AI-PAI Admin Frontend
+# ai-pai Admin Frontend
 
 This is the source directory for the admin UI.
 

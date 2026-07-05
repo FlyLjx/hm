@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -81,8 +82,17 @@ func TestCallImageJSONRewritesLocalhostImageURLToProviderOrigin(t *testing.T) {
 	}
 }
 
-func TestCallImageJSONSendsEditImageURLFields(t *testing.T) {
+func TestCallImageJSONSendsEditImageDataFields(t *testing.T) {
 	var received map[string]any
+	sourcePNG, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lYV0ZQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatalf("decode source png: %v", err)
+	}
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(sourcePNG)
+	}))
+	defer sourceServer.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/v1/images/edits" {
 			t.Fatalf("unexpected endpoint path: %s", req.URL.Path)
@@ -99,19 +109,60 @@ func TestCallImageJSONSendsEditImageURLFields(t *testing.T) {
 	service := &Service{logger: slog.Default()}
 	input := testImageRequest(server.URL)
 	input.Operation = "edit"
-	input.ReferenceImageURLs = []string{"https://cdn.example.test/source.png"}
+	input.ReferenceImageURLs = []string{sourceServer.URL + "/source.png"}
 	if _, err := service.callImageJSON(context.Background(), input, 1); err != nil {
 		t.Fatalf("callImageJSON returned error: %v", err)
 	}
-	if received["image_url"] != "https://cdn.example.test/source.png" {
+	wantBase64 := base64.StdEncoding.EncodeToString(sourcePNG)
+	wantDataURL := "data:image/png;base64," + wantBase64
+	if received["image_url"] != wantDataURL {
 		t.Fatalf("expected image_url field, got %#v", received["image_url"])
 	}
-	if received["image"] != "https://cdn.example.test/source.png" {
+	if received["image"] != wantBase64 {
 		t.Fatalf("expected image field, got %#v", received["image"])
 	}
 	urls, ok := received["image_urls"].([]any)
-	if !ok || len(urls) != 1 || urls[0] != "https://cdn.example.test/source.png" {
+	if !ok || len(urls) != 1 || urls[0] != wantDataURL {
 		t.Fatalf("expected image_urls array, got %#v", received["image_urls"])
+	}
+	references, ok := received["referenceImages"].([]any)
+	if !ok || len(references) != 1 {
+		t.Fatalf("expected referenceImages array, got %#v", received["referenceImages"])
+	}
+	reference, ok := references[0].(map[string]any)
+	if !ok || reference["url"] != wantDataURL {
+		t.Fatalf("expected reference image data URL, got %#v", references[0])
+	}
+}
+
+func TestCallImageJSONSendsEditMaskImageData(t *testing.T) {
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": "https://cdn.example.test/edited.png"}},
+		})
+	}))
+	defer server.Close()
+
+	sourceBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lYV0ZQAAAABJRU5ErkJggg=="
+	maskBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+	service := &Service{logger: slog.Default()}
+	input := testImageRequest(server.URL)
+	input.Operation = "edit"
+	input.ReferenceImageURLs = []string{"data:image/png;base64," + sourceBase64}
+	input.MaskImageURL = "data:image/png;base64," + maskBase64
+	if _, err := service.callImageJSON(context.Background(), input, 1); err != nil {
+		t.Fatalf("callImageJSON returned error: %v", err)
+	}
+	if received["mask"] != maskBase64 {
+		t.Fatalf("expected mask field, got %#v", received["mask"])
+	}
+	maskImage, ok := received["maskImage"].(map[string]any)
+	if !ok || maskImage["url"] != "data:image/png;base64,"+maskBase64 {
+		t.Fatalf("expected maskImage data URL, got %#v", received["maskImage"])
 	}
 }
 

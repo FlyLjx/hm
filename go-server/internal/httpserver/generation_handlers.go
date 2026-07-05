@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aipi-go/internal/models"
+	"aipi-go/internal/operations"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
@@ -137,13 +138,8 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusForbidden, "用户已被禁用")
 	}
 
-	unitPrice, _, err := r.imageUnitPrice(ctx, user.ID, *model, input.SizeTier)
-	if err != nil {
+	if err := r.requireGenerationQuota(ctx, user.ID, *model, input.Quantity); err != nil {
 		return nil, err
-	}
-	price := unitPrice * float64(input.Quantity)
-	if user.Credits < price {
-		return nil, newAppError(http.StatusPaymentRequired, "用户积分不足")
 	}
 	size := input.Size
 	if size == "" {
@@ -157,7 +153,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		ProviderID:            model.ProviderID,
 		Capability:            input.Capability,
 		Prompt:                prompt,
-		ReferenceImageURL:     referenceImagePayload(input),
+		ReferenceImageURL:     referenceImagePayload(req, input),
 		SizeTier:              input.SizeTier,
 		Size:                  &size,
 		OutputFormat:          effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
@@ -166,7 +162,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		UserIP:                requestIP(req),
 		CostCredits:           0,
 		ModelCostCredits:      0,
-		RemainingCredits:      user.Credits,
+		RemainingCredits:      0,
 		DurationSeconds:       0,
 		Status:                tasks.StatusQueued,
 		PublicStatus:          "private",
@@ -190,6 +186,83 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	return savedTask, nil
 }
 
+func (r *Router) requireGenerationSubscription(ctx context.Context, userID string, model models.Model) error {
+	plan, err := operations.NewRepository(r.db).CurrentSubscriptionPlan(ctx, userID)
+	if errors.Is(err, sql.ErrNoRows) || plan == nil {
+		return newAppError(http.StatusPaymentRequired, "请先开通订阅后再生成图片")
+	}
+	if err != nil {
+		return err
+	}
+	if len(plan.AllowedProviderIDs) > 0 && !stringInList(plan.AllowedProviderIDs, model.ProviderID) {
+		return newAppError(http.StatusForbidden, "当前订阅套餐不支持该接口")
+	}
+	if len(plan.AllowedModelIDs) > 0 && !stringInList(plan.AllowedModelIDs, model.ID) {
+		return newAppError(http.StatusForbidden, "当前订阅套餐不支持该模型")
+	}
+	return nil
+}
+
+func (r *Router) requireGenerationQuota(ctx context.Context, userID string, model models.Model, quantity int) error {
+	if quantity < 1 {
+		quantity = 1
+	}
+	entitlement, err := r.currentSubscriptionEntitlement(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if entitlement == nil {
+		return newAppError(http.StatusPaymentRequired, "免费额度已用完，请开通订阅")
+	}
+	if entitlement.IsPaid {
+		if len(entitlement.AllowedProviderIDs) > 0 && !stringInList(entitlement.AllowedProviderIDs, model.ProviderID) {
+			return newAppError(http.StatusForbidden, "当前订阅套餐不支持该接口")
+		}
+		if len(entitlement.AllowedModelIDs) > 0 && !stringInList(entitlement.AllowedModelIDs, model.ID) {
+			return newAppError(http.StatusForbidden, "当前订阅套餐不支持该模型")
+		}
+	} else {
+		for _, window := range entitlement.QuotaWindows {
+			if window.QuotaRemaining < quantity {
+				return newAppError(http.StatusPaymentRequired, freeQuotaWindowLimitMessage(window))
+			}
+		}
+	}
+	if entitlement.QuotaRemaining < quantity {
+		if entitlement.IsPaid {
+			return newAppError(http.StatusPaymentRequired, "本周期生成额度不足，请续费或升级订阅")
+		}
+		return newAppError(http.StatusPaymentRequired, "免费额度已用完，请开通订阅")
+	}
+	return nil
+}
+
+func freeQuotaWindowLimitMessage(window operations.SubscriptionQuotaWindow) string {
+	switch window.Key {
+	case "hour":
+		return "免费版每小时额度不足，请稍后再试或开通订阅"
+	case "day":
+		return "免费版今日额度不足，请明天再试或开通订阅"
+	case "month":
+		return "免费版本月额度已用完，请开通订阅"
+	default:
+		if strings.TrimSpace(window.Label) != "" {
+			return "免费版" + strings.TrimSpace(window.Label) + "额度不足，请开通订阅"
+		}
+		return "免费额度已用完，请开通订阅"
+	}
+}
+
+func stringInList(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func effectiveOutputFormat(outputFormat string, transparentBackground bool) string {
 	normalized := normalizeOutputFormat(outputFormat)
 	if transparentBackground || normalized == "png" {
@@ -201,18 +274,18 @@ func effectiveOutputFormat(outputFormat string, transparentBackground bool) stri
 	return normalized
 }
 
-func referenceImagePayload(input generateImageInput) *string {
+func referenceImagePayload(req *http.Request, input generateImageInput) *string {
 	urls := []string{}
 	if strings.TrimSpace(input.ReferenceImageURL) != "" {
-		urls = append(urls, strings.TrimSpace(input.ReferenceImageURL))
+		urls = appendUniqueReferencePayload(urls, absoluteURL(req, strings.TrimSpace(input.ReferenceImageURL)))
 	}
 	for _, item := range input.ReferenceImageURLs {
 		if strings.TrimSpace(item) != "" {
-			urls = append(urls, strings.TrimSpace(item))
+			urls = appendUniqueReferencePayload(urls, absoluteURL(req, strings.TrimSpace(item)))
 		}
 	}
 	if strings.TrimSpace(input.MaskImageURL) != "" {
-		urls = append(urls, "mask:"+strings.TrimSpace(input.MaskImageURL))
+		urls = appendUniqueReferencePayload(urls, "mask:"+absoluteURL(req, strings.TrimSpace(input.MaskImageURL)))
 	}
 	if len(urls) == 0 {
 		return nil
@@ -223,6 +296,19 @@ func referenceImagePayload(input generateImageInput) *string {
 	bytes, _ := json.Marshal(urls)
 	value := string(bytes)
 	return &value
+}
+
+func appendUniqueReferencePayload(items []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return items
+	}
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
 
 func writeGenerationSSE(w http.ResponseWriter, event string, payload any) {

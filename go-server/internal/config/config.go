@@ -56,7 +56,7 @@ func Load() Config {
 			RootPassword: envString("DB_ROOT_PASSWORD", envString("MYSQL_ROOT_PASSWORD", envString("MYSQL_PASSWORD", ""))),
 			User:         envString("DB_USER", envString("MYSQL_USER", "root")),
 			Password:     envString("DB_PASSWORD", envString("MYSQL_PASSWORD", "")),
-			Name:         envString("DB_NAME", envString("MYSQL_DATABASE", "aipi")),
+			Name:         envString("DB_NAME", envString("MYSQL_DATABASE", "ai_pai")),
 			SSLMode:      envString("DB_SSLMODE", "disable"),
 			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", envInt("MYSQL_MAX_OPEN_CONNS", 80)),
 			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", envInt("MYSQL_MAX_IDLE_CONNS", 40)),

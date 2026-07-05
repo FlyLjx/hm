@@ -31,7 +31,7 @@ RUN rm -rf public/web public/admin \
   && cp -a apps/web/src/. public/web/ \
   && cp -a apps/admin/src/. public/admin/
 WORKDIR /src/go-server
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/aipi-go ./cmd/aipi-go \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/ai-pai ./cmd/ai-pai \
   && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/pgmigrate ./cmd/pgmigrate \
   && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /out/pgsmoke ./cmd/pgsmoke
 
@@ -51,11 +51,11 @@ ENV PORT=3001 \
   TZ=Asia/Shanghai
 RUN mkdir -p /app/logs
 
-COPY --from=build /out/aipi-go /app/aipi-go
+COPY --from=build /out/ai-pai /app/ai-pai
 COPY --from=build /out/pgmigrate /app/pgmigrate
 COPY --from=build /out/pgsmoke /app/pgsmoke
 COPY --from=build /src/public /app/public
 
 EXPOSE 3001
 
-CMD ["/app/aipi-go"]
+CMD ["/app/ai-pai"]

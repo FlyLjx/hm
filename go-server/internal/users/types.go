@@ -5,6 +5,9 @@ import "time"
 type User struct {
 	ID              string
 	Email           string
+	InviteCode      string
+	InvitedBy       string
+	InvitedIP       string
 	PasswordHash    string
 	Credits         float64
 	Role            string
@@ -17,7 +20,7 @@ type User struct {
 type PublicUser struct {
 	ID              string  `json:"id"`
 	Email           string  `json:"email"`
-	Credits         float64 `json:"credits"`
+	InviteCode      string  `json:"inviteCode"`
 	Role            string  `json:"role"`
 	Status          string  `json:"status"`
 	EmailVerifiedAt *string `json:"emailVerifiedAt"`
@@ -35,7 +38,7 @@ func ToPublicUser(user *User) PublicUser {
 	return PublicUser{
 		ID:              user.ID,
 		Email:           user.Email,
-		Credits:         user.Credits,
+		InviteCode:      user.InviteCode,
 		Role:            user.Role,
 		Status:          user.Status,
 		EmailVerifiedAt: verifiedAt,

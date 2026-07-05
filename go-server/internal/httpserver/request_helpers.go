@@ -78,7 +78,7 @@ func mergeUserToken(user users.PublicUser, token string) map[string]any {
 	return map[string]any{
 		"id":              user.ID,
 		"email":           user.Email,
-		"credits":         user.Credits,
+		"inviteCode":      user.InviteCode,
 		"role":            user.Role,
 		"status":          user.Status,
 		"emailVerifiedAt": user.EmailVerifiedAt,

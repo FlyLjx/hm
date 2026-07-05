@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"aipi-go/internal/apikeys"
 	"aipi-go/internal/auth"
 	"aipi-go/internal/operations"
 	"aipi-go/internal/settings"
@@ -49,22 +48,50 @@ func (r *Router) userLogin(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
+	if values, err := settings.NewRepository(r.db).Get(ctx); err != nil {
+		writeError(w, err)
+		return
+	} else if anyBool(values["registerEmailVerification"]) && user.EmailVerifiedAt == nil {
+		writeError(w, newAppError(http.StatusForbidden, "请先完成邮箱验证后登录"))
+		return
+	}
 	token, err := r.tokens.CreateUserToken(user.ID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data": mergeUserToken(users.ToPublicUser(user), token),
+		"data": mergeUserToken(r.publicUserWithSubscription(ctx, user), token),
 	})
+}
+
+func (r *Router) publicUserWithSubscription(ctx context.Context, user *users.User) users.PublicUser {
+	if user == nil || user.ID == "" {
+		return users.PublicUser{}
+	}
+	publicUser := users.ToPublicUser(user)
+	subscription, err := r.currentSubscriptionEntitlement(ctx, user.ID)
+	if err == nil {
+		publicUser.Subscription = subscription
+	}
+	return publicUser
+}
+
+func (r *Router) publishCurrentUser(ctx context.Context, userID string) {
+	if r.userHub == nil || strings.TrimSpace(userID) == "" {
+		return
+	}
+	userCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	user, err := users.NewRepository(r.db).FindByID(userCtx, strings.TrimSpace(userID))
+	if err != nil || user == nil {
+		return
+	}
+	r.userHub.PublishUserData(user.ID, r.publicUserWithSubscription(userCtx, user))
 }
 
 func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/users/"), "/")
-	if strings.Contains(path, "/api-keys") {
-		r.userAPIKeys(w, req, path)
-		return
-	}
 	if strings.HasSuffix(path, "/public-details") {
 		r.userDetails(w, req, strings.TrimSuffix(path, "/public-details"), true)
 		return
@@ -79,10 +106,6 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 	}
 	if strings.HasSuffix(path, "/status") {
 		r.updateUserStatus(w, req, strings.TrimSuffix(path, "/status"))
-		return
-	}
-	if strings.HasSuffix(path, "/recharge") {
-		r.rechargeUser(w, req, strings.TrimSuffix(path, "/recharge"))
 		return
 	}
 	if !strings.Contains(strings.Trim(path, "/"), "/") {
@@ -120,7 +143,7 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(user)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, user)})
 }
 
 func (r *Router) userDetails(w http.ResponseWriter, req *http.Request, id string, public bool) {
@@ -145,19 +168,22 @@ func (r *Router) userDetails(w http.ResponseWriter, req *http.Request, id string
 		writeError(w, err)
 		return
 	}
-	taskItems, _, _ := tasks.NewRepository(r.db).FindByUserID(ctx, id, queryInt(req, "taskPage", 1), queryInt(req, "taskPageSize", 10))
-	apiKeys, _ := apikeys.NewService(apikeys.NewRepository(r.db), users.NewRepository(r.db)).ListUserKeys(ctx, id)
+	taskPage := queryInt(req, "taskPage", 1)
+	taskPageSize := queryInt(req, "taskPageSize", 10)
+	taskItems, taskTotal, err := tasks.NewRepository(r.db).FindByUserID(ctx, id, taskPage, taskPageSize)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	publicTasks := make([]tasks.PublicTask, 0, len(taskItems))
 	for index := range taskItems {
 		publicTasks = append(publicTasks, tasks.ToPublic(&taskItems[index]))
 	}
+	publicUser := r.publicUserWithSubscription(ctx, user)
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"user":                 users.ToPublicUser(user),
-		"tasks":                publicTasks,
-		"tasksPagination":      map[string]any{"total": len(publicTasks), "page": 1, "pageSize": len(publicTasks)},
-		"creditLogs":           []any{},
-		"creditLogsPagination": map[string]any{"total": 0, "page": 1, "pageSize": 10},
-		"apiKeys":              apiKeys,
+		"user":            publicUser,
+		"tasks":           publicTasks,
+		"tasksPagination": map[string]any{"total": taskTotal, "page": taskPage, "pageSize": taskPageSize},
 	}})
 }
 
@@ -197,7 +223,7 @@ func (r *Router) changeUserPassword(w http.ResponseWriter, req *http.Request, id
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, updated)})
 }
 
 func (r *Router) updateUserStatus(w http.ResponseWriter, req *http.Request, id string) {
@@ -233,7 +259,7 @@ func (r *Router) updateUserStatus(w http.ResponseWriter, req *http.Request, id s
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, updated)})
 }
 
 func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string) {
@@ -242,11 +268,10 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 		return
 	}
 	var input struct {
-		Email    string  `json:"email"`
-		Password string  `json:"password"`
-		Credits  float64 `json:"credits"`
-		Role     string  `json:"role"`
-		Status   string  `json:"status"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		Status   string `json:"status"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -269,7 +294,6 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 	if input.Status == "active" || input.Status == "disabled" {
 		user.Status = input.Status
 	}
-	user.Credits = input.Credits
 	if strings.TrimSpace(input.Password) != "" {
 		if _, err := repo.UpdatePassword(ctx, id, auth.HashPassword(input.Password)); err != nil {
 			writeError(w, err)
@@ -281,7 +305,7 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, updated)})
 }
 
 func (r *Router) deleteUser(w http.ResponseWriter, req *http.Request, id string) {
@@ -297,137 +321,6 @@ func (r *Router) deleteUser(w http.ResponseWriter, req *http.Request, id string)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
-}
-
-func (r *Router) rechargeUser(w http.ResponseWriter, req *http.Request, id string) {
-	if req.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	var input struct {
-		Amount float64 `json:"amount"`
-		Remark string  `json:"remark"`
-	}
-	if err := decodeCompatJSON(req, &input); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	defer tx.Rollback()
-	var credits float64
-	userID := strings.Trim(id, "/")
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, userID).Scan(&credits); err != nil {
-		writeError(w, err)
-		return
-	}
-	next := credits + input.Amount
-	if next < 0 {
-		writeError(w, newAppError(http.StatusBadRequest, "扣减额度不能超过当前余额"))
-		return
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits = ? WHERE id = ?`, next, userID); err != nil {
-		writeError(w, err)
-		return
-	}
-	logType := "recharge"
-	amount := input.Amount
-	if input.Amount < 0 {
-		logType = "deduct"
-		amount = -input.Amount
-	}
-	remark := defaultString(strings.TrimSpace(input.Remark), "后台调整额度")
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, ?, ?, ?, ?)`, newID(), userID, logType, amount, next, remark); err != nil {
-		writeError(w, err)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		writeError(w, err)
-		return
-	}
-	user, _ := users.NewRepository(r.db).FindByID(context.Background(), userID)
-	if r.userHub != nil {
-		r.userHub.PublishUser(user)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"user": users.ToPublicUser(user)}})
-}
-
-func (r *Router) userAPIKeys(w http.ResponseWriter, req *http.Request, path string) {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) < 2 || parts[1] != "api-keys" {
-		writeError(w, newAppError(http.StatusNotFound, "接口不存在"))
-		return
-	}
-	userID := strings.TrimSpace(parts[0])
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	service := apikeys.NewService(apikeys.NewRepository(r.db), users.NewRepository(r.db))
-	if len(parts) == 2 {
-		switch req.Method {
-		case http.MethodGet:
-			items, err := service.ListUserKeys(ctx, userID)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"data": items})
-		case http.MethodPost:
-			var input struct {
-				Name string `json:"name"`
-			}
-			if err := decodeCompatJSON(req, &input); err != nil {
-				writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-				return
-			}
-			key, err := service.CreateUserKey(ctx, userID, defaultString(strings.TrimSpace(input.Name), "API Key"))
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusCreated, map[string]any{"data": key})
-		default:
-			writeMethodNotAllowed(w)
-		}
-		return
-	}
-	if len(parts) == 3 {
-		keyID := parts[2]
-		switch req.Method {
-		case http.MethodPatch:
-			var input struct {
-				Status string `json:"status"`
-			}
-			if err := decodeCompatJSON(req, &input); err != nil {
-				writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-				return
-			}
-			key, err := service.UpdateUserKeyStatus(ctx, keyID, userID, input.Status)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"data": key})
-		case http.MethodDelete:
-			if err := service.DeleteUserKey(ctx, keyID, userID); err != nil {
-				writeError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": true}})
-		default:
-			writeMethodNotAllowed(w)
-		}
-		return
-	}
-	writeError(w, newAppError(http.StatusNotFound, "接口不存在"))
 }
 
 func (r *Router) listUsers(w http.ResponseWriter, req *http.Request) {
@@ -512,7 +405,30 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		writeError(w, newAppError(http.StatusConflict, "邮箱已存在"))
 		return
 	}
+	settingValues := map[string]any{}
+	if !admin {
+		if values, err := settings.NewRepository(r.db).Get(ctx); err == nil {
+			settingValues = values
+		} else {
+			writeError(w, err)
+			return
+		}
+	}
+	emailVerificationRequired := !admin && anyBool(settingValues["registerEmailVerification"])
+	inviteEnabled := !admin && anyBool(settingValues["inviteEnabled"])
+	inviterID := ""
+	invitedIP := ""
+	if inviteEnabled {
+		inviterID = r.resolveInviterID(ctx, input.InviterID)
+		if inviterID != "" {
+			invitedIP = requestIP(req)
+		}
+	}
 	now := time.Now()
+	var emailVerifiedAt *time.Time
+	if !emailVerificationRequired {
+		emailVerifiedAt = &now
+	}
 	user, err := repo.Create(ctx, users.User{
 		ID:              newID(),
 		Email:           email,
@@ -520,25 +436,69 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		Credits:         0,
 		Role:            role,
 		Status:          "active",
-		EmailVerifiedAt: &now,
+		InvitedBy:       inviterID,
+		InvitedIP:       invitedIP,
+		EmailVerifiedAt: emailVerifiedAt,
 	})
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if !admin {
-		if values, err := settings.NewRepository(r.db).Get(ctx); err == nil {
-			inviteEnabled, _ := values["inviteEnabled"].(bool)
-			inviteReward, _ := values["inviteRewardCredits"].(float64)
-			if inviteEnabled && inviteReward > 0 {
-				_ = operations.NewRepository(r.db).RewardInvite(ctx, strings.TrimSpace(input.InviterID), user.ID, inviteReward, requestIP(req))
-			}
-		}
+	if !admin && inviteEnabled && inviterID != "" && !emailVerificationRequired {
+		operationRepo := operations.NewRepository(r.db)
+		_ = operationRepo.RewardInviteSubscription(ctx, inviterID, user.ID, anyString(settingValues["inviteRewardPlanId"]), invitedIP)
+		r.publishCurrentUser(context.Background(), inviterID)
 	}
-	token, _ := r.tokens.CreateUserToken(user.ID)
 	if admin {
 		writeJSON(w, http.StatusCreated, map[string]any{"data": users.ToPublicUser(user)})
 		return
 	}
+	if emailVerificationRequired {
+		verificationData, err := r.sendRegistrationVerification(ctx, req, user, settingValues)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"data": verificationData})
+		return
+	}
+	token, _ := r.tokens.CreateUserToken(user.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"data": mergeUserToken(users.ToPublicUser(user), token)})
+}
+
+func (r *Router) resolveInviterID(ctx context.Context, inviteToken string) string {
+	token := strings.TrimSpace(inviteToken)
+	if token == "" {
+		return ""
+	}
+	repo := users.NewRepository(r.db)
+	if user, err := repo.FindByInviteCode(ctx, token); err == nil && user != nil {
+		return user.ID
+	}
+	if user, err := repo.FindByID(ctx, token); err == nil && user != nil {
+		return user.ID
+	}
+	return ""
+}
+
+func (r *Router) grantInviteRewardForVerifiedUser(ctx context.Context, user *users.User, fallbackIP string) string {
+	if user == nil {
+		return ""
+	}
+	inviterID := strings.TrimSpace(user.InvitedBy)
+	if inviterID == "" || inviterID == user.ID {
+		return ""
+	}
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil || !anyBool(values["inviteEnabled"]) {
+		return ""
+	}
+	inviteIP := strings.TrimSpace(user.InvitedIP)
+	if inviteIP == "" {
+		inviteIP = fallbackIP
+	}
+	if err := operations.NewRepository(r.db).RewardInviteSubscription(ctx, inviterID, user.ID, anyString(values["inviteRewardPlanId"]), inviteIP); err != nil {
+		return ""
+	}
+	return inviterID
 }

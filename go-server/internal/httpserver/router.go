@@ -17,7 +17,6 @@ import (
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
-	"aipi-go/internal/operations"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
@@ -51,7 +50,6 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 
 func (r *Router) routes() {
 	r.mux.HandleFunc("/api/health", r.health)
-	r.mux.HandleFunc("/api/service-status", r.serviceStatus)
 	r.mux.HandleFunc("/api/go/migration", r.migrationStatus)
 	r.mux.HandleFunc("/api/home/bootstrap", r.homeBootstrap)
 	r.mux.HandleFunc("/api/dashboard", r.dashboard)
@@ -72,31 +70,14 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/models", r.listModels)
 	r.mux.HandleFunc("/api/models/", r.modelByID)
 	r.mux.HandleFunc("/api/announcements/public", r.publicAnnouncements)
-	r.mux.HandleFunc("/api/announcements/generate", r.generateAnnouncement)
 	r.mux.HandleFunc("/api/announcements", r.announcements)
 	r.mux.HandleFunc("/api/announcements/", r.announcementByID)
-	r.mux.HandleFunc("/api/promotions/public", r.publicPromotions)
-	r.mux.HandleFunc("/api/promotions", r.promotions)
-	r.mux.HandleFunc("/api/promotions/", r.promotionByID)
-	r.mux.HandleFunc("/api/credit-logs/stats", r.creditLogStats)
-	r.mux.HandleFunc("/api/credit-logs", r.creditLogs)
-	r.mux.HandleFunc("/api/credit-logs/", r.creditLogByID)
-	r.mux.HandleFunc("/api/finance-stats/costs", r.financeCosts)
 	r.mux.HandleFunc("/api/pricing/activity", r.activityStatus)
 	r.mux.HandleFunc("/api/pricing/incentive", r.incentiveStatus)
-	r.mux.HandleFunc("/api/shop/public/recharge-products", r.shopProducts)
-	r.mux.HandleFunc("/api/shop/recharge-products", r.adminShopProducts)
-	r.mux.HandleFunc("/api/shop/recharge-products/", r.shopProductByID)
 	r.mux.HandleFunc("/api/subscriptions/public/plans", r.plans)
 	r.mux.HandleFunc("/api/subscriptions/public/current", r.currentSubscription)
 	r.mux.HandleFunc("/api/subscriptions/plans", r.adminPlans)
 	r.mux.HandleFunc("/api/subscriptions/plans/", r.planByID)
-	r.mux.HandleFunc("/api/redeem-codes/redeem", r.redeemCode)
-	r.mux.HandleFunc("/api/redeem-codes", r.redeemCodes)
-	r.mux.HandleFunc("/api/redeem-codes/", r.redeemCodeByID)
-	r.mux.HandleFunc("/api/checkins/status", r.checkinStatus)
-	r.mux.HandleFunc("/api/checkins", r.checkins)
-	r.mux.HandleFunc("/api/checkins/", r.checkinByID)
 	r.mux.HandleFunc("/api/invites/summary", r.inviteSummary)
 	r.mux.HandleFunc("/api/invites", r.invites)
 	r.mux.HandleFunc("/api/invites/", r.inviteByID)
@@ -128,23 +109,14 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/settings/public", r.publicSettings)
 	r.mux.HandleFunc("/api/settings/account-pool", r.accountPoolSettings)
 	r.mux.HandleFunc("/api/settings/test-email", r.testSettingEndpoint)
-	r.mux.HandleFunc("/api/settings/test-bark", r.testSettingEndpoint)
 	r.mux.HandleFunc("/api/settings", r.settings)
 	r.mux.HandleFunc("/api/account-pool/accounts", r.accountPoolAccounts)
 	r.mux.HandleFunc("/api/mail-broadcast", r.mailBroadcast)
-	r.mux.HandleFunc("/api/api-keys", r.adminAPIKeys)
-	r.mux.HandleFunc("/api/api-keys/", r.adminAPIKeyByID)
-	r.mux.HandleFunc("/api/api-logs/stats", r.apiLogStats)
-	r.mux.HandleFunc("/api/api-logs/cleanup", r.apiLogCleanup)
-	r.mux.HandleFunc("/api/api-logs", r.apiLogs)
-	r.mux.HandleFunc("/api/api-logs/", r.apiLogByID)
 	r.mux.HandleFunc("/oauth/client", r.oauthClient)
 	r.mux.HandleFunc("/oauth/authorize", r.oauthAuthorize)
 	r.mux.HandleFunc("/oauth/token", r.oauthToken)
 	r.mux.HandleFunc("/oauth/me", r.oauthMe)
 	r.mux.HandleFunc("/v1/models", r.compatModels)
-	r.mux.HandleFunc("/v1/balance", r.compatBalance)
-	r.mux.HandleFunc("/v1/credits", r.compatBalance)
 	r.mux.HandleFunc("/v1/images/generations", r.compatImageGenerations)
 	r.mux.HandleFunc("/v1/images/edits", r.compatImageEdits)
 	r.mux.HandleFunc("/v1/chat/completions", r.compatChatCompletions)
@@ -174,17 +146,6 @@ func (r *Router) health(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (r *Router) serviceStatus(w http.ResponseWriter, _ *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	data, err := operations.NewRepository(r.db).PublicServiceStatus(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
 func (r *Router) migrationStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
@@ -195,7 +156,7 @@ func (r *Router) migrationStatus(w http.ResponseWriter, _ *http.Request) {
 				{"name": "models/providers", "status": "ready"},
 				{"name": "generation/tasks/ws", "status": "ready"},
 				{"name": "openai-compatible-api", "status": "ready"},
-				{"name": "operations/logs/shop/subscriptions", "status": "ready"},
+				{"name": "operations/subscriptions", "status": "ready"},
 			},
 		},
 	})

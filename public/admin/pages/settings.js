@@ -5,84 +5,37 @@ const { computed, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 
 const defaultSettings = {
-  siteName: 'AIπ',
-  logoText: 'AIπ',
-  creditName: '积分',
+  siteName: 'ai-pai',
+  logoText: 'ai-pai',
   frontendUrl: window.location.origin,
   backendUrl: window.location.origin,
   supportEnabled: true,
   supportTitle: '联系客服',
-  supportDescription: '遇到充值、生成或账号问题，可以通过下面方式联系管理员。',
+  supportDescription: '遇到订阅、生成或账号问题，可以通过下面方式联系管理员。',
   supportWechat: '',
   supportQq: '',
   supportEmail: '',
   supportUrl: '',
   supportQrCodeUrl: '',
-  rechargeEnabled: true,
-  rechargeRate: 1,
-  rechargeMinAmount: 1,
-  rechargePresets: '10,30,50,100',
-  checkinEnabled: true,
-  checkinRewards: '0.1,0.2,0.3,0.5,0.8,1',
-  inviteEnabled: true,
-  inviteRewardCredits: 1,
-  incentiveEnabled: false,
-  incentiveName: '全站生图活动',
-  incentiveStartAt: '',
-  incentiveEndAt: '',
-  incentiveNewUserDays: 0,
-  incentiveMinUnitPrice: 0.001,
-  incentiveRules: '[{"minImages":10,"discountPercent":10},{"minImages":30,"discountPercent":20},{"minImages":60,"discountPercent":30}]',
+  freeHourlyGenerationQuota: 2,
+  freeDailyGenerationQuota: 5,
+  freeGenerationQuota: 10,
   taskTimeoutMinutes: 3,
   streamGenerationEnabled: false,
-  promptModerationEnabled: true,
-  promptModerationAdultKeywords: '裸体\n裸露\n色情\n黄图\n成人\n性爱\n性交\n做爱\n露点\n私处\n乳头\n生殖器\n强奸\n未成年色情',
-  promptModerationPoliticalKeywords: '习近平\n毛泽东\n共产党\n中共\n台湾独立\n台独\n港独\n藏独\n疆独\n六四\n法轮功\n政治宣传\n推翻政府',
-  promptModerationRejectMessage: '提示词包含不支持生成的敏感内容，请修改后再试。',
   alipayAppId: '',
   alipayPrivateKey: '',
   alipayPublicKey: '',
   alipayGateway: 'https://openapi.alipay.com/gateway.do',
   registerMode: 'open',
-  registerRewardCredits: 0,
   emailEnabled: false,
   emailHost: '',
   emailPort: 465,
   emailSecure: true,
   emailUser: '',
   emailPassword: '',
-  emailFromName: 'AIπ',
+  emailFromName: 'ai-pai',
   emailFromAddress: '',
   registerEmailVerification: false,
-  barkEnabled: false,
-  barkServerUrl: 'https://api.day.app',
-  barkDeviceKey: '',
-  barkTitlePrefix: 'AIπ',
-  barkSound: '',
-  barkNotifyGenerationFailure: true,
-  barkNotifyTaskTimeout: true,
-  barkNotifyProviderFailure: true,
-}
-
-function parseActivityRules(raw) {
-  try {
-    const rules = JSON.parse(String(raw || '[]'))
-    return Array.isArray(rules) ? cleanActivityRules(rules) : []
-  } catch {
-    return []
-  }
-}
-
-function cleanActivityRules(rules) {
-  return (Array.isArray(rules) ? rules : [])
-    .map((rule) => ({ minImages: toNumber(rule.minImages, 0), discountPercent: toNumber(rule.discountPercent, 0) }))
-    .filter((rule) => rule.minImages >= 0 && rule.discountPercent > 0)
-    .sort((a, b) => a.minImages - b.minImages)
-}
-
-function activityRulesText(raw) {
-  const rules = parseActivityRules(raw)
-  return rules.length ? rules.map((rule) => `满 ${rule.minImages} 张 / ${rule.discountPercent}%`).join('，') : '-'
 }
 
 export const SettingsPage = {
@@ -90,88 +43,49 @@ export const SettingsPage = {
   emits: ['refresh-settings'],
   setup(props, { emit }) {
     const form = reactive({ ...defaultSettings, ...(props.settings || {}) })
-    const activityRules = ref(parseActivityRules(form.incentiveRules))
     const settingsVisible = ref(false)
     const groups = [
       { title: '站点与注册', fields: [
-        { key: 'siteName', label: '站点名称' }, { key: 'logoText', label: 'Logo 文字' }, { key: 'creditName', label: '额度名称' },
+        { key: 'siteName', label: '站点名称' }, { key: 'logoText', label: 'Logo 文字' },
         { key: 'registerMode', label: '注册模式', type: 'select', options: [{ label: '开放注册', value: 'open' }, { label: '关闭注册', value: 'closed' }] },
-        { key: 'registerRewardCredits', label: '注册赠送额度', type: 'number' }, { key: 'registerEmailVerification', label: '注册邮箱验证', type: 'boolean' },
+        { key: 'registerEmailVerification', label: '注册邮箱验证', type: 'boolean' },
         { key: 'frontendUrl', label: '前台地址', type: 'url' }, { key: 'backendUrl', label: '后端地址', type: 'url' },
       ] },
       { title: '客服入口', fields: [
         { key: 'supportEnabled', label: '开启客服入口', type: 'boolean' }, { key: 'supportTitle', label: '客服标题' }, { key: 'supportDescription', label: '客服说明', type: 'textarea' },
         { key: 'supportWechat', label: '微信号' }, { key: 'supportQq', label: 'QQ号' }, { key: 'supportEmail', label: '客服邮箱' }, { key: 'supportUrl', label: '在线客服链接' }, { key: 'supportQrCodeUrl', label: '二维码图片地址' },
       ] },
-      { title: '充值与运营', fields: [
-        { key: 'rechargeEnabled', label: '开启充值', type: 'boolean' }, { key: 'rechargeRate', label: '充值比例', type: 'number' }, { key: 'rechargeMinAmount', label: '最低充值金额', type: 'number' }, { key: 'rechargePresets', label: '充值预设' },
-        { key: 'checkinEnabled', label: '开启签到', type: 'boolean' }, { key: 'checkinRewards', label: '签到奖励池' }, { key: 'inviteEnabled', label: '开启邀请', type: 'boolean' }, { key: 'inviteRewardCredits', label: '邀请奖励额度', type: 'number' }, { key: 'taskTimeoutMinutes', label: '任务超时分钟', type: 'number' },
-      ] },
-      { title: '全站生图活动', fields: [
-        { key: 'incentiveEnabled', label: '开启活动', type: 'boolean' },
-        { key: 'incentiveName', label: '活动名称' },
-        { key: 'incentiveStartAt', label: '开始时间', placeholder: '2026-06-15 00:00:00' },
-        { key: 'incentiveEndAt', label: '结束时间', placeholder: '2026-06-30 23:59:59' },
-        { key: 'incentiveMinUnitPrice', label: '最低单张价格', type: 'number' },
-        { key: 'incentiveRules', label: '活动阶梯', type: 'activity-rules' },
-      ] },
       { title: '生成策略', fields: [
+        { key: 'freeHourlyGenerationQuota', label: '免费小时额度（张）', type: 'number', help: '未开通订阅的用户每个自然小时可提交的图片张数。' },
+        { key: 'freeDailyGenerationQuota', label: '免费日额度（张）', type: 'number', help: '未开通订阅的用户每天可提交的图片张数。' },
+        { key: 'freeGenerationQuota', label: '免费月额度（张）', type: 'number', help: '未开通订阅的用户每个自然月可生成的图片张数。' },
         { key: 'streamGenerationEnabled', label: '启用流式生图', type: 'boolean' },
-      ] },
-      { title: '提示词审核', fields: [
-        { key: 'promptModerationEnabled', label: '开启提示词审核', type: 'boolean' },
-        { key: 'promptModerationRejectMessage', label: '拦截提示文案' },
-        { key: 'promptModerationAdultKeywords', label: '黄图关键词', type: 'textarea' },
-        { key: 'promptModerationPoliticalKeywords', label: '涉政关键词', type: 'textarea' },
+        { key: 'taskTimeoutMinutes', label: '任务超时分钟', type: 'number' },
       ] },
       { title: '支付与邮件', fields: [
         { key: 'alipayAppId', label: '支付宝 App ID' }, { key: 'alipayGateway', label: '支付宝网关', type: 'url' }, { key: 'alipayPrivateKey', label: '应用私钥', type: 'textarea' }, { key: 'alipayPublicKey', label: '支付宝公钥', type: 'textarea' },
         { key: 'emailEnabled', label: '开启邮件', type: 'boolean' }, { key: 'emailHost', label: 'SMTP Host', help: 'Gmail: smtp.gmail.com；QQ邮箱: smtp.qq.com' }, { key: 'emailPort', label: 'SMTP Port', type: 'number', help: 'SSL/TLS 通常用 465；STARTTLS 通常用 587' }, { key: 'emailSecure', label: 'SSL/TLS', type: 'boolean', help: '465 端口请开启；587 端口通常关闭后走 STARTTLS' }, { key: 'emailUser', label: '邮箱账号', help: '填写完整邮箱地址，例如 name@gmail.com 或 name@qq.com' }, { key: 'emailPassword', label: '邮箱密码/授权码', type: 'password', help: 'Gmail 请填写应用专用密码；QQ 邮箱请填写 SMTP 授权码，不是登录密码' }, { key: 'emailFromName', label: '发件人名称' }, { key: 'emailFromAddress', label: '发件地址', help: '建议与邮箱账号保持一致，避免被 SMTP 服务拒绝' },
       ] },
-      { title: '通知告警', fields: [
-        { key: 'barkEnabled', label: '开启 Bark 推送', type: 'boolean' },
-        { key: 'barkNotifyGenerationFailure', label: '生图失败推送', type: 'boolean' },
-        { key: 'barkNotifyTaskTimeout', label: '任务超时推送', type: 'boolean' },
-        { key: 'barkNotifyProviderFailure', label: '接口异常推送', type: 'boolean' },
-        { key: 'barkServerUrl', label: 'Bark Server', type: 'url' },
-        { key: 'barkDeviceKey', label: 'Device Key' },
-        { key: 'barkTitlePrefix', label: '标题前缀' },
-        { key: 'barkSound', label: '提示音（可空）' },
-      ] },
     ]
     const statusItems = computed(() => [
-      ['当前站点', form.siteName || 'AIπ'],
+      ['当前站点', form.siteName || 'ai-pai'],
       ['注册状态', form.registerMode === 'closed' ? '关闭注册' : '开放注册'],
-      ['充值功能', form.rechargeEnabled ? '已开启' : '已关闭'],
-      ['生图活动', form.incentiveEnabled ? '已开启' : '已关闭'],
+      ['免费额度', `${toNumber(form.freeHourlyGenerationQuota, 2)} 张/小时 · ${toNumber(form.freeDailyGenerationQuota, 5)} 张/日 · ${toNumber(form.freeGenerationQuota, 10)} 张/月`],
       ['生图模式', form.streamGenerationEnabled ? '流式' : '普通'],
-      ['Bark 推送', form.barkEnabled ? '已开启' : '已关闭'],
       ['任务超时', `${toNumber(form.taskTimeoutMinutes, 3)} 分钟`],
     ])
     watch(() => props.settings, (next) => {
       Object.assign(form, defaultSettings, next || {})
-      activityRules.value = parseActivityRules(form.incentiveRules)
     }, { deep: true })
 
     function normalizeInput() {
-      const input = { ...form }
-      input.announcementEnabled = true
-      ;['announcementEnabled', 'supportEnabled', 'rechargeEnabled', 'checkinEnabled', 'inviteEnabled', 'incentiveEnabled', 'streamGenerationEnabled', 'promptModerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification', 'barkEnabled', 'barkNotifyGenerationFailure', 'barkNotifyTaskTimeout', 'barkNotifyProviderFailure'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
-      ;['rechargeRate', 'rechargeMinAmount', 'inviteRewardCredits', 'taskTimeoutMinutes', 'emailPort', 'registerRewardCredits', 'incentiveNewUserDays', 'incentiveMinUnitPrice'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
-      input.incentiveMinUnitPrice = Math.max(0.001, input.incentiveMinUnitPrice)
-      input.incentiveNewUserDays = 0
-      input.incentiveRules = JSON.stringify(cleanActivityRules(activityRules.value))
+      const input = {}
+      groups.forEach((group) => group.fields.forEach((field) => { input[field.key] = form[field.key] }))
+      ;['supportEnabled', 'streamGenerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
+      ;['freeHourlyGenerationQuota', 'freeDailyGenerationQuota', 'freeGenerationQuota', 'taskTimeoutMinutes', 'emailPort'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
       input.frontendUrl = input.frontendUrl || window.location.origin
       input.backendUrl = input.backendUrl || window.location.origin
       return input
-    }
-
-    function addActivityRule() {
-      const last = activityRules.value[activityRules.value.length - 1]
-      activityRules.value.push({
-        minImages: last ? Number(last.minImages || 0) + 10 : 10,
-        discountPercent: last ? Math.min(99, Number(last.discountPercent || 0) + 10) : 10,
-      })
     }
 
     function applySmtpPreset(provider) {
@@ -189,13 +103,8 @@ export const SettingsPage = {
       message.success('已填入 QQ 邮箱 SMTP 参数，请继续填写邮箱账号和 SMTP 授权码')
     }
 
-    function removeActivityRule(index) {
-      activityRules.value.splice(index, 1)
-    }
-
     function readFieldValue(field) {
       if (field.type === 'boolean') return form[field.key] ? '开启' : '关闭'
-      if (field.type === 'activity-rules') return activityRulesText(form[field.key])
       return form[field.key] || '-'
     }
 
@@ -225,24 +134,14 @@ export const SettingsPage = {
       })
     }
 
-    async function testBark() {
-      try {
-        await submit()
-        await adminApi.sendTestBark()
-        message.success('Bark 测试推送已发送')
-      } catch (error) {
-        message.error(error instanceof Error ? error.message : 'Bark 测试失败')
-      }
-    }
-
-    return { activityRules, addActivityRule, applySmtpPreset, form, groups, readFieldValue, removeActivityRule, statusItems, settingsVisible, submit, testEmail, testBark }
+    return { applySmtpPreset, form, groups, readFieldValue, statusItems, settingsVisible, submit, testEmail }
   },
   template: `
     <div class="settings-page">
       <section class="page-panel">
         <div class="page-hero">
-          <div><div class="page-kicker">System Settings</div><div class="page-title">系统设置</div><div class="page-desc">维护站点配置、充值运营、支付邮件和前台展示策略。</div></div>
-          <div class="toolbar"><a-button @click="testEmail">发送测试邮件</a-button><a-button @click="testBark">测试 Bark</a-button><a-button type="primary" @click="settingsVisible = true">编辑设置</a-button></div>
+          <div><div class="page-kicker">System Settings</div><div class="page-title">系统设置</div><div class="page-desc">维护站点基础信息、注册规则、客服入口、生成策略和支付邮件。</div></div>
+          <div class="toolbar"><a-button @click="testEmail">发送测试邮件</a-button><a-button type="primary" @click="settingsVisible = true">编辑设置</a-button></div>
         </div>
         <div class="summary-grid"><div v-for="[label, value] in statusItems" :key="label" class="summary-card"><span>{{ label }}</span><b style="font-size:18px">{{ value }}</b></div></div>
       </section>
@@ -271,23 +170,9 @@ export const SettingsPage = {
             </span>
           </div>
           <div class="form-grid drawer-form-grid">
-            <label v-for="field in group.fields" :key="field.key" :class="{ full: field.type === 'textarea' || field.type === 'activity-rules' }">
+            <label v-for="field in group.fields" :key="field.key" :class="{ full: field.type === 'textarea' }">
               <div class="muted" style="margin-bottom:6px">{{ field.label }}</div>
               <a-textarea v-if="field.type === 'textarea'" v-model:value="form[field.key]" :rows="4" />
-              <div v-else-if="field.type === 'activity-rules'" class="activity-rule-editor">
-                <div class="activity-rule-head">
-                  <span>达到张数</span>
-                  <span>优惠比例</span>
-                  <span></span>
-                </div>
-                <div v-for="(rule, index) in activityRules" :key="index" class="activity-rule-row">
-                  <a-input-number v-model:value="rule.minImages" :min="0" :precision="0" addon-before="满" addon-after="张" style="width:100%" />
-                  <a-input-number v-model:value="rule.discountPercent" :min="1" :max="99" :precision="0" addon-after="%" style="width:100%" />
-                  <a-button danger type="text" @click="removeActivityRule(index)">删除</a-button>
-                </div>
-                <div v-if="!activityRules.length" class="activity-rule-empty">还没有阶梯规则，添加后前台会按今日生图数量自动计算优惠。</div>
-                <a-button type="dashed" block @click="addActivityRule"><i class="ti ti-plus"></i> 添加阶梯</a-button>
-              </div>
               <a-select v-else-if="field.type === 'select'" v-model:value="form[field.key]" style="width:100%"><a-select-option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</a-select-option></a-select>
               <a-switch v-else-if="field.type === 'boolean'" v-model:checked="form[field.key]" checked-children="开" un-checked-children="关" />
               <a-input v-else v-model:value="form[field.key]" :type="field.type || 'text'" />

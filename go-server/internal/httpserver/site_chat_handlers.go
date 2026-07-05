@@ -59,6 +59,10 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusBadRequest, "聊天模型接口未启用"))
 		return
 	}
+	if err := r.requireGenerationSubscription(ctx, user.ID, *model); err != nil {
+		writeError(w, err)
+		return
+	}
 	messages, err := inlineChatMessageImages(req.Context(), req, input.Messages)
 	if err != nil {
 		writeError(w, err)
@@ -66,7 +70,7 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 	}
 	body := map[string]any{"model": model.ModelName, "messages": messages, "stream": input.Stream}
 	if input.Stream {
-		r.siteChatStream(w, req, *provider, body, user.Credits)
+		r.siteChatStream(w, req, *provider, body)
 		return
 	}
 	body["stream"] = false
@@ -84,9 +88,7 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"message":          map[string]any{"role": "assistant", "content": text},
-			"costCredits":      0,
-			"remainingCredits": user.Credits,
+			"message": map[string]any{"role": "assistant", "content": text},
 		},
 	})
 }
@@ -139,7 +141,7 @@ func inlineChatMessageImages(ctx context.Context, req *http.Request, messages []
 	return output, nil
 }
 
-func (r *Router) siteChatStream(w http.ResponseWriter, req *http.Request, provider providers.Provider, body map[string]any, remainingCredits float64) {
+func (r *Router) siteChatStream(w http.ResponseWriter, req *http.Request, provider providers.Provider, body map[string]any) {
 	payload, _ := json.Marshal(body)
 	upstreamReq, err := http.NewRequestWithContext(req.Context(), http.MethodPost, openAIProxyEndpoint(provider, "chat/completions"), bytes.NewReader(payload))
 	if err != nil {
@@ -173,9 +175,7 @@ func (r *Router) siteChatStream(w http.ResponseWriter, req *http.Request, provid
 		writeGenerationSSE(w, "delta", map[string]any{"text": chunk})
 	}
 	writeGenerationSSE(w, "done", map[string]any{
-		"message":          map[string]any{"role": "assistant", "content": text},
-		"costCredits":      0,
-		"remainingCredits": remainingCredits,
+		"message": map[string]any{"role": "assistant", "content": text},
 	})
 }
 

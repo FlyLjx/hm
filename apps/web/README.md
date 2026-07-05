@@ -1,4 +1,4 @@
-# AI-PAI Public Web Frontend
+# ai-pai Public Web Frontend
 
 This is the source directory for the public user-facing UI.
 

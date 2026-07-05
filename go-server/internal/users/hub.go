@@ -47,6 +47,13 @@ func (h *Hub) PublishUser(user *User) {
 	h.publish(user.ID, Message{Type: "user", Data: ToPublicUser(user)})
 }
 
+func (h *Hub) PublishUserData(userID string, data any) {
+	if userID == "" {
+		return
+	}
+	h.publish(userID, Message{Type: "user", Data: data})
+}
+
 func (h *Hub) publish(userID string, message Message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

@@ -5,17 +5,17 @@ const { message } = antd
 
 const mailTemplates = [
   {
-    key: 'activity',
-    name: '活动拉新',
-    subject: '全站生图活动进行中，邀请好友一起解锁优惠',
+    key: 'creator',
+    name: '创作提醒',
+    subject: '你的 AI 创作工作台已准备好',
     content: `你好呀，
 
-平台正在进行全站生图活动，今日生成数量越高，所有用户都能一起解锁更高优惠。
+ai-pai 已经准备好继续创作，你可以用它快速生成海报、产品图、门店物料和社媒配图。
 
-如果你身边有朋友、客户或同事也需要做海报、产品图、宣传图，可以把你的邀请链接发给他们。好友注册后，你可以获得邀请奖励，大家也能一起把活动档位冲上去。
+如果你有常用场景，可以直接从一句需求开始，选择模型和比例后提交生成。
 
-点击下方按钮访问平台，复制你的专属邀请链接，一起把今天的优惠冲满吧。`,
-    actionText: '进入平台邀请好友',
+点击下方按钮访问平台，继续完成你的下一张作品。`,
+    actionText: '开始创作',
   },
   {
     key: 'notice',
@@ -38,7 +38,7 @@ const mailTemplates = [
 
 为了提升服务稳定性，平台将进行短时维护。维护期间可能出现页面短暂无法访问、任务状态同步延迟等情况。
 
-维护完成后服务会自动恢复，你的账户数据和积分不会受到影响。
+维护完成后服务会自动恢复，你的账户数据和订阅权益不会受到影响。
 
 感谢理解与支持。`,
     actionText: '访问平台',
@@ -69,7 +69,7 @@ export const MailBroadcastPage = {
     const form = reactive({
       targetType: 'all',
       userIds: [],
-      templateKey: 'activity',
+      templateKey: 'creator',
       subject: '',
       content: '',
       actionText: '立即查看',
@@ -302,7 +302,7 @@ export const MailBroadcastPage = {
             </div>
           </div>
           <article class="mail-preview-card">
-            <div class="mail-preview-brand">AIπ 通知</div>
+            <div class="mail-preview-brand">ai-pai 通知</div>
             <div class="mail-preview-subject">{{ form.subject || '未填写邮件标题' }}</div>
             <div class="mail-preview-content">{{ form.content || '未填写邮件正文' }}</div>
             <a v-if="form.actionUrl" class="mail-preview-button" :href="form.actionUrl" target="_blank">{{ form.actionText || '立即查看' }}</a>

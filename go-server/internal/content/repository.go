@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
 )
 
@@ -17,7 +18,7 @@ func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, userID string) ([]Announcement, error) {
+func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, userID string, includeSigned bool) ([]Announcement, error) {
 	query := `
 		SELECT announcements.id, announcements.title, announcements.content,
 			COALESCE(announcements.display_mode, 'popup') AS display_mode,
@@ -39,13 +40,13 @@ func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, us
 					  AND target_users.user_id = ?
 				))
 			  )
-			  AND (COALESCE(announcements.display_mode, 'popup') <> 'popup' OR ? = '' OR NOT EXISTS (
+			  AND (? OR COALESCE(announcements.display_mode, 'popup') <> 'popup' OR ? = '' OR NOT EXISTS (
 				SELECT 1 FROM announcement_receipts
 				WHERE announcement_receipts.announcement_id = announcements.id
 				  AND announcement_receipts.user_id = ?
 			  ))
 		`
-		args = append(args, userID, userID, userID, userID)
+		args = append(args, userID, userID, includeSigned, userID, userID)
 	}
 	query += ` GROUP BY announcements.id ORDER BY announcements.sort_order ASC, announcements.created_at DESC`
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -142,66 +143,6 @@ func (r *Repository) ReplaceAnnouncementUsers(ctx context.Context, announcementI
 	return nil
 }
 
-func (r *Repository) FindPromotions(ctx context.Context, activeOnly bool) ([]Promotion, error) {
-	query := `SELECT id, title, content, badge, action_text, action_url, status, sort_order, created_at, updated_at FROM promotions`
-	if activeOnly {
-		query += ` WHERE status = 'active'`
-	}
-	query += ` ORDER BY sort_order ASC, created_at DESC`
-	rows, err := r.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Promotion{}
-	for rows.Next() {
-		item, err := scanPromotion(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (r *Repository) FindPromotion(ctx context.Context, id string) (*Promotion, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, title, content, badge, action_text, action_url, status, sort_order, created_at, updated_at FROM promotions WHERE id = ? LIMIT 1`, id)
-	item, err := scanPromotion(row)
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
-}
-
-func (r *Repository) SavePromotion(ctx context.Context, item Promotion) (*Promotion, error) {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO promotions (id, title, content, badge, action_text, action_url, status, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			title = VALUES(title),
-			content = VALUES(content),
-			badge = VALUES(badge),
-			action_text = VALUES(action_text),
-			action_url = VALUES(action_url),
-			status = VALUES(status),
-			sort_order = VALUES(sort_order),
-			updated_at = CURRENT_TIMESTAMP
-	`, item.ID, item.Title, item.Content, item.Badge, item.ActionText, item.ActionURL, defaultStringLocal(item.Status, "active"), item.SortOrder)
-	if err != nil {
-		return nil, err
-	}
-	return r.FindPromotion(ctx, item.ID)
-}
-
-func (r *Repository) DeletePromotion(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM promotions WHERE id = ?`, id)
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	return rows > 0, err
-}
-
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -214,29 +155,8 @@ func scanAnnouncement(row scanner) (Announcement, error) {
 		return item, err
 	}
 	item.UserIDs = splitIDs(userIDs.String)
-	item.CreatedAt = createdAt.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updatedAt.In(time.Local).Format(time.RFC3339)
-	return item, nil
-}
-
-func scanPromotion(row scanner) (Promotion, error) {
-	var item Promotion
-	var badge, actionText, actionURL sql.NullString
-	var createdAt, updatedAt time.Time
-	if err := row.Scan(&item.ID, &item.Title, &item.Content, &badge, &actionText, &actionURL, &item.Status, &item.SortOrder, &createdAt, &updatedAt); err != nil {
-		return item, err
-	}
-	if badge.Valid {
-		item.Badge = &badge.String
-	}
-	if actionText.Valid {
-		item.ActionText = &actionText.String
-	}
-	if actionURL.Valid {
-		item.ActionURL = &actionURL.String
-	}
-	item.CreatedAt = createdAt.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updatedAt.In(time.Local).Format(time.RFC3339)
+	item.CreatedAt = appclock.DatabaseTime(createdAt).Format(time.RFC3339)
+	item.UpdatedAt = appclock.DatabaseTime(updatedAt).Format(time.RFC3339)
 	return item, nil
 }
 

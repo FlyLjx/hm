@@ -10,14 +10,15 @@ import (
 	"syscall"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/httpserver"
 	"aipi-go/internal/logging"
-	"aipi-go/internal/providers"
 )
 
 func main() {
+	appclock.ConfigureDefault()
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel, cfg.LogDir)
 
@@ -33,10 +34,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	monitorCtx, stopMonitor := context.WithCancel(context.Background())
-	defer stopMonitor()
-	providers.NewMonitor(db, logger).Start(monitorCtx)
-
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           httpserver.NewRouter(cfg, db, logger),
@@ -47,7 +44,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("AI-PAI Go server started", "addr", server.Addr)
+		logger.Info("ai-pai server started", "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server stopped unexpectedly", "error", err)
 			os.Exit(1)
@@ -58,7 +55,6 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	stopMonitor()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

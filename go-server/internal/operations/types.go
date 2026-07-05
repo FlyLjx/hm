@@ -1,38 +1,13 @@
 package operations
 
-import "time"
-
-type CreditLog struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"userId"`
-	UserEmail    *string   `json:"userEmail,omitempty"`
-	Type         string    `json:"type"`
-	Amount       float64   `json:"amount"`
-	BalanceAfter float64   `json:"balanceAfter"`
-	Remark       *string   `json:"remark"`
-	CreatedAt    time.Time `json:"-"`
-	CreatedAtISO string    `json:"createdAt"`
-}
-
-type RechargeProduct struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Amount    float64 `json:"amount"`
-	Credits   float64 `json:"credits"`
-	Badge     *string `json:"badge"`
-	SortOrder int     `json:"sortOrder"`
-	Status    string  `json:"status"`
-	CreatedAt string  `json:"createdAt"`
-	UpdatedAt string  `json:"updatedAt"`
-}
-
 type SubscriptionPlan struct {
 	ID                 string   `json:"id"`
 	Name               string   `json:"name"`
 	Description        *string  `json:"description"`
 	Amount             float64  `json:"amount"`
 	DurationDays       int      `json:"durationDays"`
-	BonusCredits       float64  `json:"bonusCredits"`
+	QuotaImages        int      `json:"quotaImages"`
+	BonusCredits       float64  `json:"-"`
 	DiscountPercent    float64  `json:"discountPercent"`
 	AllowedProviderIDs []string `json:"allowedProviderIds"`
 	AllowedModelIDs    []string `json:"allowedModelIds"`
@@ -43,28 +18,44 @@ type SubscriptionPlan struct {
 	UpdatedAt          string   `json:"updatedAt"`
 }
 
-type RedeemCode struct {
-	ID        string  `json:"id"`
-	Code      string  `json:"code"`
-	Credits   float64 `json:"credits"`
-	Status    string  `json:"status"`
-	Remark    *string `json:"remark"`
-	UserID    *string `json:"userId"`
-	UserEmail *string `json:"userEmail,omitempty"`
-	UsedAt    *string `json:"usedAt"`
-	ExpiresAt *string `json:"expiresAt"`
-	CreatedAt string  `json:"createdAt"`
-	UpdatedAt string  `json:"updatedAt"`
+type FreeQuotaLimits struct {
+	Hourly  int
+	Daily   int
+	Monthly int
 }
 
-type Checkin struct {
-	ID            string  `json:"id"`
-	UserID        string  `json:"userId"`
-	UserEmail     *string `json:"userEmail,omitempty"`
-	RewardCredits float64 `json:"rewardCredits"`
-	CheckinDate   string  `json:"checkinDate"`
-	UserIP        *string `json:"userIp"`
-	CreatedAt     string  `json:"createdAt"`
+type SubscriptionQuotaWindow struct {
+	Key             string `json:"key"`
+	Label           string `json:"label"`
+	QuotaLimit      int    `json:"quotaLimit"`
+	QuotaUsed       int    `json:"quotaUsed"`
+	QuotaRemaining  int    `json:"quotaRemaining"`
+	PeriodStartedAt string `json:"periodStartedAt"`
+	PeriodEndsAt    string `json:"periodEndsAt"`
+}
+
+type SubscriptionEntitlement struct {
+	ID                 string                    `json:"id,omitempty"`
+	Status             string                    `json:"status"`
+	Tier               string                    `json:"tier"`
+	IsPaid             bool                      `json:"isPaid"`
+	StartedAt          string                    `json:"startedAt,omitempty"`
+	ExpiresAt          string                    `json:"expiresAt,omitempty"`
+	PeriodStartedAt    string                    `json:"periodStartedAt"`
+	PeriodEndsAt       string                    `json:"periodEndsAt"`
+	PlanID             string                    `json:"planId,omitempty"`
+	PlanName           string                    `json:"planName"`
+	DiscountPercent    float64                   `json:"discountPercent"`
+	AllowedProviderIDs []string                  `json:"allowedProviderIds"`
+	AllowedModelIDs    []string                  `json:"allowedModelIds"`
+	QuotaImages        int                       `json:"quotaImages"`
+	QuotaLimit         int                       `json:"quotaLimit"`
+	QuotaUsed          int                       `json:"quotaUsed"`
+	QuotaRemaining     int                       `json:"quotaRemaining"`
+	EffectiveRemaining int                       `json:"effectiveQuotaRemaining"`
+	QuotaUnlimited     bool                      `json:"quotaUnlimited"`
+	QuotaWindows       []SubscriptionQuotaWindow `json:"quotaWindows,omitempty"`
+	Plan               *SubscriptionPlan         `json:"plan,omitempty"`
 }
 
 type Invite struct {
@@ -74,8 +65,18 @@ type Invite struct {
 	InviteeID     string  `json:"inviteeId"`
 	InviteeEmail  *string `json:"inviteeEmail,omitempty"`
 	RewardCredits float64 `json:"rewardCredits"`
+	RewardType    string  `json:"rewardType"`
+	RewardPlanID  *string `json:"rewardPlanId,omitempty"`
+	RewardLabel   *string `json:"rewardLabel,omitempty"`
 	InviteeIP     *string `json:"inviteeIp"`
 	CreatedAt     string  `json:"createdAt"`
+}
+
+type InviteDeleteResult struct {
+	Deleted             bool   `json:"deleted"`
+	InviterID           string `json:"inviterId,omitempty"`
+	SubscriptionRevoked bool   `json:"subscriptionRevoked"`
+	RevokedDays         int    `json:"revokedDays,omitempty"`
 }
 
 type RechargeOrder struct {
@@ -87,7 +88,7 @@ type RechargeOrder struct {
 	OrderType          string  `json:"orderType"`
 	SubscriptionPlanID *string `json:"subscriptionPlanId"`
 	Amount             float64 `json:"amount"`
-	Credits            float64 `json:"credits"`
+	Credits            float64 `json:"-"`
 	Status             string  `json:"status"`
 	PayURL             *string `json:"payUrl"`
 	QRCode             *string `json:"qrCode"`
@@ -104,30 +105,7 @@ type DashboardTaskSummary struct {
 	ModelName        *string `json:"modelName,omitempty"`
 	ModelDisplayName *string `json:"modelDisplayName,omitempty"`
 	Quantity         int     `json:"quantity"`
-	CostCredits      float64 `json:"costCredits"`
+	CostCredits      float64 `json:"-"`
 	Status           string  `json:"status"`
 	CreatedAt        string  `json:"createdAt"`
-}
-
-type APICallLog struct {
-	ID              string  `json:"id"`
-	Direction       string  `json:"direction"`
-	TaskID          *string `json:"taskId"`
-	UserID          *string `json:"userId"`
-	UserEmail       *string `json:"userEmail,omitempty"`
-	APIKeyID        *string `json:"apiKeyId"`
-	APIKeyName      *string `json:"apiKeyName"`
-	ProviderID      *string `json:"providerId"`
-	ProviderName    *string `json:"providerName,omitempty"`
-	ProviderType    *string `json:"providerType"`
-	Endpoint        string  `json:"endpoint"`
-	Phase           string  `json:"phase"`
-	Method          string  `json:"method"`
-	Status          string  `json:"status"`
-	StatusCode      *int    `json:"statusCode"`
-	DurationMS      int     `json:"durationMs"`
-	RequestSummary  any     `json:"requestSummary"`
-	ResponseSummary any     `json:"responseSummary"`
-	ErrorMessage    *string `json:"errorMessage"`
-	CreatedAt       string  `json:"createdAt"`
 }

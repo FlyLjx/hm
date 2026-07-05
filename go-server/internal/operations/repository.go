@@ -7,15 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
+	"aipi-go/internal/tasks"
 )
 
 type Repository struct {
 	db *database.DB
 }
-
-const apiLogMonitorPhase = "service-monitor"
-const publicSlowRequestMs = 10000
 
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
@@ -26,7 +25,6 @@ type PageInput struct {
 	PageSize int
 	Keyword  string
 	Status   string
-	APIKeyID string
 }
 
 func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
@@ -80,7 +78,7 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	pendingOrders, _ := r.count(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE status='pending'`)
 	runningTasks, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status IN ('queued','pending','processing')`)
 	recentFailed, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status IN ('failed','canceled') AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`)
-	privateImages, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status='success' AND display_enabled=0`)
+	privateImages, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status='success' AND display_enabled=FALSE`)
 	activeProviders, _ := r.count(ctx, `SELECT COUNT(*) FROM api_providers WHERE status='active'`)
 	disabledProviders, _ := r.count(ctx, `SELECT COUNT(*) FROM api_providers WHERE status='disabled'`)
 	activeModels, _ := r.count(ctx, `SELECT COUNT(*) FROM ai_models WHERE capability='chat_image' AND status='active'`)
@@ -93,13 +91,11 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	taskFailed := 0
 	taskCanceled := 0
 	taskTotalImages := 0
-	taskTotalCredits := 0.0
 	taskStatRows, err := r.db.QueryContext(ctx, `
 		SELECT
 			status,
 			COUNT(*) AS total,
-			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images,
-			COALESCE(SUM(CASE WHEN status = 'success' THEN cost_credits ELSE 0 END), 0) AS total_credits
+			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images
 		FROM generation_tasks
 		GROUP BY status
 	`)
@@ -110,14 +106,12 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		var status string
 		var total int
 		var images int
-		var credits float64
-		if err := taskStatRows.Scan(&status, &total, &images, &credits); err != nil {
+		if err := taskStatRows.Scan(&status, &total, &images); err != nil {
 			taskStatRows.Close()
 			return nil, err
 		}
 		taskTotal += total
 		taskTotalImages += images
-		taskTotalCredits += credits
 		switch status {
 		case "queued":
 			taskQueued = total
@@ -143,7 +137,7 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	_ = r.db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM generation_tasks`).Scan(&lastTask)
 	lastTaskValue := any(nil)
 	if lastTask.Valid {
-		lastTaskValue = lastTask.Time.In(time.Local).Format(time.RFC3339)
+		lastTaskValue = appclock.DatabaseTime(lastTask.Time).Format(time.RFC3339)
 	}
 	result["today"] = map[string]any{
 		"users": todayUsers, "orders": todayOrders, "paidAmount": todayPaidAmount,
@@ -154,15 +148,14 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	}
 	result["orders"] = orderTotals
 	result["taskStats"] = map[string]any{
-		"total":        taskTotal,
-		"queued":       taskQueued,
-		"pending":      taskPending,
-		"processing":   taskProcessing,
-		"success":      taskSuccess,
-		"failed":       taskFailed,
-		"canceled":     taskCanceled,
-		"totalImages":  taskTotalImages,
-		"totalCredits": taskTotalCredits,
+		"total":       taskTotal,
+		"queued":      taskQueued,
+		"pending":     taskPending,
+		"processing":  taskProcessing,
+		"success":     taskSuccess,
+		"failed":      taskFailed,
+		"canceled":    taskCanceled,
+		"totalImages": taskTotalImages,
 	}
 	result["pending"] = map[string]any{
 		"pendingOrders": pendingOrders, "runningTasks": runningTasks,
@@ -233,7 +226,7 @@ func (r *Repository) DashboardTasks(ctx context.Context, limit int) ([]Dashboard
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT generation_tasks.id, generation_tasks.user_id, users.email, generation_tasks.model_id,
 			ai_models.model_name, ai_models.display_name, generation_tasks.quantity,
-			generation_tasks.cost_credits, generation_tasks.status, generation_tasks.created_at
+			generation_tasks.status, generation_tasks.created_at
 		FROM generation_tasks
 		LEFT JOIN users ON users.id = generation_tasks.user_id
 		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
@@ -249,363 +242,20 @@ func (r *Repository) DashboardTasks(ctx context.Context, limit int) ([]Dashboard
 		var item DashboardTaskSummary
 		var created time.Time
 		var email, modelName, modelDisplayName sql.NullString
-		if err := rows.Scan(&item.ID, &item.UserID, &email, &item.ModelID, &modelName, &modelDisplayName, &item.Quantity, &item.CostCredits, &item.Status, &created); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &email, &item.ModelID, &modelName, &modelDisplayName, &item.Quantity, &item.Status, &created); err != nil {
 			return nil, err
 		}
 		item.UserEmail = nullString(email)
 		item.ModelName = nullString(modelName)
 		item.ModelDisplayName = nullString(modelDisplayName)
-		item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
+		item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
 		items = append(items, item)
 	}
 	return items, rows.Err()
-}
-
-func (r *Repository) CreditLogs(ctx context.Context, input PageInput) ([]CreditLog, int, error) {
-	page, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	_ = page
-	where := []string{}
-	args := []any{}
-	if input.Keyword != "" {
-		where = append(where, "(users.email LIKE ? OR credit_logs.remark LIKE ? OR credit_logs.user_id LIKE ?)")
-		like := "%" + strings.TrimSpace(input.Keyword) + "%"
-		args = append(args, like, like, like)
-	}
-	if input.Status == "recharge" || input.Status == "deduct" {
-		where = append(where, "credit_logs.type = ?")
-		args = append(args, input.Status)
-	}
-	whereSQL := buildWhere(where)
-	total, err := r.countWithArgs(ctx, `SELECT COUNT(*) FROM credit_logs LEFT JOIN users ON users.id = credit_logs.user_id `+whereSQL, args)
-	if err != nil {
-		return nil, 0, err
-	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT credit_logs.id, credit_logs.user_id, users.email, credit_logs.type, credit_logs.amount,
-			credit_logs.balance_after, credit_logs.remark, credit_logs.created_at
-		FROM credit_logs
-		LEFT JOIN users ON users.id = credit_logs.user_id
-		`+whereSQL+`
-		ORDER BY credit_logs.created_at DESC, credit_logs.id DESC
-		LIMIT ? OFFSET ?
-	`, append(args, pageSize, offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	items := []CreditLog{}
-	for rows.Next() {
-		item, err := scanCreditLog(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-		items = append(items, item)
-	}
-	return items, total, rows.Err()
-}
-
-func (r *Repository) CreditStats(ctx context.Context) (map[string]any, error) {
-	var recharge, deduct, totalRows float64
-	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN type='recharge' THEN amount ELSE 0 END),0), COALESCE(SUM(CASE WHEN type='deduct' THEN amount ELSE 0 END),0), COUNT(*) FROM credit_logs`).Scan(&recharge, &deduct, &totalRows)
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT DATE(created_at) AS day,
-			COALESCE(SUM(CASE WHEN type='recharge' THEN amount ELSE 0 END),0) AS recharge,
-			COALESCE(SUM(CASE WHEN type='deduct' THEN amount ELSE 0 END),0) AS deduct
-		FROM credit_logs
-		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
-		GROUP BY DATE(created_at)
-		ORDER BY day ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	daily := []map[string]any{}
-	for rows.Next() {
-		var day time.Time
-		var in, out float64
-		if err := rows.Scan(&day, &in, &out); err != nil {
-			return nil, err
-		}
-		daily = append(daily, map[string]any{"date": day.Format("2006-01-02"), "recharge": in, "deduct": out})
-	}
-	return map[string]any{"total": totalRows, "recharge": recharge, "deduct": deduct, "daily": daily}, rows.Err()
-}
-
-func (r *Repository) DeleteCreditLog(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM credit_logs WHERE id = ?`, id)
-	return affected(result, err)
-}
-
-func (r *Repository) FinanceCosts(ctx context.Context, days int) (map[string]any, error) {
-	if days <= 0 {
-		days = 30
-	}
-	if days > 365 {
-		days = 365
-	}
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(days - 1))
-
-	var paidOrders int
-	var paidAmount float64
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(amount), 0)
-		FROM recharge_orders
-		WHERE status = 'paid'
-			AND COALESCE(paid_at, updated_at, created_at) >= ?
-	`, start).Scan(&paidOrders, &paidAmount); err != nil {
-		return nil, err
-	}
-
-	var successTasks, images int
-	var taskRevenue, modelCost float64
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*),
-			COALESCE(SUM(quantity), 0),
-			COALESCE(SUM(cost_credits), 0),
-			COALESCE(SUM(model_cost_credits), 0)
-		FROM generation_tasks
-		WHERE status = 'success'
-			AND created_at >= ?
-	`, start).Scan(&successTasks, &images, &taskRevenue, &modelCost); err != nil {
-		return nil, err
-	}
-
-	models, err := r.financeCostModels(ctx, start)
-	if err != nil {
-		return nil, err
-	}
-	trends, err := r.financeCostTrends(ctx, start, days)
-	if err != nil {
-		return nil, err
-	}
-
-	grossProfit := taskRevenue - modelCost
-	return map[string]any{
-		"summary": map[string]any{
-			"paidAmount":         paidAmount,
-			"paidOrders":         paidOrders,
-			"taskRevenue":        taskRevenue,
-			"modelCost":          modelCost,
-			"grossProfit":        grossProfit,
-			"grossProfitRate":    financeProfitRate(taskRevenue, modelCost),
-			"cashMinusModelCost": paidAmount - modelCost,
-			"successTasks":       successTasks,
-			"images":             images,
-		},
-		"models": models,
-		"trends": trends,
-	}, nil
-}
-
-func (r *Repository) financeCostModels(ctx context.Context, start time.Time) ([]map[string]any, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT COALESCE(generation_tasks.model_id, '') AS model_id,
-			COALESCE(ai_models.model_name, generation_tasks.model_id, '未知模型') AS model_name,
-			COALESCE(ai_models.display_name, '') AS display_name,
-			COUNT(*) AS success_tasks,
-			COALESCE(SUM(generation_tasks.quantity), 0) AS images,
-			COALESCE(SUM(generation_tasks.cost_credits), 0) AS task_revenue,
-			COALESCE(SUM(generation_tasks.model_cost_credits), 0) AS model_cost
-		FROM generation_tasks
-		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
-		WHERE generation_tasks.status = 'success'
-			AND generation_tasks.created_at >= ?
-		GROUP BY generation_tasks.model_id, ai_models.model_name, ai_models.display_name
-		ORDER BY task_revenue DESC
-		LIMIT 100
-	`, start)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var modelID, modelName, displayName string
-		var successTasks, images int
-		var revenue, cost float64
-		if err := rows.Scan(&modelID, &modelName, &displayName, &successTasks, &images, &revenue, &cost); err != nil {
-			return nil, err
-		}
-		grossProfit := revenue - cost
-		items = append(items, map[string]any{
-			"modelId":         modelID,
-			"modelName":       modelName,
-			"displayName":     displayName,
-			"successTasks":    successTasks,
-			"images":          images,
-			"taskRevenue":     revenue,
-			"modelCost":       cost,
-			"grossProfit":     grossProfit,
-			"grossProfitRate": financeProfitRate(revenue, cost),
-		})
-	}
-	return items, rows.Err()
-}
-
-type financeTrendRow struct {
-	day          string
-	paidOrders   int
-	paidAmount   float64
-	successTasks int
-	images       int
-	taskRevenue  float64
-	modelCost    float64
-}
-
-func (r *Repository) financeCostTrends(ctx context.Context, start time.Time, days int) ([]map[string]any, error) {
-	byDay := map[string]*financeTrendRow{}
-	for index := 0; index < days; index++ {
-		day := start.AddDate(0, 0, index).Format("2006-01-02")
-		byDay[day] = &financeTrendRow{day: day}
-	}
-
-	orderRows, err := r.db.QueryContext(ctx, `
-		SELECT DATE(COALESCE(paid_at, updated_at, created_at)) AS day,
-			COUNT(*) AS paid_orders,
-			COALESCE(SUM(amount), 0) AS paid_amount
-		FROM recharge_orders
-		WHERE status = 'paid'
-			AND COALESCE(paid_at, updated_at, created_at) >= ?
-		GROUP BY DATE(COALESCE(paid_at, updated_at, created_at))
-	`, start)
-	if err != nil {
-		return nil, err
-	}
-	for orderRows.Next() {
-		var day time.Time
-		var paidOrders int
-		var paidAmount float64
-		if err := orderRows.Scan(&day, &paidOrders, &paidAmount); err != nil {
-			orderRows.Close()
-			return nil, err
-		}
-		key := day.Format("2006-01-02")
-		if item := byDay[key]; item != nil {
-			item.paidOrders = paidOrders
-			item.paidAmount = paidAmount
-		}
-	}
-	if err := orderRows.Close(); err != nil {
-		return nil, err
-	}
-	if err := orderRows.Err(); err != nil {
-		return nil, err
-	}
-
-	taskRows, err := r.db.QueryContext(ctx, `
-		SELECT DATE(created_at) AS day,
-			COUNT(*) AS success_tasks,
-			COALESCE(SUM(quantity), 0) AS images,
-			COALESCE(SUM(cost_credits), 0) AS task_revenue,
-			COALESCE(SUM(model_cost_credits), 0) AS model_cost
-		FROM generation_tasks
-		WHERE status = 'success'
-			AND created_at >= ?
-		GROUP BY DATE(created_at)
-	`, start)
-	if err != nil {
-		return nil, err
-	}
-	for taskRows.Next() {
-		var day time.Time
-		var successTasks, images int
-		var revenue, cost float64
-		if err := taskRows.Scan(&day, &successTasks, &images, &revenue, &cost); err != nil {
-			taskRows.Close()
-			return nil, err
-		}
-		key := day.Format("2006-01-02")
-		if item := byDay[key]; item != nil {
-			item.successTasks = successTasks
-			item.images = images
-			item.taskRevenue = revenue
-			item.modelCost = cost
-		}
-	}
-	if err := taskRows.Close(); err != nil {
-		return nil, err
-	}
-	if err := taskRows.Err(); err != nil {
-		return nil, err
-	}
-
-	items := make([]map[string]any, 0, days)
-	for index := 0; index < days; index++ {
-		day := start.AddDate(0, 0, index).Format("2006-01-02")
-		item := byDay[day]
-		grossProfit := item.taskRevenue - item.modelCost
-		items = append(items, map[string]any{
-			"day":             day,
-			"paidOrders":      item.paidOrders,
-			"paidAmount":      item.paidAmount,
-			"successTasks":    item.successTasks,
-			"images":          item.images,
-			"taskRevenue":     item.taskRevenue,
-			"modelCost":       item.modelCost,
-			"grossProfit":     grossProfit,
-			"grossProfitRate": financeProfitRate(item.taskRevenue, item.modelCost),
-		})
-	}
-	return items, nil
-}
-
-func financeProfitRate(revenue float64, cost float64) float64 {
-	if revenue <= 0 {
-		return 0
-	}
-	return (revenue - cost) / revenue * 100
-}
-
-func (r *Repository) Products(ctx context.Context, activeOnly bool) ([]RechargeProduct, error) {
-	query := `SELECT id, name, amount, credits, badge, sort_order, status, created_at, updated_at FROM recharge_products`
-	if activeOnly {
-		query += ` WHERE status='active'`
-	}
-	query += ` ORDER BY sort_order ASC, amount ASC`
-	rows, err := r.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []RechargeProduct{}
-	for rows.Next() {
-		item, err := scanProduct(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (r *Repository) SaveProduct(ctx context.Context, item RechargeProduct) (*RechargeProduct, error) {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO recharge_products (id, name, amount, credits, badge, sort_order, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE name=VALUES(name), amount=VALUES(amount), credits=VALUES(credits),
-			badge=VALUES(badge), sort_order=VALUES(sort_order), status=VALUES(status), updated_at=CURRENT_TIMESTAMP
-	`, item.ID, item.Name, item.Amount, item.Credits, item.Badge, item.SortOrder, defaultStatus(item.Status))
-	if err != nil {
-		return nil, err
-	}
-	return r.FindProduct(ctx, item.ID)
-}
-
-func (r *Repository) FindProduct(ctx context.Context, id string) (*RechargeProduct, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, amount, credits, badge, sort_order, status, created_at, updated_at FROM recharge_products WHERE id=? LIMIT 1`, id)
-	item, err := scanProduct(row)
-	return &item, err
-}
-
-func (r *Repository) DeleteProduct(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM recharge_products WHERE id=?`, id)
-	return affected(result, err)
 }
 
 func (r *Repository) Plans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error) {
-	query := `SELECT id, name, description, amount, duration_days, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans`
+	query := `SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans`
 	if activeOnly {
 		query += ` WHERE status='active'`
 	}
@@ -627,15 +277,19 @@ func (r *Repository) Plans(ctx context.Context, activeOnly bool) ([]Subscription
 }
 
 func (r *Repository) SavePlan(ctx context.Context, item SubscriptionPlan) (*SubscriptionPlan, error) {
+	item.BonusCredits = 0
+	if item.QuotaImages <= 0 {
+		item.QuotaImages = defaultPlanQuotaImages(item.DurationDays)
+	}
 	providersJSON, _ := json.Marshal(item.AllowedProviderIDs)
 	modelsJSON, _ := json.Marshal(item.AllowedModelIDs)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO subscription_plans (id, name, description, amount, duration_days, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO subscription_plans (id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), amount=VALUES(amount), duration_days=VALUES(duration_days),
-			bonus_credits=VALUES(bonus_credits), discount_percent=VALUES(discount_percent), allowed_provider_ids=VALUES(allowed_provider_ids),
+			quota_images=VALUES(quota_images), bonus_credits=VALUES(bonus_credits), discount_percent=VALUES(discount_percent), allowed_provider_ids=VALUES(allowed_provider_ids),
 			allowed_model_ids=VALUES(allowed_model_ids), badge=VALUES(badge), sort_order=VALUES(sort_order), status=VALUES(status), updated_at=CURRENT_TIMESTAMP
-	`, item.ID, item.Name, item.Description, item.Amount, item.DurationDays, item.BonusCredits, item.DiscountPercent, string(providersJSON), string(modelsJSON), item.Badge, item.SortOrder, defaultStatus(item.Status))
+	`, item.ID, item.Name, item.Description, item.Amount, item.DurationDays, item.QuotaImages, item.BonusCredits, item.DiscountPercent, string(providersJSON), string(modelsJSON), item.Badge, item.SortOrder, defaultStatus(item.Status))
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +297,7 @@ func (r *Repository) SavePlan(ctx context.Context, item SubscriptionPlan) (*Subs
 }
 
 func (r *Repository) FindPlan(ctx context.Context, id string) (*SubscriptionPlan, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, description, amount, duration_days, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans WHERE id=? LIMIT 1`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans WHERE id=? LIMIT 1`, id)
 	item, err := scanPlan(row)
 	return &item, err
 }
@@ -653,198 +307,267 @@ func (r *Repository) DeletePlan(ctx context.Context, id string) (bool, error) {
 	return affected(result, err)
 }
 
-func (r *Repository) CurrentSubscription(ctx context.Context, userID string) (map[string]any, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT user_subscriptions.id, user_subscriptions.status, user_subscriptions.started_at, user_subscriptions.expires_at,
-			subscription_plans.id, subscription_plans.name, subscription_plans.discount_percent
-		FROM user_subscriptions
-		LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
-		WHERE user_subscriptions.user_id = ? AND user_subscriptions.status='active' AND user_subscriptions.expires_at > NOW()
-		LIMIT 1
-	`, userID)
-	var id, status, planID, planName string
-	var started, expires time.Time
-	var discount float64
-	if err := row.Scan(&id, &status, &started, &expires, &planID, &planName, &discount); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
+func (r *Repository) CurrentSubscription(ctx context.Context, userID string, freeLimits FreeQuotaLimits) (*SubscriptionEntitlement, error) {
+	entitlement, err := r.currentPaidSubscription(ctx, userID)
+	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	return map[string]any{"id": id, "status": status, "startedAt": started.In(time.Local).Format(time.RFC3339), "expiresAt": expires.In(time.Local).Format(time.RFC3339), "plan": map[string]any{"id": planID, "name": planName, "discountPercent": discount}}, nil
-}
-
-func (r *Repository) RedeemCodes(ctx context.Context, input PageInput) ([]RedeemCode, int, error) {
-	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where := []string{}
-	args := []any{}
-	if input.Keyword != "" {
-		where = append(where, "(redeem_codes.code LIKE ? OR redeem_codes.remark LIKE ? OR users.email LIKE ?)")
-		like := "%" + strings.TrimSpace(input.Keyword) + "%"
-		args = append(args, like, like, like)
-	}
-	if input.Status != "" && input.Status != "all" {
-		where = append(where, "redeem_codes.status = ?")
-		args = append(args, input.Status)
-	}
-	whereSQL := buildWhere(where)
-	total, err := r.countWithArgs(ctx, `SELECT COUNT(*) FROM redeem_codes LEFT JOIN users ON users.id=redeem_codes.user_id `+whereSQL, args)
-	if err != nil {
-		return nil, 0, err
-	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT redeem_codes.id, redeem_codes.code, redeem_codes.credits, redeem_codes.status, redeem_codes.remark,
-			redeem_codes.user_id, users.email, redeem_codes.used_at, redeem_codes.expires_at, redeem_codes.created_at, redeem_codes.updated_at
-		FROM redeem_codes LEFT JOIN users ON users.id=redeem_codes.user_id
-		`+whereSQL+` ORDER BY redeem_codes.created_at DESC LIMIT ? OFFSET ?
-	`, append(args, pageSize, offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	items := []RedeemCode{}
-	for rows.Next() {
-		item, err := scanRedeemCode(rows)
+	if err == nil && entitlement != nil {
+		used, err := r.GenerationUsage(ctx, userID, entitlement.periodStart, entitlement.periodEnd)
 		if err != nil {
-			return nil, 0, err
-		}
-		items = append(items, item)
-	}
-	return items, total, rows.Err()
-}
-
-func (r *Repository) SaveRedeemCode(ctx context.Context, item RedeemCode) (*RedeemCode, error) {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO redeem_codes (id, code, credits, status, remark, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE code=VALUES(code), credits=VALUES(credits), status=VALUES(status), remark=VALUES(remark), expires_at=VALUES(expires_at), updated_at=CURRENT_TIMESTAMP
-	`, item.ID, strings.TrimSpace(item.Code), item.Credits, defaultStatus(item.Status), item.Remark, parseOptionalTime(item.ExpiresAt))
-	if err != nil {
-		return nil, err
-	}
-	found, _, err := r.RedeemCodes(ctx, PageInput{Keyword: item.Code, Page: 1, PageSize: 1})
-	if err != nil || len(found) == 0 {
-		return nil, err
-	}
-	return &found[0], nil
-}
-
-func (r *Repository) DeleteRedeemCode(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM redeem_codes WHERE id=?`, id)
-	return affected(result, err)
-}
-
-func (r *Repository) Redeem(ctx context.Context, code string, userID string, ip string) (float64, float64, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer tx.Rollback()
-	var id, status string
-	var credits, balance float64
-	var expires sql.NullTime
-	if err := tx.QueryRowContext(ctx, `SELECT id, credits, status, expires_at FROM redeem_codes WHERE code=? FOR UPDATE`, code).Scan(&id, &credits, &status, &expires); err != nil {
-		return 0, 0, err
-	}
-	if status != "active" || (expires.Valid && expires.Time.Before(time.Now())) {
-		return 0, 0, sql.ErrNoRows
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? FOR UPDATE`, userID).Scan(&balance); err != nil {
-		return 0, 0, err
-	}
-	next := balance + credits
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, userID); err != nil {
-		return 0, 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE redeem_codes SET status='used', user_id=?, used_at=NOW() WHERE id=?`, userID, id); err != nil {
-		return 0, 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, ?)`, newOperationID(), userID, credits, next, "兑换码充值 "+code+" / "+ip); err != nil {
-		return 0, 0, err
-	}
-	return credits, next, tx.Commit()
-}
-
-func (r *Repository) CheckinStatus(ctx context.Context, userID string) (map[string]any, error) {
-	var checked int
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_checkins WHERE user_id=? AND checkin_date=CURDATE()`, userID).Scan(&checked)
-	var streak int
-	rows, err := r.db.QueryContext(ctx, `SELECT checkin_date FROM user_checkins WHERE user_id=? ORDER BY checkin_date DESC LIMIT 30`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	expected := time.Now().Format("2006-01-02")
-	for rows.Next() {
-		var date time.Time
-		if err := rows.Scan(&date); err != nil {
 			return nil, err
 		}
-		if date.Format("2006-01-02") != expected {
-			break
-		}
-		streak++
-		expected = date.AddDate(0, 0, -1).Format("2006-01-02")
+		return entitlement.public(used), nil
 	}
-	return map[string]any{"checkedToday": checked > 0, "streak": streak}, rows.Err()
-}
-
-func (r *Repository) Checkin(ctx context.Context, userID string, reward float64, ip string) (map[string]any, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
+	freeLimits = normalizeFreeQuotaLimits(freeLimits)
+	hourStart, hourEnd := currentHourWindow()
+	hourUsed, err := r.GenerationUsage(ctx, userID, hourStart, hourEnd)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-	var balance float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? FOR UPDATE`, userID).Scan(&balance); err != nil {
+	dayStart, dayEnd := currentDayWindow()
+	dayUsed, err := r.GenerationUsage(ctx, userID, dayStart, dayEnd)
+	if err != nil {
 		return nil, err
 	}
-	id := newOperationID()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_checkins (id, user_id, reward_credits, checkin_date, user_ip) VALUES (?, ?, ?, CURDATE(), ?)`, id, userID, reward, ip); err != nil {
+	monthStart, monthEnd := currentMonthWindow()
+	monthUsed, err := r.GenerationUsage(ctx, userID, monthStart, monthEnd)
+	if err != nil {
 		return nil, err
 	}
-	next := balance + reward
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, userID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, '每日签到')`, newOperationID(), userID, reward, next); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return map[string]any{"id": id, "rewardCredits": reward, "balanceAfter": next}, nil
+	hourWindow := quotaWindow("hour", "小时", freeLimits.Hourly, hourUsed, hourStart, hourEnd)
+	dayWindow := quotaWindow("day", "今日", freeLimits.Daily, dayUsed, dayStart, dayEnd)
+	monthWindow := quotaWindow("month", "本月", freeLimits.Monthly, monthUsed, monthStart, monthEnd)
+	effectiveRemaining := minNonNegative(hourWindow.QuotaRemaining, dayWindow.QuotaRemaining, monthWindow.QuotaRemaining)
+	return &SubscriptionEntitlement{
+		Status:             "free",
+		Tier:               "free",
+		IsPaid:             false,
+		PeriodStartedAt:    monthStart.In(time.Local).Format(time.RFC3339),
+		PeriodEndsAt:       monthEnd.In(time.Local).Format(time.RFC3339),
+		PlanName:           "免费版",
+		QuotaImages:        freeLimits.Monthly,
+		QuotaLimit:         freeLimits.Monthly,
+		QuotaUsed:          monthUsed,
+		QuotaRemaining:     monthWindow.QuotaRemaining,
+		EffectiveRemaining: effectiveRemaining,
+		QuotaUnlimited:     false,
+		QuotaWindows:       []SubscriptionQuotaWindow{hourWindow, dayWindow, monthWindow},
+	}, nil
 }
 
-func (r *Repository) Checkins(ctx context.Context, input PageInput) ([]Checkin, int, error) {
-	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	total, err := r.count(ctx, `SELECT COUNT(*) FROM user_checkins`)
+func (r *Repository) CurrentSubscriptionPlan(ctx context.Context, userID string) (*SubscriptionPlan, error) {
+	entitlement, err := r.currentPaidSubscription(ctx, userID)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
+	if entitlement == nil || entitlement.plan == nil {
+		return nil, sql.ErrNoRows
+	}
+	return entitlement.plan, nil
+}
+
+func (r *Repository) GenerationUsage(ctx context.Context, userID string, start time.Time, end time.Time) (int, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT user_checkins.id, user_checkins.user_id, users.email, user_checkins.reward_credits, user_checkins.checkin_date, user_checkins.user_ip, user_checkins.created_at
-		FROM user_checkins LEFT JOIN users ON users.id=user_checkins.user_id
-		ORDER BY user_checkins.created_at DESC LIMIT ? OFFSET ?
-	`, pageSize, offset)
+		SELECT status, quantity, result_json
+		FROM generation_tasks
+		WHERE user_id=?
+			AND status IN ('queued', 'pending', 'processing', 'success')
+			AND created_at >= ?
+			AND created_at < ?
+	`, strings.TrimSpace(userID), start, end)
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 	defer rows.Close()
-	items := []Checkin{}
+
+	used := 0
 	for rows.Next() {
-		item, err := scanCheckin(rows)
-		if err != nil {
-			return nil, 0, err
+		var status string
+		var quantity int
+		var resultJSON sql.NullString
+		if err := rows.Scan(&status, &quantity, &resultJSON); err != nil {
+			return 0, err
 		}
-		items = append(items, item)
+		used += generationUsageQuantity(status, quantity, resultJSON.String)
 	}
-	return items, total, rows.Err()
+	return used, rows.Err()
 }
 
-func (r *Repository) DeleteCheckin(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM user_checkins WHERE id=?`, id)
-	return affected(result, err)
+func generationUsageQuantity(status string, quantity int, resultJSON string) int {
+	if quantity < 0 {
+		quantity = 0
+	}
+	if status != "success" {
+		return quantity
+	}
+	if actual := resultImageCount(resultJSON); actual > 0 {
+		return actual
+	}
+	return quantity
+}
+
+func resultImageCount(resultJSON string) int {
+	if strings.TrimSpace(resultJSON) == "" {
+		return 0
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(resultJSON), &payload); err != nil {
+		return 0
+	}
+	return len(tasks.ResultURLs(payload))
+}
+
+type paidSubscriptionEntitlement struct {
+	*SubscriptionEntitlement
+	plan        *SubscriptionPlan
+	periodStart time.Time
+	periodEnd   time.Time
+}
+
+func (item *paidSubscriptionEntitlement) public(used int) *SubscriptionEntitlement {
+	limit := item.plan.QuotaImages
+	if limit < 0 {
+		limit = 0
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	item.SubscriptionEntitlement.QuotaImages = limit
+	item.SubscriptionEntitlement.QuotaLimit = limit
+	item.SubscriptionEntitlement.QuotaUsed = used
+	item.SubscriptionEntitlement.QuotaRemaining = remaining
+	item.SubscriptionEntitlement.EffectiveRemaining = remaining
+	item.SubscriptionEntitlement.QuotaUnlimited = false
+	return item.SubscriptionEntitlement
+}
+
+func (r *Repository) currentPaidSubscription(ctx context.Context, userID string) (*paidSubscriptionEntitlement, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT user_subscriptions.id, user_subscriptions.status, user_subscriptions.started_at, user_subscriptions.expires_at,
+			subscription_plans.id, subscription_plans.name, subscription_plans.description, subscription_plans.amount,
+			subscription_plans.duration_days, subscription_plans.quota_images, subscription_plans.bonus_credits, subscription_plans.discount_percent,
+			subscription_plans.allowed_provider_ids, subscription_plans.allowed_model_ids, subscription_plans.badge,
+			subscription_plans.sort_order, subscription_plans.status, subscription_plans.created_at, subscription_plans.updated_at
+		FROM user_subscriptions
+		INNER JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+		WHERE user_subscriptions.user_id = ?
+			AND user_subscriptions.status = 'active'
+			AND user_subscriptions.expires_at > NOW()
+			AND subscription_plans.status = 'active'
+		ORDER BY user_subscriptions.expires_at DESC
+		LIMIT 1
+	`, strings.TrimSpace(userID))
+	var subscriptionID, subscriptionStatus string
+	var started, expires time.Time
+	plan, err := scanPlanWithPrefix(row, &subscriptionID, &subscriptionStatus, &started, &expires)
+	if err != nil {
+		return nil, err
+	}
+	return &paidSubscriptionEntitlement{
+		SubscriptionEntitlement: &SubscriptionEntitlement{
+			ID:                 subscriptionID,
+			Status:             subscriptionStatus,
+			Tier:               "paid",
+			IsPaid:             true,
+			StartedAt:          appclock.DatabaseTime(started).Format(time.RFC3339),
+			ExpiresAt:          appclock.DatabaseTime(expires).Format(time.RFC3339),
+			PeriodStartedAt:    appclock.DatabaseTime(started).Format(time.RFC3339),
+			PeriodEndsAt:       appclock.DatabaseTime(expires).Format(time.RFC3339),
+			PlanID:             plan.ID,
+			PlanName:           plan.Name,
+			DiscountPercent:    plan.DiscountPercent,
+			AllowedProviderIDs: plan.AllowedProviderIDs,
+			AllowedModelIDs:    plan.AllowedModelIDs,
+			Plan:               plan,
+		},
+		plan:        plan,
+		periodStart: started,
+		periodEnd:   expires,
+	}, nil
+}
+
+func currentMonthWindow() (time.Time, time.Time) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	return start, start.AddDate(0, 1, 0)
+}
+
+func currentHourWindow() (time.Time, time.Time) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local)
+	return start, start.Add(time.Hour)
+}
+
+func currentDayWindow() (time.Time, time.Time) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	return start, start.AddDate(0, 0, 1)
+}
+
+func normalizeFreeQuotaLimits(limits FreeQuotaLimits) FreeQuotaLimits {
+	if limits.Hourly < 0 {
+		limits.Hourly = 0
+	}
+	if limits.Daily < 0 {
+		limits.Daily = 0
+	}
+	if limits.Monthly < 0 {
+		limits.Monthly = 0
+	}
+	return limits
+}
+
+func quotaWindow(key string, label string, limit int, used int, start time.Time, end time.Time) SubscriptionQuotaWindow {
+	if limit < 0 {
+		limit = 0
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return SubscriptionQuotaWindow{
+		Key:             key,
+		Label:           label,
+		QuotaLimit:      limit,
+		QuotaUsed:       used,
+		QuotaRemaining:  remaining,
+		PeriodStartedAt: start.In(time.Local).Format(time.RFC3339),
+		PeriodEndsAt:    end.In(time.Local).Format(time.RFC3339),
+	}
+}
+
+func minNonNegative(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	if min < 0 {
+		min = 0
+	}
+	for _, value := range values[1:] {
+		if value < 0 {
+			value = 0
+		}
+		if value < min {
+			min = value
+		}
+	}
+	return min
+}
+
+func defaultPlanQuotaImages(durationDays int) int {
+	switch {
+	case durationDays <= 1:
+		return 20
+	case durationDays <= 31:
+		return 300
+	case durationDays <= 92:
+		return 1000
+	default:
+		return 100
+	}
 }
 
 func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, int, error) {
@@ -855,7 +578,12 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT user_invites.id, user_invites.inviter_id, inviter.email, user_invites.invitee_id, invitee.email,
-			user_invites.reward_credits, user_invites.invitee_ip, user_invites.created_at
+			user_invites.reward_credits,
+			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
+			user_invites.reward_plan_id,
+			user_invites.reward_label,
+			user_invites.invitee_ip,
+			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
 		LEFT JOIN users invitee ON invitee.id=user_invites.invitee_id
@@ -876,24 +604,95 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 	return items, total, rows.Err()
 }
 
-func (r *Repository) InviteSummary(ctx context.Context, userID string, rewardCredits float64) (map[string]any, error) {
+func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[string]any, error) {
 	var count int
-	var reward float64
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(reward_credits),0) FROM user_invites WHERE inviter_id=?`, userID).Scan(&count, &reward)
-	return map[string]any{"inviteCount": count, "total": count, "rewardCredits": rewardCredits, "totalRewardCredits": reward}, nil
+	var subscriptionRewards int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN COALESCE(reward_type, 'subscription') = 'subscription' THEN 1 ELSE 0 END),0)
+		FROM user_invites
+		WHERE inviter_id=?
+	`, userID).Scan(&count, &subscriptionRewards); err != nil {
+		return nil, err
+	}
+
+	records, err := r.inviteRecords(ctx, `user_invites.inviter_id=?`, userID, 50)
+	if err != nil {
+		return nil, err
+	}
+	receivedRecords, err := r.inviteRecords(ctx, `user_invites.invitee_id=?`, userID, 1)
+	if err != nil {
+		return nil, err
+	}
+	var receivedInvite any
+	if len(receivedRecords) > 0 {
+		receivedInvite = receivedRecords[0]
+	}
+
+	return map[string]any{
+		"inviteCount":              count,
+		"total":                    count,
+		"totalSubscriptionRewards": subscriptionRewards,
+		"records":                  records,
+		"receivedInvite":           receivedInvite,
+	}, nil
+}
+
+func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, limit int) ([]Invite, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT user_invites.id, user_invites.inviter_id, inviter.email, user_invites.invitee_id, invitee.email,
+			user_invites.reward_credits,
+			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
+			user_invites.reward_plan_id,
+			user_invites.reward_label,
+			user_invites.invitee_ip,
+			user_invites.created_at
+		FROM user_invites
+		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
+		LEFT JOIN users invitee ON invitee.id=user_invites.invitee_id
+		WHERE `+where+`
+		ORDER BY user_invites.created_at DESC LIMIT ?
+	`, arg, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invite{}
+	for rows.Next() {
+		item, err := scanInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) RewardInvite(ctx context.Context, inviterID string, inviteeID string, reward float64, ip string) error {
-	if strings.TrimSpace(inviterID) == "" || strings.TrimSpace(inviteeID) == "" || inviterID == inviteeID || reward <= 0 {
+	return nil
+}
+
+func (r *Repository) RewardInviteSubscription(ctx context.Context, inviterID string, inviteeID string, planID string, ip string) error {
+	inviterID = strings.TrimSpace(inviterID)
+	inviteeID = strings.TrimSpace(inviteeID)
+	planID = strings.TrimSpace(planID)
+	if inviterID == "" || inviteeID == "" || inviterID == inviteeID || planID == "" {
 		return nil
+	}
+	plan, err := r.FindPlan(ctx, planID)
+	if err == sql.ErrNoRows || plan == nil || plan.Status != "active" || plan.DurationDays <= 0 {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var inviterCredits float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? AND status='active' FOR UPDATE`, inviterID).Scan(&inviterCredits); err != nil {
+	var activeUserID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? AND status='active' FOR UPDATE`, inviterID).Scan(&activeUserID); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -906,22 +705,149 @@ func (r *Repository) RewardInvite(ctx context.Context, inviterID string, invitee
 	if existing > 0 {
 		return tx.Commit()
 	}
-	next := inviterCredits + reward
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, inviterID); err != nil {
+	now := time.Now()
+	baseTime := now
+	var currentExpires sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, inviterID).Scan(&currentExpires)
+	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip) VALUES (?, ?, ?, ?, ?)`, newOperationID(), inviterID, inviteeID, reward, ip); err != nil {
-		return err
+	if currentExpires.Valid && currentExpires.Time.After(now) {
+		baseTime = currentExpires.Time
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, '邀请好友奖励')`, newOperationID(), inviterID, reward, next); err != nil {
+	expiresAt := baseTime.AddDate(0, 0, plan.DurationDays)
+	if err == sql.ErrNoRows {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
+			VALUES (?, ?, ?, 'active', ?, ?)
+		`, newOperationID(), inviterID, plan.ID, now, expiresAt); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE user_subscriptions
+			SET plan_id=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+			WHERE user_id=?
+		`, plan.ID, now, expiresAt, inviterID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_invites (id, inviter_id, invitee_id, reward_credits, reward_type, reward_plan_id, reward_label, invitee_ip)
+		VALUES (?, ?, ?, 0, 'subscription', ?, ?, ?)
+	`, newOperationID(), inviterID, inviteeID, plan.ID, plan.Name, ip); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (r *Repository) DeleteInvite(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM user_invites WHERE id=?`, id)
-	return affected(result, err)
+func (r *Repository) DeleteInvite(ctx context.Context, id string) (*InviteDeleteResult, error) {
+	id = strings.TrimSpace(id)
+	result := &InviteDeleteResult{}
+	if id == "" {
+		return result, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var inviterID string
+	var rewardType string
+	var rewardPlanID sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT inviter_id, COALESCE(reward_type, ''), reward_plan_id
+		FROM user_invites
+		WHERE id=?
+		FOR UPDATE
+	`, id).Scan(&inviterID, &rewardType, &rewardPlanID)
+	if err == sql.ErrNoRows {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result.InviterID = inviterID
+	if rewardType == "subscription" && rewardPlanID.Valid && strings.TrimSpace(rewardPlanID.String) != "" {
+		revoked, days, err := revokeInviteSubscriptionReward(ctx, tx, inviterID, rewardPlanID.String)
+		if err != nil {
+			return nil, err
+		}
+		result.SubscriptionRevoked = revoked
+		result.RevokedDays = days
+	}
+
+	deleteResult, err := tx.ExecContext(ctx, `DELETE FROM user_invites WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	deletedRows, err := deleteResult.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	result.Deleted = deletedRows > 0
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func revokeInviteSubscriptionReward(ctx context.Context, tx *database.Tx, inviterID string, planID string) (bool, int, error) {
+	inviterID = strings.TrimSpace(inviterID)
+	planID = strings.TrimSpace(planID)
+	if inviterID == "" || planID == "" {
+		return false, 0, nil
+	}
+	var durationDays int
+	if err := tx.QueryRowContext(ctx, `SELECT duration_days FROM subscription_plans WHERE id=?`, planID).Scan(&durationDays); err != nil {
+		if err == sql.ErrNoRows {
+			return false, 0, nil
+		}
+		return false, 0, err
+	}
+	if durationDays <= 0 {
+		return false, 0, nil
+	}
+
+	var expiresAt time.Time
+	err := tx.QueryRowContext(ctx, `
+		SELECT expires_at
+		FROM user_subscriptions
+		WHERE user_id=?
+		FOR UPDATE
+	`, inviterID).Scan(&expiresAt)
+	if err == sql.ErrNoRows {
+		return false, durationDays, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+
+	now := time.Now()
+	newExpiresAt := expiresAt.AddDate(0, 0, -durationDays)
+	if !newExpiresAt.After(now) {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE user_subscriptions
+			SET status='expired', expires_at=?, updated_at=CURRENT_TIMESTAMP
+			WHERE user_id=?
+		`, newExpiresAt, inviterID); err != nil {
+			return false, 0, err
+		}
+		return true, durationDays, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET expires_at=?, updated_at=CURRENT_TIMESTAMP
+		WHERE user_id=?
+	`, newExpiresAt, inviterID); err != nil {
+		return false, 0, err
+	}
+	return true, durationDays, nil
 }
 
 func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrder, int, error) {
@@ -963,7 +889,7 @@ func (r *Repository) CreateOrder(ctx context.Context, order RechargeOrder) (*Rec
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO recharge_orders (id, user_id, out_trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, order.ID, order.UserID, order.OutTradeNo, defaultString(order.OrderType, "recharge"), order.SubscriptionPlanID, order.Amount, order.Credits, defaultString(order.Status, "pending"), order.PayURL, order.QRCode)
+	`, order.ID, order.UserID, order.OutTradeNo, defaultString(order.OrderType, "subscription"), order.SubscriptionPlanID, order.Amount, order.Credits, defaultString(order.Status, "pending"), order.PayURL, order.QRCode)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,11 +939,11 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 	var paid sql.NullTime
 	var created, updated time.Time
 	err = tx.QueryRowContext(ctx, `
-		SELECT recharge_orders.id, recharge_orders.user_id, users.email, recharge_orders.out_trade_no, recharge_orders.trade_no,
-			recharge_orders.order_type, recharge_orders.subscription_plan_id, recharge_orders.amount, recharge_orders.credits,
-			recharge_orders.status, recharge_orders.pay_url, recharge_orders.qr_code, recharge_orders.paid_at, recharge_orders.created_at, recharge_orders.updated_at
-		FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id
-		WHERE recharge_orders.out_trade_no=? FOR UPDATE
+		SELECT id, user_id, NULL, out_trade_no, trade_no,
+			order_type, subscription_plan_id, amount, credits,
+			status, pay_url, qr_code, paid_at, created_at, updated_at
+		FROM recharge_orders
+		WHERE out_trade_no=? FOR UPDATE
 	`, strings.TrimSpace(outTradeNo)).Scan(&order.ID, &order.UserID, &email, &order.OutTradeNo, &trade, &order.OrderType, &plan, &order.Amount, &order.Credits, &order.Status, &payURL, &qr, &paid, &created, &updated)
 	if err != nil {
 		return nil, false, err
@@ -1028,19 +954,14 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 	order.PayURL = nullString(payURL)
 	order.QRCode = nullString(qr)
 	order.PaidAt = nullTime(paid)
-	order.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	order.UpdatedAt = updated.In(time.Local).Format(time.RFC3339)
+	order.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
+	order.UpdatedAt = appclock.DatabaseTime(updated).Format(time.RFC3339)
 	if order.Status == "paid" {
 		if err := tx.Commit(); err != nil {
 			return nil, false, err
 		}
 		return &order, false, nil
 	}
-	var balance float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? FOR UPDATE`, order.UserID).Scan(&balance); err != nil {
-		return nil, false, err
-	}
-	next := balance + order.Credits
 	now := time.Now()
 	if _, err := tx.ExecContext(ctx, `UPDATE recharge_orders SET status='paid', trade_no=?, paid_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, strings.TrimSpace(tradeNo), now, order.ID); err != nil {
 		return nil, false, err
@@ -1050,286 +971,35 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 		if err != nil {
 			return nil, false, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE user_subscriptions SET status='expired' WHERE user_id=? AND status='active'`, order.UserID); err != nil {
+		expiresAt := now.AddDate(0, 0, plan.DurationDays)
+		result, err := tx.ExecContext(ctx, `
+			UPDATE user_subscriptions
+			SET plan_id=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+			WHERE user_id=?
+		`, plan.ID, now, expiresAt, order.UserID)
+		if err != nil {
 			return nil, false, err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
-			VALUES (?, ?, ?, 'active', ?, ?)
-		`, newOperationID(), order.UserID, plan.ID, now, now.AddDate(0, 0, plan.DurationDays)); err != nil {
+		affected, err := result.RowsAffected()
+		if err != nil {
 			return nil, false, err
 		}
-		next = balance + plan.BonusCredits
-		if plan.BonusCredits > 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, order.UserID); err != nil {
-				return nil, false, err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, ?)`, newOperationID(), order.UserID, plan.BonusCredits, next, "订阅套餐赠送 "+plan.Name); err != nil {
+		if affected == 0 {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
+				VALUES (?, ?, ?, 'active', ?, ?)
+			`, newOperationID(), order.UserID, plan.ID, now, expiresAt); err != nil {
 				return nil, false, err
 			}
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, next, order.UserID); err != nil {
-			return nil, false, err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark) VALUES (?, ?, 'recharge', ?, ?, ?)`, newOperationID(), order.UserID, order.Credits, next, "支付宝充值 "+order.OutTradeNo); err != nil {
-			return nil, false, err
-		}
+		order.Credits = 0
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
 	updatedOrder, err := r.FindOrder(ctx, order.ID)
 	return updatedOrder, true, err
-}
-
-func (r *Repository) APILogs(ctx context.Context, input PageInput) ([]APICallLog, int, error) {
-	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where := []string{"api_call_logs.phase <> ?"}
-	args := []any{apiLogMonitorPhase}
-	if input.Keyword != "" {
-		where = append(where, "(api_call_logs.endpoint LIKE ? OR api_call_logs.phase LIKE ? OR api_call_logs.error_message LIKE ? OR users.email LIKE ?)")
-		like := "%" + strings.TrimSpace(input.Keyword) + "%"
-		args = append(args, like, like, like, like)
-	}
-	if input.Status != "" && input.Status != "all" {
-		where = append(where, "api_call_logs.status=?")
-		args = append(args, input.Status)
-	}
-	if strings.TrimSpace(input.APIKeyID) != "" {
-		where = append(where, "api_call_logs.api_key_id=?")
-		args = append(args, strings.TrimSpace(input.APIKeyID))
-	}
-	whereSQL := buildWhere(where)
-	total, err := r.countWithArgs(ctx, `SELECT COUNT(*) FROM api_call_logs LEFT JOIN users ON users.id=api_call_logs.user_id `+whereSQL, args)
-	if err != nil {
-		return nil, 0, err
-	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT api_call_logs.id, api_call_logs.direction, api_call_logs.task_id, api_call_logs.user_id, users.email,
-			api_call_logs.api_key_id, api_call_logs.api_key_name, api_call_logs.provider_id, api_providers.name,
-			api_call_logs.provider_type, api_call_logs.endpoint, api_call_logs.phase, api_call_logs.method,
-			api_call_logs.status, api_call_logs.status_code, api_call_logs.duration_ms,
-			api_call_logs.request_summary, api_call_logs.response_summary, api_call_logs.error_message, api_call_logs.created_at
-		FROM api_call_logs
-		LEFT JOIN users ON users.id=api_call_logs.user_id
-		LEFT JOIN api_providers ON api_providers.id=api_call_logs.provider_id
-		`+whereSQL+` ORDER BY api_call_logs.created_at DESC LIMIT ? OFFSET ?
-	`, append(args, pageSize, offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	items := []APICallLog{}
-	for rows.Next() {
-		item, err := scanAPILog(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-		items = append(items, item)
-	}
-	return items, total, rows.Err()
-}
-
-func (r *Repository) FindAPILog(ctx context.Context, id string) (*APICallLog, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT api_call_logs.id, api_call_logs.direction, api_call_logs.task_id, api_call_logs.user_id, users.email,
-			api_call_logs.api_key_id, api_call_logs.api_key_name, api_call_logs.provider_id, api_providers.name,
-			api_call_logs.provider_type, api_call_logs.endpoint, api_call_logs.phase, api_call_logs.method,
-			api_call_logs.status, api_call_logs.status_code, api_call_logs.duration_ms,
-			api_call_logs.request_summary, api_call_logs.response_summary, api_call_logs.error_message, api_call_logs.created_at
-		FROM api_call_logs
-		LEFT JOIN users ON users.id=api_call_logs.user_id
-		LEFT JOIN api_providers ON api_providers.id=api_call_logs.provider_id
-		WHERE api_call_logs.id = ?
-		LIMIT 1
-	`, id)
-	item, err := scanAPILog(row)
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
-}
-
-func (r *Repository) APILogStats(ctx context.Context) (map[string]any, error) {
-	var total, success, failed int
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(status='success'),0), COALESCE(SUM(status='failed'),0) FROM api_call_logs WHERE phase <> ?`, apiLogMonitorPhase).Scan(&total, &success, &failed)
-	return map[string]any{"total": total, "success": success, "failed": failed}, nil
-}
-
-func (r *Repository) CleanupAPILogs(ctx context.Context, days int) (int64, error) {
-	if days < 1 {
-		days = 30
-	}
-	result, err := r.db.ExecContext(ctx, `DELETE FROM api_call_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`, days)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (r *Repository) PublicServiceStatus(ctx context.Context) (map[string]any, error) {
-	overall, err := r.serviceStatusWindow(ctx, 24*time.Hour)
-	if err != nil {
-		return nil, err
-	}
-	weekly, err := r.serviceStatusWindow(ctx, 7*24*time.Hour)
-	if err != nil {
-		return nil, err
-	}
-	providers, err := r.serviceStatusProviders(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"overall":   overall,
-		"weekly":    weekly,
-		"providers": providers,
-	}, nil
-}
-
-func (r *Repository) serviceStatusWindow(ctx context.Context, window time.Duration) (map[string]any, error) {
-	var total, success, failed, slow int
-	var avg, max sql.NullFloat64
-	var last sql.NullTime
-	hours := int(window.Hours())
-	if hours < 1 {
-		hours = 24
-	}
-	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*),
-			COALESCE(SUM(status='success'),0),
-			COALESCE(SUM(status='failed'),0),
-			COALESCE(SUM(duration_ms >= ?),0),
-			AVG(duration_ms),
-			MAX(duration_ms),
-			MAX(created_at)
-		FROM api_call_logs
-		WHERE direction = 'upstream'
-			AND phase = ?
-			AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)
-	`, publicSlowRequestMs, apiLogMonitorPhase, hours).Scan(&total, &success, &failed, &slow, &avg, &max, &last)
-	if err != nil {
-		return nil, err
-	}
-	return serviceStatusMetric(total, success, failed, slow, avg, max, last), nil
-}
-
-func (r *Repository) serviceStatusProviders(ctx context.Context) ([]map[string]any, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT
-			api_providers.id,
-			api_providers.name,
-			api_providers.status,
-			api_providers.type,
-			COALESCE(model_summary.model_names, ''),
-			COALESCE(log_summary.total, 0),
-			COALESCE(log_summary.success, 0),
-			COALESCE(log_summary.failed, 0),
-			COALESCE(log_summary.slow, 0),
-			log_summary.avg_duration_ms,
-			log_summary.max_duration_ms,
-			log_summary.last_checked_at
-		FROM api_providers
-		LEFT JOIN (
-			SELECT provider_id, GROUP_CONCAT(DISTINCT display_name ORDER BY display_name SEPARATOR ', ') AS model_names
-			FROM ai_models
-			WHERE status = 'active' AND capability = 'chat_image'
-			GROUP BY provider_id
-		) model_summary ON model_summary.provider_id = api_providers.id
-		LEFT JOIN (
-			SELECT
-				provider_id,
-				COUNT(*) AS total,
-				COALESCE(SUM(status='success'),0) AS success,
-				COALESCE(SUM(status='failed'),0) AS failed,
-				COALESCE(SUM(duration_ms >= ?),0) AS slow,
-				AVG(duration_ms) AS avg_duration_ms,
-				MAX(duration_ms) AS max_duration_ms,
-				MAX(created_at) AS last_checked_at
-			FROM api_call_logs
-			WHERE direction = 'upstream'
-				AND phase = ?
-				AND provider_id IS NOT NULL
-				AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-			GROUP BY provider_id
-		) log_summary ON log_summary.provider_id = api_providers.id
-		ORDER BY api_providers.status ASC, total DESC, api_providers.name ASC
-	`, publicSlowRequestMs, apiLogMonitorPhase)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := []map[string]any{}
-	for rows.Next() {
-		var providerID, providerName, providerStatus, providerType, modelNames string
-		var total, success, failed, slow int
-		var avg, max sql.NullFloat64
-		var last sql.NullTime
-		if err := rows.Scan(&providerID, &providerName, &providerStatus, &providerType, &modelNames, &total, &success, &failed, &slow, &avg, &max, &last); err != nil {
-			return nil, err
-		}
-		history, err := r.serviceStatusHistory(ctx, providerID)
-		if err != nil {
-			return nil, err
-		}
-		lastStatus := any(nil)
-		lastDuration := 0
-		if len(history) > 0 {
-			lastItem := history[len(history)-1]
-			lastStatus = lastItem["status"]
-			if duration, ok := lastItem["durationMs"].(int); ok {
-				lastDuration = duration
-			}
-		}
-		item := serviceStatusMetric(total, success, failed, slow, avg, max, last)
-		item["providerId"] = providerID
-		item["providerName"] = providerName
-		item["providerStatus"] = providerStatus
-		item["providerType"] = providerType
-		item["modelNames"] = splitProviderModelNames(modelNames)
-		item["lastStatus"] = lastStatus
-		item["lastDurationMs"] = lastDuration
-		item["history"] = history
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (r *Repository) serviceStatusHistory(ctx context.Context, providerID string) ([]map[string]any, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT status, duration_ms, created_at
-		FROM api_call_logs
-		WHERE direction = 'upstream'
-			AND phase = ?
-			AND provider_id = ?
-			AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-		ORDER BY created_at DESC, id DESC
-		LIMIT 60
-	`, apiLogMonitorPhase, providerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	reversed := []map[string]any{}
-	for rows.Next() {
-		var status string
-		var duration int
-		var created time.Time
-		if err := rows.Scan(&status, &duration, &created); err != nil {
-			return nil, err
-		}
-		reversed = append(reversed, map[string]any{
-			"status":     status,
-			"durationMs": duration,
-			"createdAt":  created.In(time.Local).Format(time.RFC3339),
-		})
-	}
-	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
-		reversed[left], reversed[right] = reversed[right], reversed[left]
-	}
-	return reversed, rows.Err()
 }
 
 func (r *Repository) count(ctx context.Context, query string) (int, error) {
@@ -1362,122 +1032,48 @@ func buildWhere(conditions []string) string {
 	return " WHERE " + strings.Join(conditions, " AND ")
 }
 
-func serviceStatusMetric(total, success, failed, slow int, avg, max sql.NullFloat64, last sql.NullTime) map[string]any {
-	successRate := 0.0
-	slowRate := 0.0
-	if total > 0 {
-		successRate = float64(success) / float64(total) * 100
-		slowRate = float64(slow) / float64(total) * 100
-	}
-	return map[string]any{
-		"total":         total,
-		"success":       success,
-		"failed":        failed,
-		"successRate":   round2(successRate),
-		"slow":          slow,
-		"slowRate":      round2(slowRate),
-		"avgDurationMs": nullFloat(avg),
-		"maxDurationMs": nullFloat(max),
-		"lastCheckedAt": nullTime(last),
-	}
-}
-
-func splitProviderModelNames(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return []string{}
-	}
-	parts := strings.Split(value, ", ")
-	if len(parts) > 3 {
-		parts = parts[:3]
-	}
-	return parts
-}
-
-func nullFloat(value sql.NullFloat64) float64 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Float64
-}
-
-func round2(value float64) float64 {
-	return float64(int(value*100+0.5)) / 100
-}
-
-func scanCreditLog(row interface{ Scan(dest ...any) error }) (CreditLog, error) {
-	var item CreditLog
-	var userEmail, remark sql.NullString
-	var createdAt time.Time
-	err := row.Scan(&item.ID, &item.UserID, &userEmail, &item.Type, &item.Amount, &item.BalanceAfter, &remark, &createdAt)
-	item.UserEmail = nullString(userEmail)
-	item.Remark = nullString(remark)
-	item.CreatedAt = createdAt.In(time.Local)
-	item.CreatedAtISO = item.CreatedAt.Format(time.RFC3339)
-	return item, err
-}
-
-func scanProduct(row interface{ Scan(dest ...any) error }) (RechargeProduct, error) {
-	var item RechargeProduct
-	var badge sql.NullString
-	var created, updated time.Time
-	err := row.Scan(&item.ID, &item.Name, &item.Amount, &item.Credits, &badge, &item.SortOrder, &item.Status, &created, &updated)
-	item.Badge = nullString(badge)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updated.In(time.Local).Format(time.RFC3339)
-	return item, err
-}
-
 func scanPlan(row interface{ Scan(dest ...any) error }) (SubscriptionPlan, error) {
+	item, err := scanPlanWithPrefix(row)
+	if item == nil {
+		return SubscriptionPlan{}, err
+	}
+	return *item, err
+}
+
+func scanPlanWithPrefix(row interface{ Scan(dest ...any) error }, prefix ...any) (*SubscriptionPlan, error) {
 	var item SubscriptionPlan
 	var description, providers, models, badge sql.NullString
 	var created, updated time.Time
-	err := row.Scan(&item.ID, &item.Name, &description, &item.Amount, &item.DurationDays, &item.BonusCredits, &item.DiscountPercent, &providers, &models, &badge, &item.SortOrder, &item.Status, &created, &updated)
+	dest := append(prefix,
+		&item.ID, &item.Name, &description, &item.Amount, &item.DurationDays, &item.QuotaImages,
+		&item.BonusCredits, &item.DiscountPercent, &providers, &models, &badge,
+		&item.SortOrder, &item.Status, &created, &updated,
+	)
+	err := row.Scan(dest...)
 	item.Description = nullString(description)
 	item.Badge = nullString(badge)
 	item.AllowedProviderIDs = jsonStringList(providers.String)
 	item.AllowedModelIDs = jsonStringList(models.String)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updated.In(time.Local).Format(time.RFC3339)
-	return item, err
-}
-
-func scanRedeemCode(row interface{ Scan(dest ...any) error }) (RedeemCode, error) {
-	var item RedeemCode
-	var remark, userID, userEmail sql.NullString
-	var used, expires sql.NullTime
-	var created, updated time.Time
-	err := row.Scan(&item.ID, &item.Code, &item.Credits, &item.Status, &remark, &userID, &userEmail, &used, &expires, &created, &updated)
-	item.Remark = nullString(remark)
-	item.UserID = nullString(userID)
-	item.UserEmail = nullString(userEmail)
-	item.UsedAt = nullTime(used)
-	item.ExpiresAt = nullTime(expires)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updated.In(time.Local).Format(time.RFC3339)
-	return item, err
-}
-
-func scanCheckin(row interface{ Scan(dest ...any) error }) (Checkin, error) {
-	var item Checkin
-	var email, ip sql.NullString
-	var date, created time.Time
-	err := row.Scan(&item.ID, &item.UserID, &email, &item.RewardCredits, &date, &ip, &created)
-	item.UserEmail = nullString(email)
-	item.UserIP = nullString(ip)
-	item.CheckinDate = date.Format("2006-01-02")
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	return item, err
+	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
+	item.UpdatedAt = appclock.DatabaseTime(updated).Format(time.RFC3339)
+	return &item, err
 }
 
 func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	var item Invite
-	var inviter, invitee, ip sql.NullString
+	var inviter, invitee, rewardType, planID, label, ip sql.NullString
 	var created time.Time
-	err := row.Scan(&item.ID, &item.InviterID, &inviter, &item.InviteeID, &invitee, &item.RewardCredits, &ip, &created)
+	err := row.Scan(&item.ID, &item.InviterID, &inviter, &item.InviteeID, &invitee, &item.RewardCredits, &rewardType, &planID, &label, &ip, &created)
 	item.InviterEmail = nullString(inviter)
 	item.InviteeEmail = nullString(invitee)
+	item.RewardType = "subscription"
+	if rewardType.Valid && strings.TrimSpace(rewardType.String) != "" {
+		item.RewardType = rewardType.String
+	}
+	item.RewardPlanID = nullString(planID)
+	item.RewardLabel = nullString(label)
 	item.InviteeIP = nullString(ip)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
+	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
 	return item, err
 }
 
@@ -1493,33 +1089,8 @@ func scanOrder(row interface{ Scan(dest ...any) error }) (RechargeOrder, error) 
 	item.PayURL = nullString(payURL)
 	item.QRCode = nullString(qr)
 	item.PaidAt = nullTime(paid)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
-	item.UpdatedAt = updated.In(time.Local).Format(time.RFC3339)
-	return item, err
-}
-
-func scanAPILog(row interface{ Scan(dest ...any) error }) (APICallLog, error) {
-	var item APICallLog
-	var taskID, userID, userEmail, keyID, keyName, providerID, providerName, providerType, reqJSON, resJSON, errMsg sql.NullString
-	var statusCode sql.NullInt64
-	var created time.Time
-	err := row.Scan(&item.ID, &item.Direction, &taskID, &userID, &userEmail, &keyID, &keyName, &providerID, &providerName, &providerType, &item.Endpoint, &item.Phase, &item.Method, &item.Status, &statusCode, &item.DurationMS, &reqJSON, &resJSON, &errMsg, &created)
-	item.TaskID = nullString(taskID)
-	item.UserID = nullString(userID)
-	item.UserEmail = nullString(userEmail)
-	item.APIKeyID = nullString(keyID)
-	item.APIKeyName = nullString(keyName)
-	item.ProviderID = nullString(providerID)
-	item.ProviderName = nullString(providerName)
-	item.ProviderType = nullString(providerType)
-	item.ErrorMessage = nullString(errMsg)
-	if statusCode.Valid {
-		code := int(statusCode.Int64)
-		item.StatusCode = &code
-	}
-	item.RequestSummary = jsonValue(reqJSON.String)
-	item.ResponseSummary = jsonValue(resJSON.String)
-	item.CreatedAt = created.In(time.Local).Format(time.RFC3339)
+	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
+	item.UpdatedAt = appclock.DatabaseTime(updated).Format(time.RFC3339)
 	return item, err
 }
 
@@ -1535,7 +1106,7 @@ func nullTime(value sql.NullTime) *string {
 	if !value.Valid {
 		return nil
 	}
-	text := value.Time.In(time.Local).Format(time.RFC3339)
+	text := appclock.DatabaseTime(value.Time).Format(time.RFC3339)
 	return &text
 }
 
@@ -1545,17 +1116,6 @@ func jsonStringList(value string) []string {
 		return []string{}
 	}
 	return items
-}
-
-func jsonValue(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	var payload any
-	if err := json.Unmarshal([]byte(value), &payload); err != nil {
-		return value
-	}
-	return payload
 }
 
 func defaultStatus(value string) string {
@@ -1570,22 +1130,6 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(value)
-}
-
-func parseOptionalTime(value *string) any {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return nil
-	}
-	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(*value)); err == nil {
-		return t
-	}
-	if t, err := time.Parse("2006-01-02 15:04:05", strings.TrimSpace(*value)); err == nil {
-		return t
-	}
-	if t, err := time.Parse("2006-01-02", strings.TrimSpace(*value)); err == nil {
-		return t
-	}
-	return nil
 }
 
 func affected(result sql.Result, err error) (bool, error) {

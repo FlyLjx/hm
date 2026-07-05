@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/settings"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 type tableSpec struct {
@@ -24,6 +25,7 @@ type tableSpec struct {
 }
 
 func main() {
+	appclock.ConfigureDefault()
 	cfg := config.Load()
 	mysqlDB, err := openMySQLFromConfig(cfg.Database)
 	if err != nil {
@@ -83,8 +85,19 @@ func openMySQLFromConfig(cfg config.DatabaseConfig) (*sql.DB, error) {
 	if name == "" {
 		name = cfg.Name
 	}
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4,utf8&loc=Local", user, password, host, port, name)
-	db, err := sql.Open("mysql", dsn)
+	mysqlConfig := mysql.NewConfig()
+	mysqlConfig.User = user
+	mysqlConfig.Passwd = password
+	mysqlConfig.Net = "tcp"
+	mysqlConfig.Addr = fmt.Sprintf("%s:%d", host, port)
+	mysqlConfig.DBName = name
+	mysqlConfig.ParseTime = true
+	mysqlConfig.Loc = appclock.ConfigureDefault()
+	mysqlConfig.Params = map[string]string{
+		"charset":   "utf8mb4,utf8",
+		"time_zone": "'" + appclock.DefaultDatabaseTimeZone + "'",
+	}
+	db, err := sql.Open("mysql", mysqlConfig.FormatDSN())
 	if err != nil {
 		return nil, err
 	}
@@ -150,21 +163,18 @@ func migrationSpecs() []tableSpec {
 		{name: "credit_logs", columns: []string{"id", "user_id", "type", "amount", "balance_after", "remark", "created_at"}},
 		{name: "system_settings", columns: []string{"setting_key", "setting_value", "updated_at"}},
 		{name: "recharge_orders", columns: []string{"id", "user_id", "out_trade_no", "trade_no", "order_type", "subscription_plan_id", "amount", "credits", "status", "pay_url", "qr_code", "paid_at", "created_at", "updated_at"}},
-		{name: "recharge_products", columns: []string{"id", "name", "amount", "credits", "badge", "sort_order", "status", "created_at", "updated_at"}},
-		{name: "subscription_plans", columns: []string{"id", "name", "description", "amount", "duration_days", "bonus_credits", "discount_percent", "allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status", "created_at", "updated_at"}, transforms: map[string]func(any) any{"allowed_provider_ids": jsonString, "allowed_model_ids": jsonString}},
+		{name: "subscription_plans", columns: []string{"id", "name", "description", "amount", "duration_days", "quota_images", "bonus_credits", "discount_percent", "allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status", "created_at", "updated_at"}, transforms: map[string]func(any) any{"allowed_provider_ids": jsonString, "allowed_model_ids": jsonString}},
 		{name: "user_subscriptions", columns: []string{"id", "user_id", "plan_id", "status", "started_at", "expires_at", "created_at", "updated_at"}},
 		{name: "redeem_codes", columns: []string{"id", "code", "credits", "status", "remark", "user_id", "used_at", "expires_at", "created_at", "updated_at"}},
 		{name: "user_checkins", columns: []string{"id", "user_id", "reward_credits", "checkin_date", "user_ip", "created_at"}},
-		{name: "user_invites", columns: []string{"id", "inviter_id", "invitee_id", "reward_credits", "invitee_ip", "created_at"}},
+		{name: "user_invites", columns: []string{"id", "inviter_id", "invitee_id", "reward_credits", "reward_type", "reward_plan_id", "reward_label", "invitee_ip", "created_at"}},
 		{name: "announcements", columns: []string{"id", "title", "content", "display_mode", "target_type", "status", "sort_order", "created_at", "updated_at"}},
 		{name: "announcement_users", columns: []string{"announcement_id", "user_id", "created_at"}},
 		{name: "announcement_receipts", columns: []string{"announcement_id", "user_id", "signed_at"}},
 		{name: "oauth_authorization_codes", columns: []string{"code", "client_id", "user_id", "redirect_uri", "scope", "expires_at", "used_at", "created_at"}},
 		{name: "oauth_access_tokens", columns: []string{"token_hash", "client_id", "user_id", "scope", "expires_at", "created_at"}},
 		{name: "user_email_tokens", columns: []string{"token_hash", "user_id", "purpose", "expires_at", "used_at", "created_at"}},
-		{name: "promotions", columns: []string{"id", "title", "content", "badge", "action_text", "action_url", "status", "sort_order", "created_at", "updated_at"}},
 		{name: "user_api_keys", columns: []string{"id", "user_id", "name", "key_prefix", "key_hash", "key_plain", "encrypted_key", "status", "last_used_at", "deleted_at", "created_at", "updated_at"}},
-		{name: "api_call_logs", columns: []string{"id", "direction", "task_id", "user_id", "api_key_id", "api_key_name", "provider_id", "provider_type", "endpoint", "phase", "method", "status", "status_code", "duration_ms", "request_summary", "response_summary", "error_message", "created_at"}, transforms: map[string]func(any) any{"request_summary": jsonString, "response_summary": jsonString}},
 	}
 }
 

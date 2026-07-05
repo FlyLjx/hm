@@ -48,18 +48,14 @@ func normalizeOnDuplicateKey(query string) string {
 		return query
 	}
 	switch {
-	case strings.Contains(query, "INSERT INTO recharge_products"):
-		return postgresUpsert(query, "recharge_products", "id", []string{"name", "amount", "credits", "badge", "sort_order", "status"}, true)
 	case strings.Contains(query, "INSERT INTO subscription_plans"):
-		return postgresUpsert(query, "subscription_plans", "id", []string{"name", "description", "amount", "duration_days", "bonus_credits", "discount_percent", "allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status"}, true)
+		return postgresUpsert(query, "subscription_plans", "id", []string{"name", "description", "amount", "duration_days", "quota_images", "bonus_credits", "discount_percent", "allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status"}, true)
 	case strings.Contains(query, "INSERT INTO redeem_codes"):
 		return postgresUpsert(query, "redeem_codes", "id", []string{"code", "credits", "status", "remark", "expires_at"}, true)
 	case strings.Contains(query, "INSERT INTO system_settings"):
 		return postgresUpsert(query, "system_settings", "setting_key", []string{"setting_value"}, false)
 	case strings.Contains(query, "INSERT INTO announcements"):
 		return postgresUpsert(query, "announcements", "id", []string{"title", "content", "display_mode", "target_type", "status", "sort_order"}, true)
-	case strings.Contains(query, "INSERT INTO promotions"):
-		return postgresUpsert(query, "promotions", "id", []string{"title", "content", "badge", "action_text", "action_url", "status", "sort_order"}, true)
 	case strings.Contains(query, "INSERT INTO ai_models"):
 		return postgresUpsert(query, "ai_models", "id", []string{"display_name", "cost_1k", "cost_2k", "cost_4k", "markup_percent", "price_change_percent", "price_1k", "price_2k", "price_4k", "append_size_to_prompt", "enabled_size_tiers", "sort_order"}, true)
 	case strings.Contains(query, "INSERT INTO announcement_receipts"):

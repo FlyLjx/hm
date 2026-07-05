@@ -1,5 +1,5 @@
 import { adminApi } from '../api.js'
-import { amount, creditLogTypeItem, formatDate, statusItem, text, toNumber } from '../format.js'
+import { amount, formatDate, statusItem, text } from '../format.js'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
@@ -16,9 +16,6 @@ export const UsersPage = {
     const editVisible = ref(false)
     const editing = ref(null)
     const form = reactive({ email: '', password: '', role: 'user', status: 'active' })
-    const rechargeVisible = ref(false)
-    const rechargeUser = ref(null)
-    const rechargeForm = reactive({ amount: '', remark: '后台额度调整' })
     const detailVisible = ref(false)
     const detailUser = ref(null)
     const detailLoading = ref(false)
@@ -67,13 +64,12 @@ export const UsersPage = {
       disabled: rows.value.filter((row) => row.status === 'disabled').length,
       admins: rows.value.filter((row) => row.role === 'admin').length,
       subscribed: rows.value.filter((row) => row.subscription?.status === 'active').length,
-      credits: rows.value.reduce((sum, row) => sum + Number(row.credits || 0), 0),
     }))
     const activitySummary = computed(() => ({
       users: activityRanking.value.length,
       tasks: activityRanking.value.reduce((sum, row) => sum + Number(row.taskCount || 0), 0),
+      successTasks: activityRanking.value.reduce((sum, row) => sum + Number(row.successTasks || 0), 0),
       images: activityRanking.value.reduce((sum, row) => sum + Number(row.successImages || 0), 0),
-      credits: activityRanking.value.reduce((sum, row) => sum + Number(row.creditsUsed || 0), 0),
     }))
 
     watch([query, role, status], () => { page.value = 1 })
@@ -108,24 +104,6 @@ export const UsersPage = {
         await load()
       } catch (error) {
         message.error(error instanceof Error ? error.message : '保存失败')
-      }
-    }
-
-    function openRecharge(row) {
-      rechargeUser.value = row
-      Object.assign(rechargeForm, { amount: '', remark: '后台额度调整' })
-      rechargeVisible.value = true
-    }
-
-    async function submitRecharge() {
-      if (!rechargeUser.value) return
-      try {
-        await adminApi.rechargeUser(rechargeUser.value.id, { amount: toNumber(rechargeForm.amount), remark: rechargeForm.remark })
-        message.success('调整成功')
-        rechargeVisible.value = false
-        await load()
-      } catch (error) {
-        message.error(error instanceof Error ? error.message : '调整失败')
       }
     }
 
@@ -180,10 +158,10 @@ export const UsersPage = {
       loadActivityRanking()
     })
     return {
-      rows, loading, query, role, status, page, pageSize, editVisible, editing, form, rechargeVisible, rechargeUser, rechargeForm,
+      rows, loading, query, role, status, page, pageSize, editVisible, editing, form,
       detailVisible, detailUser, detailLoading, detailData, activityRanking, activityLoading, activityDays, activitySummary, filteredRows, visibleRows, summary, load, loadActivityRanking, resetFilters, openCreate,
-      openEdit, saveUser, openRecharge, submitRecharge, deleteUser, openDetails, subscriptionLabel, subscriptionColor, subscriptionExpireText,
-      amount, formatDate, statusItem, text, toNumber, creditLogTypeItem,
+      openEdit, saveUser, deleteUser, openDetails, subscriptionLabel, subscriptionColor, subscriptionExpireText,
+      amount, formatDate, statusItem, text,
     }
   },
   template: `
@@ -193,7 +171,7 @@ export const UsersPage = {
           <div>
             <div class="page-kicker">User Center</div>
             <div class="page-title">用户管理</div>
-            <div class="page-desc">统一维护账户、权限、状态和额度。</div>
+            <div class="page-desc">统一维护账户、权限、状态和订阅。</div>
           </div>
           <div class="toolbar">
             <a-button :loading="loading" @click="load">刷新</a-button>
@@ -205,13 +183,12 @@ export const UsersPage = {
           <div class="summary-card"><span>启用账号</span><b>{{ summary.active }}</b><div class="muted">可正常使用前台</div></div>
           <div class="summary-card"><span>禁用账号</span><b>{{ summary.disabled }}</b><div class="muted">已限制登录使用</div></div>
           <div class="summary-card"><span>订阅用户</span><b>{{ summary.subscribed }}</b><div class="muted">当前有效会员</div></div>
-          <div class="summary-card"><span>余额合计</span><b>{{ amount(summary.credits) }}</b><div class="muted">全量用户统计</div></div>
         </div>
         <div class="page-panel user-activity-panel">
           <div class="user-activity-header">
             <div class="user-activity-title">
               <div class="page-title" style="font-size:16px">用户活跃排名</div>
-              <div class="page-desc">按最近生图活跃度排序，综合任务数、成功图数、积分消耗和最近活跃时间。</div>
+              <div class="page-desc">按最近生图活跃度排序，综合任务数、成功产出和最近活跃时间。</div>
             </div>
             <div class="user-activity-actions">
               <a-segmented v-model:value="activityDays" :options="[{ label: '近 7 天', value: 7 }, { label: '近 30 天', value: 30 }]" />
@@ -230,27 +207,27 @@ export const UsersPage = {
               <small>最近窗口内</small>
             </div>
             <div class="activity-metric">
+              <span>成功任务</span>
+              <strong>{{ amount(activitySummary.successTasks) }}</strong>
+              <small>生成成功任务数</small>
+            </div>
+            <div class="activity-metric">
               <span>成功图片</span>
               <strong>{{ amount(activitySummary.images) }}</strong>
               <small>实际产出图片数</small>
             </div>
-            <div class="activity-metric">
-              <span>消耗积分</span>
-              <strong>{{ amount(activitySummary.credits) }}</strong>
-              <small>活跃用户总消耗</small>
-            </div>
           </div>
           <div class="user-activity-table-wrap">
             <table class="data-table user-activity-table">
-              <thead><tr><th>排名</th><th>用户</th><th>状态</th><th>任务</th><th>成功图数</th><th>消耗积分</th><th>最近活跃</th></tr></thead>
+              <thead><tr><th>排名</th><th>用户</th><th>状态</th><th>任务</th><th>成功任务</th><th>成功图数</th><th>最近活跃</th></tr></thead>
               <tbody>
                 <tr v-for="row in activityRanking" :key="row.userId">
                   <td><strong>#{{ row.rank }}</strong></td>
                   <td>{{ text(row.userEmail) }}</td>
                   <td><a-tag :color="statusItem('user', row.userStatus).color">{{ statusItem('user', row.userStatus).label }}</a-tag></td>
                   <td>{{ amount(row.taskCount) }}</td>
+                  <td>{{ amount(row.successTasks) }}</td>
                   <td>{{ amount(row.successImages) }}</td>
-                  <td>{{ amount(row.creditsUsed) }}</td>
                   <td>{{ row.lastActiveAt ? formatDate(row.lastActiveAt) : '-' }}</td>
                 </tr>
                 <tr v-if="!activityLoading && !activityRanking.length"><td colspan="7" class="muted" style="text-align:center;padding:24px">暂无活跃数据</td></tr>
@@ -280,7 +257,7 @@ export const UsersPage = {
         <a-spin :spinning="loading">
           <div class="data-table-wrap">
             <table class="data-table">
-              <thead><tr><th>用户</th><th>角色</th><th>状态</th><th>订阅</th><th>余额</th><th>邮箱验证</th><th>创建时间</th><th>操作</th></tr></thead>
+              <thead><tr><th>用户</th><th>角色</th><th>状态</th><th>订阅</th><th>邮箱验证</th><th>创建时间</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="row in visibleRows" :key="row.id">
                   <td>{{ text(row.email) }}</td>
@@ -291,13 +268,11 @@ export const UsersPage = {
                       <a-tag :color="subscriptionColor(row)">{{ subscriptionLabel(row) }}</a-tag>
                     </a-tooltip>
                   </td>
-                  <td>{{ amount(row.credits) }}</td>
                   <td><a-tag :color="row.emailVerifiedAt ? 'green' : 'red'">{{ row.emailVerifiedAt ? '已验证' : '未验证' }}</a-tag></td>
                   <td>{{ formatDate(row.createdAt) }}</td>
                   <td>
                     <div class="table-actions">
                       <a-button type="link" size="small" @click="openEdit(row)">编辑</a-button>
-                      <a-button type="link" size="small" @click="openRecharge(row)">充值</a-button>
                       <a-button type="link" size="small" @click="openDetails(row)">明细</a-button>
                       <a-button type="link" size="small" danger @click="deleteUser(row)">删除</a-button>
                     </div>
@@ -331,30 +306,6 @@ export const UsersPage = {
         </template>
       </a-drawer>
 
-      <a-drawer
-        v-model:open="rechargeVisible"
-        title="额度调整"
-        width="min(92vw, 720px)"
-        class="admin-edit-drawer"
-        destroy-on-close
-      >
-        <div class="summary-grid" style="padding:0 0 16px">
-          <div class="summary-card"><span>用户</span><b style="font-size:16px">{{ rechargeUser?.email || '-' }}</b></div>
-          <div class="summary-card"><span>当前余额</span><b>{{ amount(rechargeUser?.credits) }}</b></div>
-          <div class="summary-card"><span>调整后</span><b>{{ amount(Number(rechargeUser?.credits || 0) + toNumber(rechargeForm.amount)) }}</b></div>
-        </div>
-        <div class="form-grid">
-          <label><div class="muted">调整额度</div><a-input v-model:value="rechargeForm.amount" type="number" /></label>
-          <label><div class="muted">备注</div><a-input v-model:value="rechargeForm.remark" /></label>
-        </div>
-        <template #footer>
-          <div class="drawer-footer-actions">
-            <a-button @click="rechargeVisible = false">取消</a-button>
-            <a-button type="primary" @click="submitRecharge">保存</a-button>
-          </div>
-        </template>
-      </a-drawer>
-
       <a-drawer v-model:open="detailVisible" :title="(detailUser?.email || '') + ' 明细'" width="min(96vw, 1080px)">
         <a-spin :spinning="detailLoading">
           <section class="page-panel" style="margin-bottom:16px">
@@ -364,30 +315,12 @@ export const UsersPage = {
               <div class="summary-card"><span>到期时间</span><b style="font-size:18px">{{ subscriptionExpireText(detailData?.user || detailUser) }}</b></div>
             </div>
           </section>
-          <section class="page-panel" style="margin-bottom:16px">
-            <div class="page-hero"><div><div class="page-title" style="font-size:16px">额度流水</div></div></div>
-            <div class="data-table-wrap">
-              <table class="data-table">
-                <thead><tr><th>类型</th><th>金额</th><th>余额</th><th>备注</th><th>时间</th></tr></thead>
-                <tbody><tr v-for="row in (detailData?.creditLogs || []).slice(0, 20)" :key="row.id"><td><a-tag :color="creditLogTypeItem(row.type).color">{{ creditLogTypeItem(row.type).label }}</a-tag></td><td>{{ amount(row.amount) }}</td><td>{{ amount(row.balanceAfter) }}</td><td>{{ row.remark || '-' }}</td><td>{{ formatDate(row.createdAt) }}</td></tr></tbody>
-              </table>
-            </div>
-          </section>
-          <section class="page-panel" style="margin-bottom:16px">
-            <div class="page-hero"><div><div class="page-title" style="font-size:16px">API Key</div></div></div>
-            <div class="data-table-wrap">
-              <table class="data-table">
-                <thead><tr><th>名称</th><th>完整 Key</th><th>状态</th><th>最近使用</th><th>创建时间</th></tr></thead>
-                <tbody><tr v-for="row in (detailData?.apiKeys || [])" :key="row.id"><td>{{ row.name }}</td><td><code>{{ row.keyPlain || (row.keyPrefix + '********') }}</code></td><td><a-tag :color="row.status === 'active' ? 'green' : 'red'">{{ row.status === 'active' ? '启用' : '停用' }}</a-tag></td><td>{{ row.lastUsedAt ? formatDate(row.lastUsedAt) : '-' }}</td><td>{{ formatDate(row.createdAt) }}</td></tr></tbody>
-              </table>
-            </div>
-          </section>
           <section class="page-panel">
             <div class="page-hero"><div><div class="page-title" style="font-size:16px">最近任务</div></div></div>
             <div class="data-table-wrap">
               <table class="data-table">
-                <thead><tr><th>模型</th><th>状态</th><th>扣费</th><th>时间</th></tr></thead>
-                <tbody><tr v-for="row in (detailData?.tasks || []).slice(0, 20)" :key="row.id"><td>{{ row.modelDisplayName || row.modelName || row.modelId }}</td><td><a-tag :color="statusItem('task', row.status).color">{{ statusItem('task', row.status).label }}</a-tag></td><td>{{ amount(row.costCredits) }}</td><td>{{ formatDate(row.createdAt) }}</td></tr></tbody>
+                <thead><tr><th>模型</th><th>状态</th><th>数量</th><th>时间</th></tr></thead>
+                <tbody><tr v-for="row in (detailData?.tasks || []).slice(0, 20)" :key="row.id"><td>{{ row.modelDisplayName || row.modelName || row.modelId }}</td><td><a-tag :color="statusItem('task', row.status).color">{{ statusItem('task', row.status).label }}</a-tag></td><td>{{ row.quantity || 1 }}</td><td>{{ formatDate(row.createdAt) }}</td></tr></tbody>
               </table>
             </div>
           </section>

@@ -6,12 +6,10 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
 	"aipi-go/internal/pricing"
-	"aipi-go/internal/users"
 )
 
 func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuccessInput) error {
@@ -21,29 +19,18 @@ func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuc
 	}
 	defer tx.Rollback()
 
-	var credits float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, input.UserID).Scan(&credits); err != nil {
-		return err
+	actualQuantity := input.Quantity
+	if actualQuantity < 1 {
+		actualQuantity = len(ExtractImages(input.Result))
 	}
-	if credits < input.CostCredits {
-		return errors.New("用户积分不足")
-	}
-	remaining := credits - input.CostCredits
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits = ? WHERE id = ?`, remaining, input.UserID); err != nil {
-		return err
-	}
-	if input.CostCredits > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
-			VALUES (?, ?, 'deduct', ?, ?, ?)
-		`, newID(), input.UserID, input.CostCredits, remaining, input.Remark); err != nil {
-			return err
-		}
+	if actualQuantity < 1 {
+		actualQuantity = 1
 	}
 	resultBytes, _ := json.Marshal(input.Result)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'success',
+			quantity = ?,
 			cost_credits = ?,
 			model_cost_credits = ?,
 			remaining_credits = ?,
@@ -51,16 +38,11 @@ func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuc
 			result_json = ?,
 			error_message = NULL
 		WHERE id = ?
-	`, input.CostCredits, input.ModelCostCredits, remaining, input.DurationSeconds, string(resultBytes), input.TaskID); err != nil {
+	`, actualQuantity, 0, input.ModelCostCredits, 0, input.DurationSeconds, string(resultBytes), input.TaskID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
-	}
-	if s.userHub != nil {
-		if user, err := users.NewRepository(s.db).FindByID(context.Background(), input.UserID); err == nil {
-			s.userHub.PublishUser(user)
-		}
 	}
 	return nil
 }
@@ -68,6 +50,7 @@ func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuc
 type BillingSuccessInput struct {
 	TaskID           string
 	UserID           string
+	Quantity         int
 	CostCredits      float64
 	ModelCostCredits float64
 	DurationSeconds  float64

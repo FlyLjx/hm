@@ -12,4 +12,4 @@ Write-Host "[start] checking release files..."
 & (Join-Path $repoRoot "scripts\check-release.ps1")
 
 Write-Host "[start] launching server..."
-& (Join-Path $repoRoot "release\aipi-go.exe")
+& (Join-Path $repoRoot "release\ai-pai.exe")

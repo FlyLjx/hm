@@ -2,12 +2,22 @@ package users
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"fmt"
+	"math/big"
 	"regexp"
 	"strconv"
-	"time"
+	"strings"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
+)
+
+const (
+	inviteCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	inviteCodeLength   = 8
+	userSelectColumns  = `id, email, invite_code, invited_by, invited_ip, password_hash, credits, role, status, email_verified_at, created_at, updated_at`
 )
 
 type Repository struct {
@@ -20,7 +30,7 @@ func NewRepository(db *database.DB) *Repository {
 
 func (r *Repository) FindAll(ctx context.Context) ([]User, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, email, password_hash, credits, role, status, email_verified_at, created_at, updated_at
+		SELECT `+userSelectColumns+`
 		FROM users
 		ORDER BY created_at DESC
 	`)
@@ -42,7 +52,7 @@ func (r *Repository) FindAll(ctx context.Context) ([]User, error) {
 
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, email, password_hash, credits, role, status, email_verified_at, created_at, updated_at
+		SELECT `+userSelectColumns+`
 		FROM users
 		WHERE email = ?
 		LIMIT 1
@@ -54,7 +64,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 	legacyID := legacyIDFromCompatUUID(id)
 	if legacyID != "" {
 		row := r.db.QueryRowContext(ctx, `
-			SELECT id, email, password_hash, credits, role, status, email_verified_at, created_at, updated_at
+			SELECT `+userSelectColumns+`
 			FROM users
 			WHERE id IN (?, ?)
 			ORDER BY id = ? DESC
@@ -63,7 +73,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 		return scanUser(row)
 	}
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, email, password_hash, credits, role, status, email_verified_at, created_at, updated_at
+		SELECT `+userSelectColumns+`
 		FROM users
 		WHERE id = ?
 		LIMIT 1
@@ -71,15 +81,57 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 	return scanUser(row)
 }
 
+func (r *Repository) FindByInviteCode(ctx context.Context, code string) (*User, error) {
+	code = NormalizeInviteCode(code)
+	if code == "" {
+		return nil, sql.ErrNoRows
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+userSelectColumns+`
+		FROM users
+		WHERE invite_code = ?
+		LIMIT 1
+	`, code)
+	return scanUser(row)
+}
+
 func (r *Repository) Create(ctx context.Context, user User) (*User, error) {
+	inviteCode := NormalizeInviteCode(user.InviteCode)
+	if inviteCode == "" {
+		generated, err := r.newUniqueInviteCode(ctx)
+		if err != nil {
+			return nil, err
+		}
+		inviteCode = generated
+	}
+	invitedBy := strings.TrimSpace(user.InvitedBy)
+	invitedIP := strings.TrimSpace(user.InvitedIP)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO users (id, email, password_hash, credits, role, status, email_verified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, user.ID, user.Email, user.PasswordHash, user.Credits, user.Role, user.Status, user.EmailVerifiedAt)
+		INSERT INTO users (id, email, invite_code, invited_by, invited_ip, password_hash, credits, role, status, email_verified_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, user.ID, user.Email, inviteCode, nullableString(invitedBy), nullableString(invitedIP), user.PasswordHash, user.Credits, user.Role, user.Status, user.EmailVerifiedAt)
 	if err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, user.ID)
+}
+
+func (r *Repository) EnsureInviteCode(ctx context.Context, userID string) (string, error) {
+	user, err := r.FindByID(ctx, strings.TrimSpace(userID))
+	if err != nil {
+		return "", err
+	}
+	if user.InviteCode != "" {
+		return user.InviteCode, nil
+	}
+	code, err := r.newUniqueInviteCode(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE users SET invite_code = ? WHERE id = ?`, code, user.ID); err != nil {
+		return "", err
+	}
+	return code, nil
 }
 
 func (r *Repository) UpdatePassword(ctx context.Context, id string, passwordHash string) (*User, error) {
@@ -122,10 +174,16 @@ type scanner interface {
 
 func scanUser(row scanner) (*User, error) {
 	var user User
+	var inviteCode sql.NullString
+	var invitedBy sql.NullString
+	var invitedIP sql.NullString
 	var verifiedAt sql.NullTime
 	if err := row.Scan(
 		&user.ID,
 		&user.Email,
+		&inviteCode,
+		&invitedBy,
+		&invitedIP,
 		&user.PasswordHash,
 		&user.Credits,
 		&user.Role,
@@ -137,12 +195,71 @@ func scanUser(row scanner) (*User, error) {
 		return nil, err
 	}
 	if verifiedAt.Valid {
-		value := verifiedAt.Time
+		value := appclock.DatabaseTime(verifiedAt.Time)
 		user.EmailVerifiedAt = &value
 	}
-	user.CreatedAt = user.CreatedAt.In(time.Local)
-	user.UpdatedAt = user.UpdatedAt.In(time.Local)
+	if inviteCode.Valid {
+		user.InviteCode = NormalizeInviteCode(inviteCode.String)
+	}
+	if invitedBy.Valid {
+		user.InvitedBy = strings.TrimSpace(invitedBy.String)
+	}
+	if invitedIP.Valid {
+		user.InvitedIP = strings.TrimSpace(invitedIP.String)
+	}
+	user.CreatedAt = appclock.DatabaseTime(user.CreatedAt)
+	user.UpdatedAt = appclock.DatabaseTime(user.UpdatedAt)
 	return &user, nil
+}
+
+func nullableString(value string) sql.NullString {
+	value = strings.TrimSpace(value)
+	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func NormalizeInviteCode(value string) string {
+	code := strings.ToUpper(strings.TrimSpace(value))
+	if len(code) < 6 || len(code) > 16 {
+		return ""
+	}
+	for _, ch := range code {
+		if !strings.ContainsRune(inviteCodeAlphabet, ch) {
+			return ""
+		}
+	}
+	return code
+}
+
+func (r *Repository) newUniqueInviteCode(ctx context.Context) (string, error) {
+	for attempts := 0; attempts < 64; attempts++ {
+		code, err := randomInviteCode(inviteCodeLength)
+		if err != nil {
+			return "", err
+		}
+		if _, err := r.FindByInviteCode(ctx, code); err == sql.ErrNoRows {
+			return code, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique invite code")
+}
+
+func randomInviteCode(length int) (string, error) {
+	if length <= 0 {
+		length = inviteCodeLength
+	}
+	max := big.NewInt(int64(len(inviteCodeAlphabet)))
+	var builder strings.Builder
+	builder.Grow(length)
+	for builder.Len() < length {
+		index, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		builder.WriteByte(inviteCodeAlphabet[index.Int64()])
+	}
+	return builder.String(), nil
 }
 
 var compatUUIDPattern = regexp.MustCompile(`^00000000-0000-4000-8000-(\d{12})$`)

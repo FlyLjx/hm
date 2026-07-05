@@ -2,10 +2,7 @@ package httpserver
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -106,10 +103,6 @@ func (r *Router) testSettingEndpoint(w http.ResponseWriter, req *http.Request) {
 		r.sendTestEmail(w, req, values)
 		return
 	}
-	if strings.HasSuffix(req.URL.Path, "/test-bark") {
-		r.sendTestBark(w, req, values)
-		return
-	}
 	writeError(w, newAppError(http.StatusNotFound, "测试接口不存在"))
 }
 
@@ -130,56 +123,12 @@ func (r *Router) sendTestEmail(w http.ResponseWriter, req *http.Request, values 
 		return
 	}
 	smtpConfig := smtpSettingsFromMap(values)
-	body := "这是一封来自 AIπ Go 后端的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用。"
-	if err := sendSMTPMail(smtpConfig, email, "AIπ 邮件服务测试", body); err != nil {
+	body := "这是一封来自 ai-pai 后端的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用。"
+	if err := sendSMTPMail(smtpConfig, email, "ai-pai 邮件服务测试", body); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"sent": true, "email": email}})
-}
-
-func (r *Router) sendTestBark(w http.ResponseWriter, req *http.Request, values settings.Settings) {
-	if !anyBool(values["barkEnabled"]) {
-		writeError(w, newAppError(http.StatusBadRequest, "Bark 推送未启用"))
-		return
-	}
-	serverURL := strings.TrimRight(strings.TrimSpace(anyString(values["barkServerUrl"])), "/")
-	deviceKey := strings.Trim(strings.TrimSpace(anyString(values["barkDeviceKey"])), "/")
-	if serverURL == "" || deviceKey == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "Bark Server 或 Device Key 未配置"))
-		return
-	}
-	titlePrefix := strings.TrimSpace(anyString(values["barkTitlePrefix"]))
-	if titlePrefix == "" {
-		titlePrefix = "AIπ"
-	}
-	endpoint := serverURL + "/" + url.PathEscape(deviceKey) + "/" + url.PathEscape(titlePrefix+" 测试通知") + "/" + url.PathEscape("Go 后端 Bark 推送配置正常")
-	if sound := strings.TrimSpace(anyString(values["barkSound"])); sound != "" {
-		endpoint += "?sound=" + url.QueryEscape(sound)
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
-	defer cancel()
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	resp, err := http.DefaultClient.Do(upstreamReq)
-	if err != nil {
-		writeError(w, newAppError(http.StatusBadGateway, "Bark 服务连接失败："+err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		writeError(w, newAppError(resp.StatusCode, "Bark 调用失败："+string(body)))
-		return
-	}
-	var payload any
-	if json.Unmarshal(body, &payload) != nil {
-		payload = string(body)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"sent": true, "response": payload}})
 }
 
 func (r *Router) getSettings(w http.ResponseWriter, req *http.Request, publicOnly bool) {

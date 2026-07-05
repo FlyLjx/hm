@@ -32,12 +32,24 @@ func (r *Router) verifyEmail(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	user, err := users.NewRepository(r.db).MarkEmailVerified(req.Context(), userID)
+	userRepo := users.NewRepository(r.db)
+	beforeVerify, err := userRepo.FindByID(req.Context(), userID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(user)})
+	user, err := userRepo.MarkEmailVerified(req.Context(), userID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if beforeVerify.EmailVerifiedAt == nil {
+		if inviterID := r.grantInviteRewardForVerifiedUser(req.Context(), user, requestIP(req)); inviterID != "" {
+			r.publishCurrentUser(context.Background(), inviterID)
+		}
+	}
+	r.publishCurrentUser(context.Background(), user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(req.Context(), user)})
 }
 
 func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {
@@ -78,8 +90,8 @@ func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {
 	if settingValues, err := settings.NewRepository(r.db).Get(ctx); err == nil {
 		smtpConfig := smtpSettingsFromMap(settingValues)
 		if smtpConfig.validate() == nil {
-			body := "你正在重置 AIπ 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-			if err := sendSMTPMail(smtpConfig, user.Email, "重置 AIπ 账户密码", body); err != nil {
+			body := "你正在重置 ai-pai 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
+			if err := sendSMTPMail(smtpConfig, user.Email, "重置 ai-pai 账户密码", body); err != nil {
 				message = "密码重置链接已生成，但邮件发送失败：" + err.Error()
 			} else {
 				message = "密码重置邮件已发送，请查收。"
@@ -121,6 +133,42 @@ func (r *Router) resetPassword(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(user)})
+}
+
+func (r *Router) sendRegistrationVerification(ctx context.Context, req *http.Request, user *users.User, settingValues map[string]any) (map[string]any, error) {
+	token, err := r.createUserEmailToken(ctx, user.ID, "verify_email", 24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	verifyURL := absoluteURL(req, "/?verifyEmailToken="+token)
+	message := "注册成功，请前往邮箱完成验证后再登录。"
+	sent := false
+	if settingValues == nil {
+		settingValues = map[string]any{}
+	}
+	smtpConfig := smtpSettingsFromMap(settingValues)
+	if smtpConfig.validate() == nil {
+		siteName := strings.TrimSpace(anyString(settingValues["siteName"]))
+		if siteName == "" {
+			siteName = "ai-pai"
+		}
+		body := "你正在注册 " + siteName + " 账号，请在 24 小时内打开以下链接完成邮箱验证：\n\n" + verifyURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
+		if err := sendSMTPMail(smtpConfig, user.Email, "验证 "+siteName+" 账号邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
+			message = "注册成功，但验证邮件发送失败：" + err.Error()
+		} else {
+			message = "注册成功，验证邮件已发送，请查收后完成验证。"
+			sent = true
+		}
+	} else {
+		message = "注册成功，验证链接已生成；配置邮件服务后可自动发送。"
+	}
+	return map[string]any{
+		"verificationRequired": true,
+		"email":                user.Email,
+		"sent":                 sent,
+		"verificationUrl":      verifyURL,
+		"message":              message,
+	}, nil
 }
 
 func (r *Router) createUserEmailToken(ctx context.Context, userID string, purpose string, ttl time.Duration) (string, error) {

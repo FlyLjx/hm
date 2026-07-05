@@ -72,33 +72,12 @@ export const clientApi = {
   getCurrentUser: (id) => request(`/api/users/${encodeURIComponent(id)}/profile`),
   getUserDetails: (id, input) => request(`/api/users/${encodeURIComponent(id)}/public-details${query({ userId: id, ...input })}`),
   changePassword: (id, input) => request(`/api/users/${encodeURIComponent(id)}/password`, { method: 'PATCH', body: JSON.stringify({ ...input, userId: id }) }),
-  listApiKeys: (id) => request(`/api/users/${encodeURIComponent(id)}/api-keys`),
-  createApiKey: (id, input) => request(`/api/users/${encodeURIComponent(id)}/api-keys`, { method: 'POST', body: JSON.stringify(input) }),
-  updateApiKeyStatus: (id, keyId, input) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deleteApiKey: (id, keyId) => request(`/api/users/${encodeURIComponent(id)}/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
-
   getHomeBootstrap: (userId) => request(`/api/home/bootstrap${query({ userId })}`),
   getSettings: () => request('/api/settings/public'),
-  listAnnouncements: (userId) => request(`/api/announcements/public${query({ userId })}`),
+  listAnnouncements: (userId, input = {}) => request(`/api/announcements/public${query({ userId, ...input })}`),
   signAnnouncement: (id, userId) => request(`/api/announcements/${encodeURIComponent(id)}/sign`, { method: 'POST', body: JSON.stringify({ userId }) }),
-  listPromotions: () => request('/api/promotions/public'),
 
   listModels: () => request('/api/models?dedupe=display'),
-  getServiceStatus: () => request('/api/service-status'),
-  getIncentiveStatus: (userId) => request(`/api/pricing/activity${query({ userId })}`),
-  reversePrompt: (input) => request('/api/prompt-reverse', { method: 'POST', body: JSON.stringify(input) }),
-  completeChat: (input) => request('/api/chat/completions', { method: 'POST', body: JSON.stringify(input) }),
-  completeChatStream: async (input) => {
-    try {
-      return await fetch('/api/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-    } catch {
-      throw new Error('聊天通道连接失败，请确认前台通过后端地址访问，并刷新后重试')
-    }
-  },
   generateImage: (input) => request('/api/generate/image', { method: 'POST', body: JSON.stringify(input) }),
   generateImageStream: async (input) => {
     try {
@@ -120,16 +99,11 @@ export const clientApi = {
   requestTaskPublic: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/public-request`, { method: 'POST', body: JSON.stringify(input) }),
   estimateTaskDuration: (input) => request(`/api/tasks/estimate${query(input)}`),
 
-  listRechargeProducts: () => request('/api/shop/public/recharge-products'),
   listSubscriptionPlans: () => request('/api/subscriptions/public/plans'),
   getCurrentSubscription: (userId) => request(`/api/subscriptions/public/current${query({ userId })}`),
   createRechargeOrder: (input) => request('/api/recharge', { method: 'POST', body: JSON.stringify(input) }),
   getRechargeOrder: (id, userId) => request(`/api/recharge/${encodeURIComponent(id)}${query({ userId })}`),
   syncRechargeOrder: (id, userId) => request(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId }) }),
-  redeemCode: (input) => request('/api/redeem-codes/redeem', { method: 'POST', body: JSON.stringify(input) }),
-
-  getCheckinStatus: (userId) => request(`/api/checkins/status${query({ userId })}`),
-  checkin: (userId) => request('/api/checkins', { method: 'POST', body: JSON.stringify({ userId }) }),
   getInviteSummary: (userId) => request(`/api/invites/summary${query({ userId })}`),
 
   getOAuthClient: (input) => request(`/oauth/client${query(input)}`),
