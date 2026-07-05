@@ -2003,7 +2003,7 @@ export const ChatPage = {
         </header>
         <div class="chat-thread" ref="chatThread">
           <div v-for="message in messages" :key="message.id" :class="['message', message.role]">
-            <div class="avatar">{{ message.role === 'user' ? '我' : 'AI-PAI' }}</div>
+            <div class="avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
             <div :class="['bubble', { 'generating-bubble': isGeneratingStatus(message.status) }]">
               <template v-if="isGeneratingStatus(message.status)">
                 <div class="generating-card">

@@ -1,8 +1,8 @@
-import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js'
+import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260706-support-group-save-v1'
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260705-ai-logo-v1'
+const ADMIN_ASSET_VERSION = '20260706-support-group-save-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -50,6 +50,7 @@ const menuGroups = [
   { title: '运营财务', items: [
     { id: 'orders', label: '订单列表', desc: '支付订单', icon: 'ti-receipt', component: FinancePage, props: { mode: 'orders' } },
     { id: 'subscriptions', label: '订阅套餐', desc: '会员权益', icon: 'ti-crown', component: FinancePage, props: { mode: 'subscriptions' } },
+    { id: 'lottery', label: '抽奖管理', desc: '订阅抽奖', icon: 'ti-gift', component: OperationsPage, props: { mode: 'lottery' } },
     { id: 'invites', label: '邀请管理', desc: '邀请奖励', icon: 'ti-user-plus', component: OperationsPage, props: { mode: 'invites' } },
   ] },
   { title: '系统管理', items: [

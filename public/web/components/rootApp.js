@@ -1,8 +1,8 @@
-import { clientApi } from '../common/api.js'
+import { clientApi } from '../common/api.js?v=20260706-lottery-copy-v1'
 import { localReceipts, receiptKey, saveReceipt } from '../common/announcementReceipts.js'
 import { formatCurrency, formatDate } from '../common/format.js'
 import { renderMarkdown } from '../common/markdown.js'
-import { pageFromHash } from '../common/navigation.js?v=20260705-ai-pai-display-v1'
+import { pageFromHash } from '../common/navigation.js?v=20260706-lottery-copy-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260705-quota-status-v1'
+const WEB_ASSET_VERSION = '20260706-lottery-copy-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -44,6 +44,7 @@ const ChatPage = lazyPage(() => import(`../pages/chat.js?v=${WEB_ASSET_VERSION}`
 const HistoryPage = lazyPage(() => import(`../pages/history.js?v=${WEB_ASSET_VERSION}`), 'HistoryPage')
 const ProfilePage = lazyPage(() => import(`../pages/profile.js?v=${WEB_ASSET_VERSION}`), 'ProfilePage')
 const InvitePage = lazyPage(() => import(`../pages/invite.js?v=${WEB_ASSET_VERSION}`), 'InvitePage')
+const LotteryPage = lazyPage(() => import(`../pages/lottery.js?v=${WEB_ASSET_VERSION}`), 'LotteryPage')
 
 function displayBrandName(value, fallback = 'AI-PAI') {
   const text = String(value || fallback).trim() || fallback
@@ -62,6 +63,7 @@ export const RootApp = {
     HistoryPage,
     ProfilePage,
     InvitePage,
+    LotteryPage,
   },
   setup() {
     const activePage = ref(pageFromHash())
@@ -100,6 +102,7 @@ export const RootApp = {
       { id: 'chat', label: '对话生图', icon: 'ti-message-2' },
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
       { id: 'history', label: '作品库', icon: 'ti-photo-heart' },
+      { id: 'lottery', label: '抽订阅', icon: 'ti-gift' },
       { id: 'invite', label: '邀请好友', icon: 'ti-user-plus' },
       { id: 'profile', label: '用户中心', icon: 'ti-user-circle' },
     ]
@@ -114,7 +117,7 @@ export const RootApp = {
       return keys.length ? new Set(keys).size : announcements.value.length
     })
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
-    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'announcements', 'chat', 'plaza', 'history', 'invite', 'profile'].includes(item.id)))
+    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'announcements', 'chat', 'plaza', 'history', 'lottery', 'invite', 'profile'].includes(item.id)))
     const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'history', 'profile'].includes(item.id)))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
     const topAccountSubscription = computed(() => currentUser.value?.subscription || null)
@@ -132,13 +135,18 @@ export const RootApp = {
     })
     const supportItems = computed(() => {
       const config = settings.value || {}
+      const supportGroupNumber = String(config.supportGroupNumber || '').trim()
+      const supportGroupUrl = String(config.supportGroupUrl || '').trim()
+      const supportGroupValue = supportGroupNumber || (supportGroupUrl ? '点击加入群聊' : '')
       return [
         { key: 'wechat', label: '微信客服', value: config.supportWechat, icon: 'ti-brand-wechat', copy: true },
         { key: 'qq', label: 'QQ 客服', value: config.supportQq, icon: 'ti-brand-qq', copy: true },
+        { key: 'group', label: '群聊群号', value: supportGroupValue, icon: 'ti-users-group', href: supportGroupUrl, copy: !supportGroupUrl },
         { key: 'email', label: '客服邮箱', value: config.supportEmail, icon: 'ti-mail', href: config.supportEmail ? `mailto:${config.supportEmail}` : '', copy: true },
         { key: 'url', label: '在线客服', value: config.supportUrl, icon: 'ti-headset', href: config.supportUrl },
       ].filter((item) => item.value)
     })
+    const supportVisible = computed(() => isFeatureEnabled(settings.value?.supportEnabled))
     const authMeta = computed(() => {
       const metaMap = {
         login: {
@@ -722,6 +730,11 @@ export const RootApp = {
       setPage('invite')
     }
 
+    function openSupport() {
+      closeNavMenus()
+      supportOpen.value = true
+    }
+
     async function copySupportValue(value) {
       if (!value) return
       await navigator.clipboard.writeText(value)
@@ -806,6 +819,7 @@ export const RootApp = {
       selectedSubscriptionPlan,
       supportOpen,
       supportItems,
+      supportVisible,
       previewImage,
       activeAnnouncement,
       activeTopbarAnnouncement,
@@ -841,6 +855,7 @@ export const RootApp = {
       runNavAction,
       openRecharge,
       openSubscription,
+      openSupport,
       createRechargeOrder,
       syncRechargeOrder,
       openInvite,
@@ -889,6 +904,10 @@ export const RootApp = {
             </nav>
           </div>
           <div class="web-top-actions">
+            <el-button v-if="supportVisible" class="support-top-action" @click="openSupport">
+              <i class="ti ti-headset"></i>
+              <span>客服</span>
+            </el-button>
             <template v-if="currentUser">
               <el-button class="user-action primary-action nav-recharge-action" type="primary" @click="openSubscription">
                 <i class="ti ti-crown"></i>
@@ -930,9 +949,17 @@ export const RootApp = {
                     <i class="ti ti-photo-heart"></i>
                     <span>作品库</span>
                   </button>
+                  <button type="button" @click="runNavAction(() => setPage('lottery'))">
+                    <i class="ti ti-gift"></i>
+                    <span>抽订阅</span>
+                  </button>
                   <button type="button" @click="runNavAction(openInvite)">
                     <i class="ti ti-user-plus"></i>
                     <span>邀请好友</span>
+                  </button>
+                  <button v-if="supportVisible" type="button" @click="runNavAction(openSupport)">
+                    <i class="ti ti-headset"></i>
+                    <span>联系客服</span>
                   </button>
                   <button class="danger" type="button" @click="logout">
                     <i class="ti ti-logout"></i>
@@ -961,7 +988,9 @@ export const RootApp = {
               <button type="button" @click="runNavAction(openSubscription)"><i class="ti ti-crown"></i><span>订阅会员</span></button>
               <button type="button" @click="runNavAction(() => setPage('profile'))"><i class="ti ti-user-circle"></i><span>用户中心</span></button>
               <button type="button" @click="runNavAction(() => setPage('history'))"><i class="ti ti-photo-heart"></i><span>作品库</span></button>
+              <button type="button" @click="runNavAction(() => setPage('lottery'))"><i class="ti ti-gift"></i><span>抽订阅</span></button>
               <button type="button" @click="runNavAction(openInvite)"><i class="ti ti-user-plus"></i><span>邀请</span></button>
+              <button v-if="supportVisible" type="button" @click="runNavAction(openSupport)"><i class="ti ti-headset"></i><span>客服</span></button>
               <button type="button" @click="logout"><i class="ti ti-logout"></i><span>退出</span></button>
             </div>
           </div>
@@ -994,6 +1023,7 @@ export const RootApp = {
           <chat-page v-if="activePage === 'chat'" :current-user="currentUser" :settings="settings" :site-name="siteName" @login="loginOpen = true" @preview="previewImage = $event" @user-updated="updateCurrentUser" />
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
           <history-page v-if="activePage === 'history'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
+          <lottery-page v-if="activePage === 'lottery'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @user-updated="updateCurrentUser" />
           <invite-page v-if="activePage === 'invite'" :current-user="currentUser" :site-name="siteName" @go="setPage" @login="loginOpen = true" />
           <profile-page v-if="activePage === 'profile'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @subscribe="openSubscription" @user-updated="updateCurrentUser" />
         </main>
@@ -1005,7 +1035,7 @@ export const RootApp = {
         </nav>
       </section>
 
-      <button v-if="settings?.supportEnabled" :class="['support-float', { 'chat-support-float': activePage === 'chat' }]" type="button" @click="supportOpen = true">
+      <button v-if="supportVisible" :class="['support-float', { 'chat-support-float': activePage === 'chat' }]" type="button" @click="openSupport">
         <i class="ti ti-headset"></i>
         <span>联系客服</span>
       </button>

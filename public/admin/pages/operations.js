@@ -1,4 +1,4 @@
-import { adminApi } from '../api.js'
+import { adminApi } from '../api.js?v=20260706-subscription-lottery-v7'
 import { formatDate, text } from '../format.js'
 import { CrudPage } from '../components/crud-page.js'
 
@@ -33,6 +33,13 @@ export const OperationsPage = {
       { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
       { key: 'sortOrder', label: '排序', type: 'number', number: true, defaultValue: 0 },
     ])
+    const lotteryPrizeFields = computed(() => [
+      { key: 'name', label: '奖品名称', required: true, defaultValue: '订阅奖励' },
+      { key: 'planId', label: '订阅套餐', type: 'select', options: subscriptionPlanOptions.value },
+      { key: 'monthlyStock', label: '月中奖上限（0 为不限）', type: 'number', number: true, defaultValue: 7 },
+      { key: 'sortOrder', label: '排序', type: 'number', number: true, defaultValue: 0 },
+      { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
+    ])
     function normalizeAnnouncement(input) {
       const userIds = Array.isArray(input.userIds)
         ? input.userIds.filter(Boolean)
@@ -48,7 +55,7 @@ export const OperationsPage = {
       }))
     }
     async function loadSubscriptionPlans() {
-      if (mode.value !== 'invites') return
+      if (mode.value !== 'invites' && mode.value !== 'lottery') return
       try {
         const response = await adminApi.listSubscriptionPlans()
         subscriptionPlans.value = (response.data || []).filter((plan) => plan.status === 'active')
@@ -99,6 +106,37 @@ export const OperationsPage = {
     const inviteActions = computed(() => [
       { key: 'invite-settings', label: '邀请配置', icon: 'ti-settings', onClick: openInviteSettings },
     ])
+    function normalizeLotteryPrize(input) {
+      return {
+        ...input,
+        prizeType: 'subscription',
+        name: String(input.name || '').trim(),
+        planId: String(input.planId || '').trim(),
+        weight: 1,
+        dailyStock: 0,
+      }
+    }
+    function isThanksPrize(row) {
+      return row?.prizeType === 'thanks'
+    }
+    function lotteryPrizeNameLabel(row) {
+      return isThanksPrize(row) ? '谢谢惠顾' : (row?.name || '-')
+    }
+    function lotteryRecordResultLabel(row) {
+      return isThanksPrize(row) ? '未中奖' : '中奖'
+    }
+    function lotteryPlanLabel(row) {
+      if (isThanksPrize(row)) return '-'
+      return row?.planName || row?.planId || '-'
+    }
+    function lotteryDurationLabel(row) {
+      if (isThanksPrize(row)) return '-'
+      return `${row?.durationDays || 0} 天`
+    }
+    function lotteryQuotaLabel(row) {
+      if (isThanksPrize(row)) return '-'
+      return `${row?.quotaImages || 0} 张`
+    }
     onMounted(() => {
       loadUsers()
       loadSubscriptionPlans()
@@ -109,7 +147,7 @@ export const OperationsPage = {
       loadSubscriptionPlans()
       loadFeatureSettings()
     })
-    return { mode, adminApi, announcementFields, closeInviteSettings, inviteActions, inviteSettingsVisible, normalizeAnnouncement, operationSettings, formatDate, saveInviteSettings, settingsLoading, settingsSaving, subscriptionPlanOptions, text }
+    return { mode, adminApi, announcementFields, closeInviteSettings, inviteActions, inviteSettingsVisible, lotteryPrizeFields, lotteryDurationLabel, lotteryPlanLabel, lotteryPrizeNameLabel, lotteryQuotaLabel, lotteryRecordResultLabel, normalizeAnnouncement, normalizeLotteryPrize, operationSettings, formatDate, saveInviteSettings, settingsLoading, settingsSaving, subscriptionPlanOptions, text }
   },
   template: `
     <CrudPage v-if="mode === 'announcements'" title="公告管理" singular="公告" description="管理前台弹窗公告。"
@@ -172,6 +210,38 @@ export const OperationsPage = {
           </div>
         </template>
       </a-drawer>
+    </div>
+    <div v-else-if="mode === 'lottery'" class="feature-page-stack">
+      <CrudPage title="抽奖奖池" singular="奖品" description="只配置可中奖订阅和月中奖上限，未命中由系统自动返回谢谢惠顾。"
+        :list="adminApi.listLotteryPrizes"
+        :create="input => adminApi.createLotteryPrize(normalizeLotteryPrize(input))"
+        :update="(id, input) => adminApi.updateLotteryPrize(id, normalizeLotteryPrize(input))"
+        :delete="adminApi.deleteLotteryPrize"
+        :fields="lotteryPrizeFields"
+        :columns="[
+          { label: '奖品', render: lotteryPrizeNameLabel, width: 180 },
+          { label: '订阅套餐', render: lotteryPlanLabel, width: 180 },
+          { label: '有效期', render: lotteryDurationLabel, width: 100 },
+          { label: '额度', render: lotteryQuotaLabel, width: 100 },
+          { label: '本月剩余', render: row => row.monthlyText || '本月不限', width: 120 },
+          { label: '排序', key: 'sortOrder', width: 90 },
+          { label: '状态', key: 'status', format: 'status', width: 90 },
+          { label: '更新时间', key: 'updatedAt', format: 'date', width: 180 },
+        ]"
+      />
+      <CrudPage title="开奖记录" description="查看用户每日抽订阅结果。" paginated search readonly :page-size="10"
+        :list="adminApi.listLotteryRecords"
+        :columns="[
+          { label: '用户', render: row => text(row.userEmail || row.userId), width: 220, copy: true },
+          { label: '结果', render: lotteryRecordResultLabel, width: 110 },
+          { label: '奖品', render: row => row.prizeName || '-', width: 160 },
+          { label: '套餐', render: lotteryPlanLabel, width: 180 },
+          { label: '有效期', render: lotteryDurationLabel, width: 100 },
+          { label: '抽奖日期', key: 'drawDate', width: 120 },
+          { label: 'IP', key: 'userIp', width: 150 },
+          { label: '创建时间', key: 'createdAt', format: 'date', width: 180 },
+        ]"
+      />
     </div>
     <a-empty v-else description="该模块已移除" />
   `,

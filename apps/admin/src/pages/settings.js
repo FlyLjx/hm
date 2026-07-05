@@ -14,6 +14,8 @@ const defaultSettings = {
   supportDescription: '遇到订阅、生成或账号问题，可以通过下面方式联系管理员。',
   supportWechat: '',
   supportQq: '',
+  supportGroupNumber: '',
+  supportGroupUrl: '',
   supportEmail: '',
   supportUrl: '',
   supportQrCodeUrl: '',
@@ -66,7 +68,7 @@ export const SettingsPage = {
       ] },
       { title: '客服入口', fields: [
         { key: 'supportEnabled', label: '开启客服入口', type: 'boolean' }, { key: 'supportTitle', label: '客服标题' }, { key: 'supportDescription', label: '客服说明', type: 'textarea' },
-        { key: 'supportWechat', label: '微信号' }, { key: 'supportQq', label: 'QQ号' }, { key: 'supportEmail', label: '客服邮箱' }, { key: 'supportUrl', label: '在线客服链接' }, { key: 'supportQrCodeUrl', label: '二维码图片地址' },
+        { key: 'supportWechat', label: '微信号' }, { key: 'supportQq', label: 'QQ号' }, { key: 'supportGroupNumber', label: '群聊群号' }, { key: 'supportGroupUrl', label: '群聊跳转链接', type: 'url' }, { key: 'supportEmail', label: '客服邮箱' }, { key: 'supportUrl', label: '在线客服链接' }, { key: 'supportQrCodeUrl', label: '二维码图片地址' },
       ] },
       { title: '生成策略', fields: [
         { key: 'freeHourlyGenerationQuota', label: '免费小时额度（张）', type: 'number', help: '未开通订阅的用户每个自然小时可提交的图片张数。' },
@@ -125,7 +127,16 @@ export const SettingsPage = {
 
     async function submit() {
       try {
-        await adminApi.updateSettings(normalizeInput())
+        const input = normalizeInput()
+        const response = await adminApi.updateSettings(input)
+        const saved = response?.data || {}
+        const groupNumberChanged = String(input.supportGroupNumber || '').trim() !== String(saved.supportGroupNumber || '').trim()
+        const groupUrlChanged = String(input.supportGroupUrl || '').trim() !== String(saved.supportGroupUrl || '').trim()
+        if ((input.supportGroupNumber || input.supportGroupUrl) && (groupNumberChanged || groupUrlChanged)) {
+          throw new Error('后端未接收群聊配置，请重启 Go 后端后再保存')
+        }
+        Object.assign(form, defaultSettings, saved)
+        normalizeBrandFields(form)
         message.success('设置已保存')
         settingsVisible.value = false
         emit('refresh-settings')

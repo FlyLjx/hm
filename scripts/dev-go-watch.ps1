@@ -61,12 +61,13 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $binPath) | Out-Nu
 $airConfigPath = Join-Path $repoRoot ".tmp\air-go.toml"
 $relativeBinPath = "../.tmp/ai-pai-dev.exe"
 $goCommand = $goExe.Replace("\", "/")
+$goCommandForShell = $goCommand.Replace('"', '\"')
 $airConfig = @"
 root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "$goCommand build -o $relativeBinPath ./cmd/ai-pai"
+cmd = "& \"$goCommandForShell\" build -o $relativeBinPath ./cmd/ai-pai"
 entrypoint = "$relativeBinPath"
 include_ext = ["go", "tpl", "tmpl", "html"]
 exclude_dir = ["tmp", "vendor", ".git"]

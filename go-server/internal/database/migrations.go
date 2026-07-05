@@ -57,6 +57,15 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_label", "VARCHAR(120) NULL", "reward_plan_id"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "name"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "monthly_stock", "INTEGER NOT NULL DEFAULT 0", "daily_stock"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "subscription_lottery_records", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "prize_id"); err != nil {
+		return err
+	}
 	if err := dropRemovedFeatureTables(ctx, db); err != nil {
 		return err
 	}
@@ -80,6 +89,10 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_user_checkins_user_id_checkin_date", `CREATE INDEX idx_user_checkins_user_id_checkin_date ON user_checkins (user_id, checkin_date)`},
 		{"idx_user_invites_invitee_id", `CREATE INDEX idx_user_invites_invitee_id ON user_invites (invitee_id)`},
 		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
+		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
+		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
+		{"idx_subscription_lottery_records_prize_date", `CREATE INDEX idx_subscription_lottery_records_prize_date ON subscription_lottery_records (prize_id, draw_date)`},
+		{"uq_subscription_lottery_user_date", `CREATE UNIQUE INDEX uq_subscription_lottery_user_date ON subscription_lottery_records (user_id, draw_date)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
@@ -446,6 +459,29 @@ func schemaBootstrapStatements() []string {
 				invitee_ip VARCHAR(64) NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
+			`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
+				id VARCHAR(36) PRIMARY KEY,
+				name VARCHAR(80) NOT NULL,
+				prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
+				plan_id VARCHAR(36) NOT NULL,
+				weight INTEGER NOT NULL DEFAULT 1,
+				daily_stock INTEGER NOT NULL DEFAULT 0,
+				monthly_stock INTEGER NOT NULL DEFAULT 0,
+				sort_order INTEGER NOT NULL DEFAULT 0,
+				status VARCHAR(16) NOT NULL DEFAULT 'active',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS subscription_lottery_records (
+				id VARCHAR(36) PRIMARY KEY,
+				user_id VARCHAR(36) NOT NULL,
+				prize_id VARCHAR(36) NOT NULL,
+				prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
+				plan_id VARCHAR(36) NOT NULL,
+				draw_date DATE NOT NULL,
+				user_ip VARCHAR(64) NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
 			`CREATE TABLE IF NOT EXISTS announcements (
 				id VARCHAR(36) PRIMARY KEY,
 				title VARCHAR(120) NOT NULL,
@@ -544,6 +580,33 @@ func schemaBootstrapStatements() []string {
 		}
 	}
 	return []string{
+		`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(80) NOT NULL,
+			prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
+			plan_id VARCHAR(36) NOT NULL,
+			weight INTEGER NOT NULL DEFAULT 1,
+			daily_stock INTEGER NOT NULL DEFAULT 0,
+			monthly_stock INTEGER NOT NULL DEFAULT 0,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_subscription_lottery_prizes_status_sort (status, sort_order)
+		)`,
+		`CREATE TABLE IF NOT EXISTS subscription_lottery_records (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL,
+			prize_id VARCHAR(36) NOT NULL,
+			prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
+			plan_id VARCHAR(36) NOT NULL,
+			draw_date DATE NOT NULL,
+			user_ip VARCHAR(64) NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE KEY uq_subscription_lottery_user_date (user_id, draw_date),
+			INDEX idx_subscription_lottery_records_user_created (user_id, created_at),
+			INDEX idx_subscription_lottery_records_prize_date (prize_id, draw_date)
+		)`,
 		`CREATE TABLE IF NOT EXISTS announcement_receipts (
 			announcement_id VARCHAR(36) NOT NULL,
 			user_id VARCHAR(36) NOT NULL,

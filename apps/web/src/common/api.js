@@ -101,6 +101,8 @@ export const clientApi = {
 
   listSubscriptionPlans: () => request('/api/subscriptions/public/plans'),
   getCurrentSubscription: (userId) => request(`/api/subscriptions/public/current${query({ userId })}`),
+  getSubscriptionLottery: (userId) => request(`/api/lottery/subscription${query({ userId })}`),
+  drawSubscriptionLottery: (userId) => request('/api/lottery/subscription/draw', { method: 'POST', body: JSON.stringify({ userId }) }),
   createRechargeOrder: (input) => request('/api/recharge', { method: 'POST', body: JSON.stringify(input) }),
   getRechargeOrder: (id, userId) => request(`/api/recharge/${encodeURIComponent(id)}${query({ userId })}`),
   syncRechargeOrder: (id, userId) => request(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId }) }),

@@ -164,6 +164,11 @@ export const adminApi = {
   listInvites: (params) => request(`/api/invites${query(params)}`),
   deleteInvite: (id) => request(`/api/invites/${pathId(id)}`, { method: 'DELETE' }),
   listUserActivityRanking: (params) => request(`/api/users/activity-ranking${query(params)}`),
+  listLotteryPrizes: () => request('/api/lottery/prizes'),
+  createLotteryPrize: (input) => request('/api/lottery/prizes', json('POST', input)),
+  updateLotteryPrize: (id, input) => request(`/api/lottery/prizes/${pathId(id)}`, json('PATCH', input)),
+  deleteLotteryPrize: (id) => request(`/api/lottery/prizes/${pathId(id)}`, { method: 'DELETE' }),
+  listLotteryRecords: (params) => request(`/api/lottery/records${query(params)}`),
 
   listAnnouncements: () => request('/api/announcements'),
   createAnnouncement: (input) => request('/api/announcements', json('POST', input)),

@@ -2,8 +2,12 @@ package operations
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +19,10 @@ import (
 type Repository struct {
 	db *database.DB
 }
+
+var ErrNoLotteryPrize = errors.New("no active lottery prize")
+
+const lotteryAutoThanksPrizeID = "auto-thanks"
 
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
@@ -848,6 +856,715 @@ func revokeInviteSubscriptionReward(ctx context.Context, tx *database.Tx, invite
 		return false, 0, err
 	}
 	return true, durationDays, nil
+}
+
+func (r *Repository) LotteryPrizes(ctx context.Context, activeOnly bool) ([]LotteryPrize, error) {
+	monthStart, nextMonth, _, _ := lotteryMonthWindow(time.Now())
+	query := `
+		SELECT subscription_lottery_prizes.id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_prizes.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_plans.quota_images,
+			subscription_lottery_prizes.weight,
+			subscription_lottery_prizes.daily_stock,
+			COALESCE(today.used, 0),
+			subscription_lottery_prizes.monthly_stock,
+			COALESCE(month_used.used, 0),
+			subscription_lottery_prizes.sort_order,
+			subscription_lottery_prizes.status,
+			subscription_lottery_prizes.created_at,
+			subscription_lottery_prizes.updated_at
+		FROM subscription_lottery_prizes
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_prizes.plan_id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date = CURDATE()
+			GROUP BY prize_id
+		) today ON today.prize_id = subscription_lottery_prizes.id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date >= ? AND draw_date < ? AND COALESCE(prize_type, 'subscription')='subscription'
+			GROUP BY prize_id
+		) month_used ON month_used.prize_id = subscription_lottery_prizes.id
+	`
+	query += ` WHERE COALESCE(subscription_lottery_prizes.prize_type, 'subscription')='subscription'`
+	if activeOnly {
+		query += ` AND subscription_lottery_prizes.status='active' AND subscription_plans.status='active'`
+	}
+	query += ` ORDER BY subscription_lottery_prizes.sort_order ASC, subscription_lottery_prizes.created_at DESC`
+	rows, err := r.db.QueryContext(ctx, query, monthStart, nextMonth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LotteryPrize{}
+	for rows.Next() {
+		item, err := scanLotteryPrize(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func normalizeLotteryPrizeType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "thanks", "none", "no_prize":
+		return "thanks"
+	default:
+		return "subscription"
+	}
+}
+
+func isThanksLotteryPrize(item LotteryPrize) bool {
+	return normalizeLotteryPrizeType(item.PrizeType) == "thanks"
+}
+
+func normalizeLotteryPrizeInput(item LotteryPrize) LotteryPrize {
+	item.Name = strings.TrimSpace(item.Name)
+	item.PrizeType = "subscription"
+	item.PlanID = strings.TrimSpace(item.PlanID)
+	if item.Weight <= 0 {
+		item.Weight = 1
+	}
+	if item.DailyStock < 0 {
+		item.DailyStock = 0
+	}
+	if item.MonthlyStock < 0 {
+		item.MonthlyStock = 0
+	}
+	return item
+}
+
+func (r *Repository) CreateLotteryPrize(ctx context.Context, item LotteryPrize) (*LotteryPrize, error) {
+	item = normalizeLotteryPrizeInput(item)
+	if item.ID == "" {
+		item.ID = newOperationID()
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO subscription_lottery_prizes (id, name, prize_type, plan_id, weight, daily_stock, monthly_stock, sort_order, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Name, item.PrizeType, item.PlanID, item.Weight, item.DailyStock, item.MonthlyStock, item.SortOrder, defaultStatus(item.Status))
+	if err != nil {
+		return nil, err
+	}
+	return r.FindLotteryPrize(ctx, item.ID)
+}
+
+func (r *Repository) UpdateLotteryPrize(ctx context.Context, id string, item LotteryPrize) (*LotteryPrize, error) {
+	item = normalizeLotteryPrizeInput(item)
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE subscription_lottery_prizes
+		SET name=?, prize_type=?, plan_id=?, weight=?, daily_stock=?, monthly_stock=?, sort_order=?, status=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=?
+	`, item.Name, item.PrizeType, item.PlanID, item.Weight, item.DailyStock, item.MonthlyStock, item.SortOrder, defaultStatus(item.Status), strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	return r.FindLotteryPrize(ctx, id)
+}
+
+func (r *Repository) FindLotteryPrize(ctx context.Context, id string) (*LotteryPrize, error) {
+	monthStart, nextMonth, _, _ := lotteryMonthWindow(time.Now())
+	row := r.db.QueryRowContext(ctx, `
+		SELECT subscription_lottery_prizes.id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_prizes.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_plans.quota_images,
+			subscription_lottery_prizes.weight,
+			subscription_lottery_prizes.daily_stock,
+			COALESCE(today.used, 0),
+			subscription_lottery_prizes.monthly_stock,
+			COALESCE(month_used.used, 0),
+			subscription_lottery_prizes.sort_order,
+			subscription_lottery_prizes.status,
+			subscription_lottery_prizes.created_at,
+			subscription_lottery_prizes.updated_at
+		FROM subscription_lottery_prizes
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_prizes.plan_id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date = CURDATE()
+			GROUP BY prize_id
+		) today ON today.prize_id = subscription_lottery_prizes.id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date >= ? AND draw_date < ? AND COALESCE(prize_type, 'subscription')='subscription'
+			GROUP BY prize_id
+		) month_used ON month_used.prize_id = subscription_lottery_prizes.id
+		WHERE subscription_lottery_prizes.id=?
+		LIMIT 1
+	`, monthStart, nextMonth, strings.TrimSpace(id))
+	item, err := scanLotteryPrize(row)
+	return &item, err
+}
+
+func (r *Repository) DeleteLotteryPrize(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM subscription_lottery_prizes WHERE id=?`, strings.TrimSpace(id))
+	return affected(result, err)
+}
+
+func (r *Repository) LotteryRecords(ctx context.Context, input PageInput) ([]LotteryRecord, int, error) {
+	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
+	where := []string{}
+	args := []any{}
+	if input.Keyword != "" {
+		keyword := "%" + input.Keyword + "%"
+		where = append(where, `(users.email LIKE ? OR subscription_lottery_prizes.name LIKE ? OR subscription_plans.name LIKE ?)`)
+		args = append(args, keyword, keyword, keyword)
+	}
+	whereSQL := buildWhere(where)
+	total, err := r.countWithArgs(ctx, `
+		SELECT COUNT(*)
+		FROM subscription_lottery_records
+		LEFT JOIN users ON users.id = subscription_lottery_records.user_id
+		LEFT JOIN subscription_lottery_prizes ON subscription_lottery_prizes.id = subscription_lottery_records.prize_id
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_records.plan_id
+		`+whereSQL, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT subscription_lottery_records.id,
+			subscription_lottery_records.user_id,
+			users.email,
+			subscription_lottery_records.prize_id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_records.prize_type, subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_records.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_lottery_records.draw_date,
+			subscription_lottery_records.user_ip,
+			subscription_lottery_records.created_at
+		FROM subscription_lottery_records
+		LEFT JOIN users ON users.id = subscription_lottery_records.user_id
+		LEFT JOIN subscription_lottery_prizes ON subscription_lottery_prizes.id = subscription_lottery_records.prize_id
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_records.plan_id
+		`+whereSQL+`
+		ORDER BY subscription_lottery_records.created_at DESC
+		LIMIT ? OFFSET ?
+	`, append(args, pageSize, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := []LotteryRecord{}
+	for rows.Next() {
+		item, err := scanLotteryRecord(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+func (r *Repository) TodayLotteryRecord(ctx context.Context, userID string) (*LotteryRecord, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT subscription_lottery_records.id,
+			subscription_lottery_records.user_id,
+			users.email,
+			subscription_lottery_records.prize_id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_records.prize_type, subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_records.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_lottery_records.draw_date,
+			subscription_lottery_records.user_ip,
+			subscription_lottery_records.created_at
+		FROM subscription_lottery_records
+		LEFT JOIN users ON users.id = subscription_lottery_records.user_id
+		LEFT JOIN subscription_lottery_prizes ON subscription_lottery_prizes.id = subscription_lottery_records.prize_id
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_records.plan_id
+		WHERE subscription_lottery_records.user_id=? AND subscription_lottery_records.draw_date = CURDATE()
+		LIMIT 1
+	`, strings.TrimSpace(userID))
+	item, err := scanLotteryRecord(row)
+	return &item, err
+}
+
+func (r *Repository) DrawSubscriptionLottery(ctx context.Context, userID string, ip string) (*LotteryDrawResult, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, sql.ErrNoRows
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var activeUserID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? AND status='active' FOR UPDATE`, userID).Scan(&activeUserID); err != nil {
+		return nil, err
+	}
+
+	existing, err := lotteryRecordByUserToday(ctx, tx, userID)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		prize, _ := r.FindLotteryPrize(ctx, existing.PrizeID)
+		won := normalizeLotteryPrizeType(existing.PrizeType) != "thanks"
+		result := &LotteryDrawResult{DrawnToday: true, Record: *existing, Won: won, Message: "今天已经抽过了"}
+		if prize != nil {
+			result.Prize = *prize
+		}
+		return result, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	prizes, err := availableLotteryPrizes(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if len(prizes) == 0 {
+		prizes = []LotteryPrize{virtualThanksLotteryPrize()}
+	} else {
+		monthStart, nextMonth, _, _ := lotteryMonthWindow(time.Now())
+		monthDrawCount, err := lotteryMonthDrawCount(ctx, tx, monthStart, nextMonth)
+		if err != nil {
+			return nil, err
+		}
+		shouldHit, err := shouldHitLotteryPrize(prizes, time.Now(), monthDrawCount)
+		if err != nil {
+			return nil, err
+		}
+		if !shouldHit {
+			prizes = []LotteryPrize{virtualThanksLotteryPrize()}
+		}
+	}
+	selected, err := chooseLotteryPrize(prizes)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	won := !isThanksLotteryPrize(selected)
+	message := "恭喜中奖，订阅权益已发放"
+	if won {
+		if err := grantSubscriptionInTx(ctx, tx, userID, selected.PlanID, selected.DurationDays, now); err != nil {
+			return nil, err
+		}
+	} else {
+		selected.PlanID = ""
+		message = "谢谢惠顾，明天再来试试"
+	}
+	recordID := newOperationID()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO subscription_lottery_records (id, user_id, prize_id, prize_type, plan_id, draw_date, user_ip)
+		VALUES (?, ?, ?, ?, ?, CURDATE(), ?)
+	`, recordID, userID, selected.ID, selected.PrizeType, selected.PlanID, strings.TrimSpace(ip)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	record, err := r.findLotteryRecordByID(ctx, recordID)
+	if err != nil {
+		return nil, err
+	}
+	return &LotteryDrawResult{
+		DrawnToday: false,
+		Record:     *record,
+		Prize:      selected,
+		Won:        won,
+		Message:    message,
+	}, nil
+}
+
+func scanLotteryPrize(row interface{ Scan(dest ...any) error }) (LotteryPrize, error) {
+	var item LotteryPrize
+	var planName sql.NullString
+	var durationDays, quotaImages sql.NullInt64
+	var created, updated time.Time
+	err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.PrizeType,
+		&item.PlanID,
+		&planName,
+		&durationDays,
+		&quotaImages,
+		&item.Weight,
+		&item.DailyStock,
+		&item.TodayUsed,
+		&item.MonthlyStock,
+		&item.MonthUsed,
+		&item.SortOrder,
+		&item.Status,
+		&created,
+		&updated,
+	)
+	if err != nil {
+		return item, err
+	}
+	item.PrizeType = normalizeLotteryPrizeType(item.PrizeType)
+	if isThanksLotteryPrize(item) {
+		item.Name = "谢谢惠顾"
+	}
+	item.PlanName = nullString(planName)
+	if durationDays.Valid {
+		item.DurationDays = int(durationDays.Int64)
+	}
+	if quotaImages.Valid {
+		item.QuotaImages = int(quotaImages.Int64)
+	}
+	if item.DailyStock <= 0 {
+		item.RemainingText = "不限"
+	} else {
+		remaining := item.DailyStock - item.TodayUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		item.RemainingText = strconv.Itoa(remaining) + "/" + strconv.Itoa(item.DailyStock)
+	}
+	if item.MonthlyStock <= 0 {
+		item.MonthlyText = "本月不限"
+	} else {
+		monthlyRemaining := item.MonthlyStock - item.MonthUsed
+		if monthlyRemaining < 0 {
+			monthlyRemaining = 0
+		}
+		item.MonthlyText = strconv.Itoa(monthlyRemaining) + "/" + strconv.Itoa(item.MonthlyStock)
+	}
+	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
+	item.UpdatedAt = appclock.DatabaseTime(updated).Format(time.RFC3339)
+	return item, nil
+}
+
+func scanLotteryRecord(row interface{ Scan(dest ...any) error }) (LotteryRecord, error) {
+	var item LotteryRecord
+	var userEmail, prizeName, planName, userIP sql.NullString
+	var durationDays sql.NullInt64
+	var drawDate any
+	var created time.Time
+	err := row.Scan(
+		&item.ID,
+		&item.UserID,
+		&userEmail,
+		&item.PrizeID,
+		&prizeName,
+		&item.PrizeType,
+		&item.PlanID,
+		&planName,
+		&durationDays,
+		&drawDate,
+		&userIP,
+		&created,
+	)
+	if err != nil {
+		return item, err
+	}
+	item.PrizeType = normalizeLotteryPrizeType(item.PrizeType)
+	item.UserEmail = nullString(userEmail)
+	if item.PrizeType == "thanks" {
+		prizeLabel := "谢谢惠顾"
+		item.PrizeName = &prizeLabel
+	} else {
+		item.PrizeName = nullString(prizeName)
+	}
+	item.PlanName = nullString(planName)
+	if durationDays.Valid {
+		item.DurationDays = int(durationDays.Int64)
+	}
+	item.DrawDate = sqlDateString(drawDate)
+	item.UserIP = nullString(userIP)
+	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
+	return item, nil
+}
+
+func (r *Repository) findLotteryRecordByID(ctx context.Context, id string) (*LotteryRecord, error) {
+	row := r.db.QueryRowContext(ctx, lotteryRecordSelectSQL()+`
+		WHERE subscription_lottery_records.id=?
+		LIMIT 1
+	`, strings.TrimSpace(id))
+	item, err := scanLotteryRecord(row)
+	return &item, err
+}
+
+func lotteryRecordByUserToday(ctx context.Context, tx *database.Tx, userID string) (*LotteryRecord, error) {
+	row := tx.QueryRowContext(ctx, lotteryRecordSelectSQL()+`
+		WHERE subscription_lottery_records.user_id=? AND subscription_lottery_records.draw_date = CURDATE()
+		LIMIT 1
+	`, strings.TrimSpace(userID))
+	item, err := scanLotteryRecord(row)
+	return &item, err
+}
+
+func lotteryRecordSelectSQL() string {
+	return `
+		SELECT subscription_lottery_records.id,
+			subscription_lottery_records.user_id,
+			users.email,
+			subscription_lottery_records.prize_id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_records.prize_type, subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_records.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_lottery_records.draw_date,
+			subscription_lottery_records.user_ip,
+			subscription_lottery_records.created_at
+		FROM subscription_lottery_records
+		LEFT JOIN users ON users.id = subscription_lottery_records.user_id
+		LEFT JOIN subscription_lottery_prizes ON subscription_lottery_prizes.id = subscription_lottery_records.prize_id
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_records.plan_id
+	`
+}
+
+func availableLotteryPrizes(ctx context.Context, tx *database.Tx) ([]LotteryPrize, error) {
+	lockClause := " FOR UPDATE"
+	if database.CurrentDialect() == database.DialectPostgres {
+		lockClause = " FOR UPDATE OF subscription_lottery_prizes"
+	}
+	monthStart, nextMonth, _, _ := lotteryMonthWindow(time.Now())
+	rows, err := tx.QueryContext(ctx, `
+		SELECT subscription_lottery_prizes.id,
+			subscription_lottery_prizes.name,
+			COALESCE(subscription_lottery_prizes.prize_type, 'subscription'),
+			subscription_lottery_prizes.plan_id,
+			subscription_plans.name,
+			subscription_plans.duration_days,
+			subscription_plans.quota_images,
+			subscription_lottery_prizes.weight,
+			subscription_lottery_prizes.daily_stock,
+			COALESCE(today.used, 0),
+			subscription_lottery_prizes.monthly_stock,
+			COALESCE(month_used.used, 0),
+			subscription_lottery_prizes.sort_order,
+			subscription_lottery_prizes.status,
+			subscription_lottery_prizes.created_at,
+			subscription_lottery_prizes.updated_at
+		FROM subscription_lottery_prizes
+		LEFT JOIN subscription_plans ON subscription_plans.id = subscription_lottery_prizes.plan_id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date = CURDATE()
+			GROUP BY prize_id
+		) today ON today.prize_id = subscription_lottery_prizes.id
+		LEFT JOIN (
+			SELECT prize_id, COUNT(*) AS used
+			FROM subscription_lottery_records
+			WHERE draw_date >= ? AND draw_date < ? AND COALESCE(prize_type, 'subscription')='subscription'
+			GROUP BY prize_id
+		) month_used ON month_used.prize_id = subscription_lottery_prizes.id
+		WHERE subscription_lottery_prizes.status='active'
+			AND subscription_lottery_prizes.weight > 0
+			AND COALESCE(subscription_lottery_prizes.prize_type, 'subscription')='subscription'
+			AND subscription_plans.status='active'
+			AND subscription_plans.duration_days > 0
+			AND (subscription_lottery_prizes.monthly_stock <= 0 OR COALESCE(month_used.used, 0) < subscription_lottery_prizes.monthly_stock)
+		ORDER BY subscription_lottery_prizes.sort_order ASC, subscription_lottery_prizes.created_at ASC
+	`+lockClause, monthStart, nextMonth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LotteryPrize{}
+	for rows.Next() {
+		item, err := scanLotteryPrize(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func lotteryMonthDrawCount(ctx context.Context, tx *database.Tx, monthStart string, nextMonth string) (int, error) {
+	var total int
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM subscription_lottery_records
+		WHERE draw_date >= ? AND draw_date < ?
+	`, monthStart, nextMonth).Scan(&total)
+	return total, err
+}
+
+func chooseLotteryPrize(items []LotteryPrize) (LotteryPrize, error) {
+	total := 0
+	for _, item := range items {
+		if item.Weight > 0 {
+			total += item.Weight
+		}
+	}
+	if total <= 0 {
+		return LotteryPrize{}, ErrNoLotteryPrize
+	}
+	value, err := rand.Int(rand.Reader, big.NewInt(int64(total)))
+	if err != nil {
+		return LotteryPrize{}, err
+	}
+	target := int(value.Int64())
+	current := 0
+	for _, item := range items {
+		if item.Weight <= 0 {
+			continue
+		}
+		current += item.Weight
+		if target < current {
+			return item, nil
+		}
+	}
+	return items[len(items)-1], nil
+}
+
+func shouldHitLotteryPrize(items []LotteryPrize, now time.Time, monthDrawCount int) (bool, error) {
+	remaining := 0
+	hasMonthlyLimit := false
+	hasUnlimitedPrize := false
+	for _, item := range items {
+		if item.MonthlyStock <= 0 {
+			hasUnlimitedPrize = true
+			continue
+		}
+		hasMonthlyLimit = true
+		left := item.MonthlyStock - item.MonthUsed
+		if left > 0 {
+			remaining += left
+		}
+	}
+	if !hasMonthlyLimit {
+		return true, nil
+	}
+	if hasUnlimitedPrize {
+		return true, nil
+	}
+	if remaining <= 0 {
+		return false, nil
+	}
+	_, _, daysInMonth, daysRemaining := lotteryMonthWindow(now)
+	if daysInMonth <= 0 {
+		daysInMonth = 30
+	}
+	if daysRemaining <= 0 {
+		daysRemaining = 1
+	}
+	if remaining >= daysRemaining {
+		return true, nil
+	}
+	if monthDrawCount < 0 {
+		monthDrawCount = 0
+	}
+	elapsedDays := daysInMonth - daysRemaining + 1
+	if elapsedDays < 1 {
+		elapsedDays = 1
+	}
+	projectedMonthDraws := daysInMonth
+	if monthDrawCount > 0 {
+		projectedMonthDraws = (monthDrawCount*daysInMonth + elapsedDays - 1) / elapsedDays
+		if projectedMonthDraws < daysInMonth {
+			projectedMonthDraws = daysInMonth
+		}
+	}
+	estimatedRemainingDraws := projectedMonthDraws - monthDrawCount
+	if estimatedRemainingDraws < daysRemaining {
+		estimatedRemainingDraws = daysRemaining
+	}
+	if estimatedRemainingDraws <= remaining {
+		return true, nil
+	}
+	threshold := (remaining*10000 + estimatedRemainingDraws - 1) / estimatedRemainingDraws
+	if threshold > 10000 {
+		threshold = 10000
+	}
+	value, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
+		return false, err
+	}
+	return int(value.Int64()) < threshold, nil
+}
+
+func lotteryMonthWindow(now time.Time) (string, string, int, int) {
+	location := appclock.ConfigureDefault()
+	current := now.In(location)
+	monthStart := time.Date(current.Year(), current.Month(), 1, 0, 0, 0, 0, location)
+	nextMonth := monthStart.AddDate(0, 1, 0)
+	dayStart := time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, location)
+	daysInMonth := int(nextMonth.Sub(monthStart).Hours() / 24)
+	daysRemaining := int(nextMonth.Sub(dayStart).Hours() / 24)
+	if daysRemaining < 1 {
+		daysRemaining = 1
+	}
+	return monthStart.Format("2006-01-02"), nextMonth.Format("2006-01-02"), daysInMonth, daysRemaining
+}
+
+func virtualThanksLotteryPrize() LotteryPrize {
+	return LotteryPrize{
+		ID:        lotteryAutoThanksPrizeID,
+		Name:      "谢谢惠顾",
+		PrizeType: "thanks",
+		Weight:    1,
+		Status:    "active",
+	}
+}
+
+func grantSubscriptionInTx(ctx context.Context, tx *database.Tx, userID string, planID string, durationDays int, now time.Time) error {
+	userID = strings.TrimSpace(userID)
+	planID = strings.TrimSpace(planID)
+	if userID == "" || planID == "" {
+		return sql.ErrNoRows
+	}
+	if durationDays <= 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT duration_days FROM subscription_plans WHERE id=? AND status='active'`, planID).Scan(&durationDays); err != nil {
+			return err
+		}
+	}
+	if durationDays <= 0 {
+		return ErrNoLotteryPrize
+	}
+	baseTime := now
+	var currentExpires sql.NullTime
+	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if currentExpires.Valid && currentExpires.Time.After(now) {
+		baseTime = currentExpires.Time
+	}
+	expiresAt := baseTime.AddDate(0, 0, durationDays)
+	if err == sql.ErrNoRows {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
+			VALUES (?, ?, ?, 'active', ?, ?)
+		`, newOperationID(), userID, planID, now, expiresAt)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET plan_id=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+		WHERE user_id=?
+	`, planID, now, expiresAt, userID)
+	return err
+}
+
+func sqlDateString(value any) string {
+	switch typed := value.(type) {
+	case time.Time:
+		return appclock.DatabaseTime(typed).Format("2006-01-02")
+	case []byte:
+		return string(typed)
+	case string:
+		return typed
+	default:
+		return ""
+	}
 }
 
 func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrder, int, error) {
