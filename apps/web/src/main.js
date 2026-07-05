@@ -1,4 +1,4 @@
-import { RootApp } from './components/rootApp.js?v=20260705-ai-brand-title-v1'
+import { RootApp } from './components/rootApp.js?v=20260705-quota-status-v1'
 
 const app = Vue.createApp(RootApp)
 

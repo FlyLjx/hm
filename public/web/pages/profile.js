@@ -220,7 +220,6 @@ export const ProfilePage = {
         ? Math.min(safeLimit || usedValue, Math.max(0, usedValue))
         : Math.max(0, safeLimit - safeRemaining)
       const usedPercent = safeLimit > 0 ? Math.min(100, Math.round((safeUsed / safeLimit) * 100)) : 0
-      const remainingPercent = safeLimit > 0 ? Math.min(100, Math.round((safeRemaining / safeLimit) * 100)) : 0
       return {
         key: key || label,
         label,
@@ -234,7 +233,7 @@ export const ProfilePage = {
         resetText: resetAt ? formatRecoveryTime(resetAt) : '',
         limitNote: '',
         remainingNote: '',
-        status: safeRemaining <= 0 ? 'danger' : remainingPercent <= 20 ? 'warning' : 'normal',
+        status: safeRemaining <= 0 ? 'danger' : 'normal',
       }
     }
 
@@ -249,7 +248,7 @@ export const ProfilePage = {
           displayRemaining,
           limitNote: limitedByOtherWindow ? `受${limitingRow.label.replace(/额度$/, '')}限制` : '',
           remainingNote: limitedByOtherWindow ? `周期剩余 ${row.remaining} 张` : '',
-          status: displayRemaining <= 0 ? 'danger' : limitedByOtherWindow ? 'warning' : row.status,
+          status: row.remaining <= 0 ? 'danger' : 'normal',
         }
       })
     }
