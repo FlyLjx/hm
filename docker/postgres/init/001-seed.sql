@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict H10KUMteLsbpeRov8nkDtAT4vla7RO4uw0x7hLj3YXC6cpc072GdzhAKWR2c70K
+\restrict v62Lv3YrVWuwkf7g24sTbutecEr2LKc20glWT98cRRRKgkFtSKDOszAnZuUmLG3
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg13+1)
@@ -18,6 +18,8 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+DROP INDEX IF EXISTS public.uq_users_invite_code;
+DROP INDEX IF EXISTS public.idx_users_invite_code;
 DROP INDEX IF EXISTS public.idx_user_subscriptions_user_status;
 DROP INDEX IF EXISTS public.idx_user_subscriptions_plan_id;
 DROP INDEX IF EXISTS public.idx_user_invites_ip_created;
@@ -68,6 +70,7 @@ ALTER TABLE IF EXISTS ONLY public.user_subscriptions DROP CONSTRAINT IF EXISTS u
 ALTER TABLE IF EXISTS ONLY public.user_invites DROP CONSTRAINT IF EXISTS user_invites_pkey;
 ALTER TABLE IF EXISTS ONLY public.user_invites DROP CONSTRAINT IF EXISTS user_invites_invitee_id_key;
 ALTER TABLE IF EXISTS ONLY public.user_email_tokens DROP CONSTRAINT IF EXISTS user_email_tokens_pkey;
+ALTER TABLE IF EXISTS ONLY public.user_credit_ratio_backup DROP CONSTRAINT IF EXISTS user_credit_ratio_backup_pkey;
 ALTER TABLE IF EXISTS ONLY public.user_checkins DROP CONSTRAINT IF EXISTS user_checkins_pkey;
 ALTER TABLE IF EXISTS ONLY public.user_api_keys DROP CONSTRAINT IF EXISTS user_api_keys_pkey;
 ALTER TABLE IF EXISTS ONLY public.user_api_keys DROP CONSTRAINT IF EXISTS user_api_keys_key_hash_key;
@@ -92,6 +95,7 @@ DROP TABLE IF EXISTS public.users;
 DROP TABLE IF EXISTS public.user_subscriptions;
 DROP TABLE IF EXISTS public.user_invites;
 DROP TABLE IF EXISTS public.user_email_tokens;
+DROP TABLE IF EXISTS public.user_credit_ratio_backup;
 DROP TABLE IF EXISTS public.user_checkins;
 DROP TABLE IF EXISTS public.user_api_keys;
 DROP TABLE IF EXISTS public.system_settings;
@@ -178,9 +182,6 @@ CREATE TABLE public.announcements (
 
 
 --
-
-
---
 -- Name: api_providers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -244,7 +245,8 @@ CREATE TABLE public.generation_tasks (
     display_enabled boolean DEFAULT false NOT NULL,
     display_note character varying(500),
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    user_deleted_at timestamp without time zone
 );
 
 
@@ -279,9 +281,6 @@ CREATE TABLE public.oauth_authorization_codes (
 
 
 --
-
-
---
 -- Name: recharge_orders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -299,11 +298,9 @@ CREATE TABLE public.recharge_orders (
     qr_code text,
     paid_at timestamp without time zone,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    recharge_rate numeric(12,4)
 );
-
-
---
 
 
 --
@@ -334,7 +331,6 @@ CREATE TABLE public.subscription_plans (
     description character varying(300),
     amount numeric(12,2) NOT NULL,
     duration_days integer NOT NULL,
-    quota_images integer DEFAULT 100 NOT NULL,
     bonus_credits numeric(12,4) DEFAULT 0.0000 NOT NULL,
     discount_percent numeric(5,2) DEFAULT 0.00 NOT NULL,
     allowed_provider_ids jsonb,
@@ -343,7 +339,10 @@ CREATE TABLE public.subscription_plans (
     sort_order integer DEFAULT 0 NOT NULL,
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    concurrent_limit integer DEFAULT 1 NOT NULL,
+    conversation_limit integer DEFAULT 10 NOT NULL,
+    quota_images integer DEFAULT 100 NOT NULL
 );
 
 
@@ -393,6 +392,20 @@ CREATE TABLE public.user_checkins (
 
 
 --
+-- Name: user_credit_ratio_backup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_credit_ratio_backup (
+    migration_key character varying(120) NOT NULL,
+    user_id character varying(36) NOT NULL,
+    email character varying(120) NOT NULL,
+    credits_before numeric(12,4) NOT NULL,
+    credits_after numeric(12,4) NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: user_email_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -416,7 +429,10 @@ CREATE TABLE public.user_invites (
     invitee_id character varying(36) NOT NULL,
     reward_credits numeric(12,4) NOT NULL,
     invitee_ip character varying(64),
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    reward_type character varying(20) DEFAULT 'credits'::character varying NOT NULL,
+    reward_plan_id character varying(36),
+    reward_label character varying(120)
 );
 
 
@@ -443,15 +459,14 @@ CREATE TABLE public.user_subscriptions (
 CREATE TABLE public.users (
     id character varying(36) NOT NULL,
     email character varying(120) NOT NULL,
-    invited_by character varying(36),
-    invited_ip character varying(64),
     password_hash character varying(255) NOT NULL,
     role character varying(16) DEFAULT 'user'::character varying NOT NULL,
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     email_verified_at timestamp without time zone,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    credits numeric(12,4) DEFAULT 0.0000 NOT NULL
+    credits numeric(12,4) DEFAULT 0.0000 NOT NULL,
+    invite_code character varying(24)
 );
 
 
@@ -459,827 +474,225 @@ CREATE TABLE public.users (
 -- Data for Name: ai_models; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.ai_models (id, provider_id, model_name, display_name, capability, status, created_at, updated_at, price_1k, price_2k, price_4k, append_size_to_prompt, enabled_size_tiers, sort_order, cost_1k, cost_2k, cost_4k, markup_percent, price_change_percent) VALUES ('053369a2-c2ba-446c-9cf8-3dfa49353637', '4e29543e-7b8a-4ee0-bea7-629e2103e287', 'gpt-5-5', 'gpt-5-5', 'chat_image', 'active', '2026-06-20 12:57:42.698201', '2026-06-20 12:57:42.698201', 0.0000, 0.0000, 0.0000, false, '["1k", "2k", "4k"]', 100, 0.0000, 0.0000, 0.0000, 0.00, 0.00);
-INSERT INTO public.ai_models (id, provider_id, model_name, display_name, capability, status, created_at, updated_at, price_1k, price_2k, price_4k, append_size_to_prompt, enabled_size_tiers, sort_order, cost_1k, cost_2k, cost_4k, markup_percent, price_change_percent) VALUES ('1c3a9c87-80be-465d-864b-be4ca3f6f77c', '4e29543e-7b8a-4ee0-bea7-629e2103e287', 'gpt-image-2', 'gpt-image-2', 'chat_image', 'active', '2026-06-20 12:57:42.698646', '2026-06-20 12:57:42.698646', 0.0100, 0.0300, 0.0000, true, '["1k", "2k"]', 100, 0.0000, 0.0000, 0.0000, 0.00, 0.00);
+COPY public.ai_models (id, provider_id, model_name, display_name, capability, status, created_at, updated_at, price_1k, price_2k, price_4k, append_size_to_prompt, enabled_size_tiers, sort_order, cost_1k, cost_2k, cost_4k, markup_percent, price_change_percent) FROM stdin;
+1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	gpt-image-2	gpt-image-2	chat_image	active	2026-06-20 12:57:42.698646	2026-06-20 12:57:42.698646	1.0000	2.0000	0.0000	t	["1k", "2k"]	100	0.0000	0.0000	0.0000	0.00	0.00
+053369a2-c2ba-446c-9cf8-3dfa49353637	4e29543e-7b8a-4ee0-bea7-629e2103e287	gpt-5-5	gpt-5-5	chat_image	active	2026-06-20 12:57:42.698201	2026-06-20 12:57:42.698201	0.0000	0.0000	0.0000	f	["1k", "2k"]	100	0.0000	0.0000	0.0000	0.00	0.00
+\.
 
 
 --
 -- Data for Name: announcement_receipts; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000003', '2026-05-31 19:02:47');
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000009', '2026-06-01 11:10:36');
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000010', '2026-06-01 14:58:02');
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000011', '2026-06-02 11:55:27');
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000013', '2026-06-04 19:59:13');
-INSERT INTO public.announcement_receipts (announcement_id, user_id, signed_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '00000000-0000-4000-8000-000000000015', '2026-05-31 22:41:39');
+COPY public.announcement_receipts (announcement_id, user_id, signed_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: announcement_users; Type: TABLE DATA; Schema: public; Owner: -
 --
 
+COPY public.announcement_users (announcement_id, user_id, created_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: announcements; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.announcements (id, title, content, display_mode, target_type, status, sort_order, created_at, updated_at) VALUES ('36c22265-2207-4cf4-b778-7e07a6ef7064', '关于 AIπ 生图工作台价格调整及订阅月付功能上线的公告', '尊敬的用户：
-      您好！为优化您的创作体验，降低高频创作成本，平台现进行两项重要更新：
-## 一、模型价格优化调整
-    本次已对平台内所有 AI 生图模型的 1K/2K/4K 售价进行调整，调整后价格可登录后台查看对应服务商的最新定价。  
-其中 **AI-PAI 服务商模型响应速度更快、出图效率更高**，推荐您优先选择使用。
-## 二、订阅月付功能正式上线
-    为满足高频创作需求，全新推出月付订阅服务：  
-开通订阅后，即可享受 **1K/2K/4K 尺寸生图额度权益**，按套餐周期使用额度，创作更清晰可控！
----
-    此外，新客户端已全面兼容旧平台数据，您可直接使用原账号登录，开通订阅后即可开始创作。
-
-感谢您的支持，我们将持续为您提供更优质的 AI 生图服务。', 'popup', 'all', 'active', 0, '2026-05-29 01:12:08', '2026-05-31 18:06:22');
-INSERT INTO public.announcements (id, title, content, display_mode, target_type, status, sort_order, created_at, updated_at) VALUES ('6ebcbe3f-d88a-4172-9f4b-6bf67d2979ee', '限时生图激励计划', '# 生图积分激励计划公告
-
-为提升全站创作体验，平台上线「生图积分激励计划」，鼓励用户持续进行生图创作并获得对应价格优惠。
-
-## 活动内容
-- 用户每生成一定数量图片，即可获得对应积分奖励
-- 积分可用于抵扣生图费用或逐步降低单次生成成本（具体规则以页面展示为准）
-- 参与生成越多，可获得的累计优惠越多
-
-## 参与方式
-- 在生图功能中正常进行创作即可自动累计积分
-- 积分与优惠进度将实时记录，可在活动页面查看
-
-## 协同玩法
-- 邀请好友共同参与生图创作，可加速积分获取进度
-- 全站用户共同参与，将一起推动整体激励进度提升
-
-## 活动说明
-- 具体抵扣比例与规则以活动页面实际展示为准
-- 请及时关注站内活动入口，避免错过关键进度与奖励
-
-欢迎全站用户积极参与，通过持续创作获得更多优惠与激励。', 'home', 'all', 'disabled', 0, '2026-06-16 13:29:48', '2026-06-16 20:04:01');
-
-
---
---
-
-
-如果你希望，我可以帮你生成**时尚、优雅的穿搭或人物肖像**风格的图片，比如穿着丝袜的**艺术感时尚造型**，保持美感而不涉及不当内容。你想让我帮你生成这样的版本吗？ / invalid_request_error / content_policy_violation', '2026-06-12 01:02:04');
+COPY public.announcements (id, title, content, display_mode, target_type, status, sort_order, created_at, updated_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: api_providers; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.api_providers (id, name, type, capability, base_url, api_key, status, created_at, updated_at) VALUES ('4e29543e-7b8a-4ee0-bea7-629e2103e287', 'AI-PAI', 'custom', 'chat_image', 'https://free-api.yccc.me', 'sk-po7mOIkK1EygJxMnDZhxzbLcXhSQQmM5', 'active', '2026-05-31 10:56:53', '2026-06-04 18:56:47');
+COPY public.api_providers (id, name, type, capability, base_url, api_key, status, created_at, updated_at) FROM stdin;
+4e29543e-7b8a-4ee0-bea7-629e2103e287	AI-PAI	custom	chat_image	https://free-api.yccc.me	sk-l2ScWghKVZP98nx0eMS4xDPjM2KDtJQ4	active	2026-05-31 10:56:53	2026-06-04 18:56:47
+\.
 
 
 --
 -- Data for Name: credit_logs; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0426780b-d5dd-47a0-ab2f-07eb8e29a6f5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.9750, '图片生成：gpt-image-2', '2026-05-27 16:06:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('04bf2dc2-3d02-4713-a868-43f4502d980e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.0950, '图片生成：gpt-image-2', '2026-05-26 08:51:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('04ceb117-e31c-4aec-a114-6ac2f4251cc4', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 6.5550, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 21:02:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('04fabf12-8c35-4937-97c0-69b91e295bc9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 9.7250, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 16:27:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('05901127-211f-47e2-8006-c37405255a40', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0200, 0.9300, '图片生成：gpt-image-2', '2026-05-30 15:10:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('065e4682-2390-4cdc-a69f-dba18459ecb6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.7610, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 01:00:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('06667aab-837f-4073-998e-737431407a77', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.7700, '图片生成：gpt-image-2', '2026-05-22 17:09:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('075a4b3c-1b51-4921-9220-fc6a4b6a1012', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.1200, '图片生成：gpt-image-2', '2026-05-29 19:32:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0794ae9b-fe7e-44f6-abef-cb5ae0be450e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 99.6900, '图片生成：gpt-image-2', '2026-05-23 16:00:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('07b7f395-52f2-4da6-927a-1dc6e50e7372', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.1000, 98.0250, '每日签到奖励', '2026-05-25 17:39:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('09723aed-bca2-41c6-b324-70420d189606', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8810, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:28:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0a14c26f-dea3-4180-b924-a16c329cb344', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.8500, '图片生成：gpt-image-2', '2026-05-24 14:39:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0b857db3-58a3-4eb7-8d62-5deb8dc0cdaf', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.1350, '图片生成：gpt-image-2', '2026-05-27 15:51:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0b9c4696-75aa-4651-83f9-a1a84b3cb1b9', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 12:00:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0bbae0c4-28a8-4b87-b09b-a65ff7c455c0', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1000, 19.9000, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 19:35:19');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0c252e8d-6ca3-4567-95eb-5453ac228786', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.0900, '图片生成：gpt-image-2', '2026-05-24 14:36:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0c272317-1439-4cf2-89c9-5f7d488e082e', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.0000, '图片生成：gpt-image-2', '2026-05-29 19:35:37');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0c7163a1-6944-49fd-b2fa-ca1fa34e61cf', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.0900, '图片生成：gpt-image-2', '2026-05-31 14:25:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0cbc01f2-6d0d-4ca9-9598-d0e08203876a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 99.1700, '图片生成：gpt-image-2', '2026-05-24 14:29:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0d882268-b53a-491d-bb7c-ee7cd88e4b79', '00000000-0000-4000-8000-000000000005', 'recharge', 201.4500, 201.4500, '旧系统用户余额迁移（旧ID: 5，用户名: 18867302237）', '2026-05-16 01:36:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0e6269c5-645a-4803-b8de-2f8c1d7d3ba5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 99.6900, '图片生成：gpt-image-2', '2026-05-23 16:02:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0ee394ca-927d-4a8b-80a6-36066a22bcf8', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 101.5300, '图片生成：gpt-image-2', '2026-05-28 21:58:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0f3293ae-194e-4696-960f-3a2dac9958d4', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 6.8650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:38:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('0f9104d2-0241-4931-bf60-e69461b1ff7e', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:58:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('10827668-c5de-4ce1-a9ad-a2c92e140279', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 23:30:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('10b42489-9e3c-4346-acda-400fc9ed7fe3', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.5600, '图片生成：gpt-image-2', '2026-05-29 11:02:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('113f31d4-8daa-489a-a001-1ee2199025ac', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:24:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('116feaa0-5c1d-44ae-aff6-8b93bd4a4369', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.5900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 15:35:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('11c94ab2-64be-4a6c-9635-7a3f1fcf0b6e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.1310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 11:07:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('11f5670a-420b-4f34-95b5-ef9df2fe8dcd', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.5700, '图片生成：gpt-image-2', '2026-05-29 10:17:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('12923590-d65b-425f-a8e6-749526fd0d1e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.8900, '图片生成：gpt-image-2', '2026-05-24 15:12:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('131f5828-5c32-410b-8cd9-cf5046785acb', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:30:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('133725e6-aa6a-4e24-ad14-3fdfb9b52424', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.5300, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 20:56:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('13b4aa05-b60f-44e7-83d2-ec52ca823352', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.7510, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 01:01:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('148fcf07-5333-49f4-bea3-06a3a5c47546', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.5700, '图片生成：gpt-image-2', '2026-05-24 15:00:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('168e44ee-99de-43b3-91e9-1bab59832919', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.8900, '图片生成：gpt-image-2', '2026-05-29 11:56:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('17215053-5893-4eaf-a2b5-123d7ef7092c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.3700, '图片生成：gpt-image-2', '2026-05-24 15:03:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('173a70b4-70c6-4ad4-ace4-0f851076bd73', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:57:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1754540d-ddb7-4f70-acb0-21108db7fecb', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 100.1900, '图片生成：gpt-image-2', '2026-05-23 11:42:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('17b8acc4-752d-41a3-b50c-847f2c52565e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.4000, 98.3250, '每日签到奖励', '2026-05-25 17:46:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('17cb5f22-3679-479f-9e01-68c6d1173cbf', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.4100, '图片生成：gpt-image-2', '2026-05-30 20:52:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('185e87e3-15ea-45d6-a0a7-306469a8a91b', '00000000-0000-4000-8000-000000000015', 'deduct', 0.1050, 0.3675, '图片生成：firefly-nano-banana-pro', '2026-06-03 16:42:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('18f20b55-23f4-4d87-bca9-f63bc7b29131', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 69.8000, '邀请奖励：277721351@qq.om', '2026-06-02 08:18:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1a9454fb-ce3d-49db-b88e-97d07be70ea8', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.7200, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 18:17:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1bd294e4-c395-48a5-a095-68c1316e5c20', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:41:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1eb103f4-ea6e-472e-81dd-d79f3347868c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0525, 97.3375, '图片生成：firefly-gpt-image', '2026-05-24 19:58:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1ef579eb-36e4-40da-813d-2cd5b9d1b22d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.9110, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:25:37');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('1f114e9f-edc0-496b-8e4e-31f02ca730b5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.5300, '图片生成：gpt-image-2', '2026-05-24 15:46:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('20c32e88-7a29-40e4-ae9c-8fc0393ca239', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0000, 7.2700, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 11:57:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('21b8c209-fda8-4bc8-b1c7-3acd9c1d092d', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 08:49:23');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('21f8e293-ba92-4e8f-ae86-5dcb42d0c6a1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.9950, '图片生成：gpt-image-2(AI-PAI)', '2026-06-07 10:14:53');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2232c8f3-90c6-4319-baae-d26bf509ae1e', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:44:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2233ef05-eae9-400a-bbef-382347739f34', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.3000, 97.4700, '每日签到奖励', '2026-05-24 19:43:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('22af6d9e-e882-4060-978f-23873fd89573', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:04:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('22cfaef1-6682-4967-80fb-2f8e6a58e23d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.2900, '图片生成：gpt-image-2', '2026-05-24 15:53:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('22defbb3-4211-446c-a043-81dac681d053', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.5650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 15:13:41');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2384b766-0e7e-43e3-a672-9c2477a54425', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:03:09');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2419ced2-0b56-4b57-be9d-0dde16996415', '00000000-0000-4000-8000-000000000015', 'deduct', 0.2100, 0.9500, '图片生成：firefly-gpt-image', '2026-05-30 14:57:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2494de6c-ba20-4463-8584-40989fe40cd2', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 104.2950, '图片生成：gpt-image-2', '2026-05-28 11:21:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2557238a-28d8-45b3-b1d7-6a66da1dcafe', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0100, 0.8700, '图片生成：gpt-image-2', '2026-05-30 16:08:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('25fb6976-cf20-4751-85dd-95bb67616ce0', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.0950, '图片生成：gpt-image-2(AI-PAI)', '2026-06-07 02:30:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2606dc56-2d14-4528-bb9a-0aed3fee5215', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 11:18:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('268c0894-720c-4e79-a29c-8c227f814fe9', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 11:54:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('26b205ce-a6ef-4d3d-8295-075f8db0e387', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.7300, '图片生成：gpt-image-2', '2026-05-29 12:41:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('26d69e86-3ee4-4cb2-b472-47867d4afa99', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.5700, '图片生成：gpt-image-2', '2026-05-31 10:14:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2707f8e0-e580-42ad-b3a2-862b29a55446', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:43:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('277cd0b2-4e24-4dc3-a001-7c7154de3654', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.5150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-09 23:02:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('27b6223b-40a2-4f91-bf62-4a4bfc0707df', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.1150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:24:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('28f57678-fb65-4b6d-a3c4-9c7b20da0a93', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.7650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 11:52:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('290d8246-ef7f-4f28-8f95-dd76dee61760', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.6650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 14:57:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('29703ca2-73c9-4ddb-a785-a32540f819fd', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.7500, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:50:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('29968110-1445-4b82-bc90-4c62fe63527b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.5300, '图片生成：gpt-image-2', '2026-05-22 20:14:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2a2c88cd-3cfd-4b9a-9c4f-3dba99d77a2e', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:06:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2b45fc89-c01e-4436-959d-462ea2e513b7', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 1.0000, 97.9250, '删除签到记录扣回奖励', '2026-05-25 17:39:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2b8c8b0b-480a-429a-a489-4ab46287be2c', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0800, 102.1200, '图片生成：gpt-image-2', '2026-05-30 23:10:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2c8a3170-2547-400b-942c-d5d9c47f3381', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0525, 0.5250, '图片生成：firefly-nano-banana', '2026-06-03 16:24:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2cfd9f00-3b5c-47cf-9af6-b5a637767ab3', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 6.9650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:36:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2dab9f29-26e3-4b08-94e8-524a2208a3b9', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 08:45:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2ee387be-8e2a-47c9-822c-eb82cf69cc1a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.4000, 97.9250, '删除签到记录扣回奖励', '2026-05-25 17:47:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('2febac79-cfee-49a7-8c8d-e5f586a6bdd5', '00000000-0000-4000-8000-000000000011', 'recharge', 0.5500, 7.3500, '每日签到奖励', '2026-05-31 13:33:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('30164511-f5e3-4184-82f2-7d72f3d060ff', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.0500, 97.9750, '每日签到奖励', '2026-05-25 23:00:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('305a74f7-a94a-4d1d-9128-fa00bbbb8769', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 1.0000, 5.4550, '图片生成：gpt-image-2（2线）', '2026-06-12 22:12:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('30b134c8-2732-4b9e-ab1a-155ae80a4be9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 1.0000, 105.1750, '支付宝充值 1.00 元', '2026-05-25 23:14:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('30f4d787-1632-49a1-b792-93b99e1b914f', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 104.4150, '图片生成：gpt-image-2', '2026-05-28 11:12:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3103e4b4-7dfb-45d3-b6da-0557eec7f0bd', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.7800, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:29:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('31727ce5-ee2e-431c-be35-c9b883228571', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9100, '图片生成：gpt-image-2', '2026-05-31 11:08:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('318574c8-b4e9-4403-8217-bdd4ec0ecf04', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.4500, 1.2810, '图片生成：gpt-image-2(AI-PAI) / 生图激励计划 / 活动折扣', '2026-06-16 12:53:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('32eafc7a-86b4-4b35-b57f-b4581b321796', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.5650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-09 16:52:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3433c84f-23de-4997-8b57-b26a031bee6f', '00000000-0000-4000-8000-000000000005', 'deduct', 190.4500, 11.0000, '后台额度调整', '2026-05-31 17:45:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3461954d-f383-4e26-baaf-bde74ba54094', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 97.9250, '删除签到记录扣回奖励', '2026-05-25 17:39:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3560b8e3-2843-4d87-97fb-9318562d72c5', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.4900, '图片生成：gpt-image-2', '2026-05-30 20:27:38');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3645bdec-19d6-42f5-947e-e8499523bcff', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 11:35:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('36748fb6-ac60-4fe5-9848-522be0631b5b', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 10:16:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('379a0c7b-936b-4f90-bd81-de9f05cc6a91', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9300, '图片生成：gpt-image-2', '2026-05-31 10:49:29');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('38da4fb5-99c9-4e5c-a4ba-2e2d768a59f6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8710, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:29:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('38e24105-8915-49eb-b434-ff2729fcfd59', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0400, 102.0800, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 12:09:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('396f2e67-4856-4d28-b8f1-d90681e24afc', '00000000-0000-4000-8000-000000000010', 'recharge', 8.8100, 8.8100, '旧系统用户余额迁移（旧ID: 10，用户名: 2190889075@qq.com）', '2026-05-18 01:13:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3a93b0d8-d00e-4100-a55d-6582de014725', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 24.8000, '邀请奖励：123@qq.com', '2026-06-01 17:32:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3ac2bf0b-e56e-4349-a0bc-8006c6618be8', '00000000-0000-4000-8000-000000000007', 'recharge', 1.2000, 1.2000, '旧系统用户余额迁移（旧ID: 7，用户名: Jack）', '2026-05-17 07:25:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3b506b2e-fa2c-462c-b896-fa07c4e8ab0c', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.1700, '图片生成：gpt-image-2', '2026-05-31 11:17:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3b769201-9994-481e-bc9e-ffd937f68235', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0000, 7.2700, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 12:03:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3bdee9ee-b16b-4176-a23a-5947131e67a8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 8.1650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 00:49:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3be26b3f-369d-404c-a8f8-0c599fced600', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.0550, '图片生成：gpt-image-2', '2026-05-27 16:00:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3c258c67-a17f-4264-9811-332773a57e65', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.8500, '图片生成：gpt-image-2', '2026-05-31 15:41:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3c852ba2-b6c2-4049-84f2-82c330a9df4c', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 17:29:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3c8a490d-f0d6-410b-847d-4329492cc2b8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.6900, '图片生成：gpt-image-2', '2026-05-24 14:54:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3dc99524-50d0-4fbf-b08d-1384ca97177c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 6.6950, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 15:06:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3debcb74-fb90-4d5e-a31d-ee15a22eb872', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0875, 0.2800, '图片生成：firefly-nano-banana2', '2026-06-03 16:45:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3ebbfe87-1486-4c88-9419-0d7d9ece2607', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.1810, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 10:58:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('3f1d01e5-5b8d-4cf2-850b-a51b80c21625', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0300, 8.9150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 11:30:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4242b0ed-5cba-486c-aa49-fbc158fb74e6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.7710, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:50:09');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('424c479a-6d06-4115-9bc3-5e166d1827be', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.2950, '图片生成：gpt-image-2', '2026-05-27 15:43:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('42887614-f3a3-4932-a25e-f4745690e4c1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 1.0000, 2.4550, '图片生成：gpt-image-2（2线）', '2026-06-12 22:29:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('440d0e91-f82e-4bac-8cb4-b830f56b368a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 100.1400, '图片生成：gpt-image-2', '2026-05-23 12:04:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('44dcf912-ed7f-4232-b6ba-2db2ee7c9937', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.7150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 14:56:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('44f7a672-a9ad-4194-838c-aab25649b390', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.3900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 17:10:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4572b9f6-f6b2-40cc-bd54-37a79d4f65b2', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:55:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4585dd4b-d145-4300-9534-8a51f187fbb8', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0400, 7.3100, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 13:35:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('463aa8ec-2703-49e4-9e78-f026b3d61777', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.0810, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 11:13:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('47f77f43-e7a3-4d5e-9a39-87bcaef25dd5', '00000000-0000-4000-8000-000000000004', 'recharge', 0.1000, 0.1000, '旧系统用户余额迁移（旧ID: 4，用户名: a97493280）', '2026-05-14 14:06:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('48393a87-9e63-40b9-a6c4-55f0043d3a54', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0000, 54.8000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:55:23');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4ac3d81c-b247-4c7b-8b82-0b7871158d24', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:07:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4af2b839-3f10-4a15-8c13-7da4964c35c9', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.3800, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:00:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4cacf87f-3842-43a4-a53d-de8d29d4c8b8', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.5400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 15:37:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4ce02ca7-2cd4-4985-b289-3079157bee24', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.4900, '图片生成：gpt-image-2', '2026-05-31 10:16:23');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4e1b492e-bc60-4524-956f-5b9c4fb1b580', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 35.7400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:17:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4f2d484b-680a-4820-bba2-51c026f4e5fb', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.2500, 98.1750, '每日签到奖励', '2026-05-25 22:52:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4f687479-fdd1-4f54-8ac4-96dc57ee766f', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.1700, '图片生成：gpt-image-2', '2026-05-31 10:45:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4f96341b-f530-42be-bd57-0ffb5d659bad', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 11:30:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('4fc13665-60c0-472c-8c58-11487eb86e01', '00000000-0000-4000-8000-000000000006', 'recharge', 0.9000, 0.9000, '旧系统用户余额迁移（旧ID: 6，用户名: 123）', '2026-05-16 11:44:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('505d0d44-aa9a-4b26-8dfe-266bed784b4d', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9000, '图片生成：gpt-image-2', '2026-05-31 14:19:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('50b2b76f-6f59-498a-806a-409b7bb8e6f9', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 19:21:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('50e78b91-0e77-46bc-a2f5-a6bd67ea11e5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 6.4550, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 21:36:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('537f256e-cf33-4c03-9289-b3d2acec75e1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.0150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 01:11:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('538df856-9483-4a5d-9e08-2ba44daa2aae', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.7500, '图片生成：gpt-image-2', '2026-05-30 20:41:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('548289d5-e572-4715-888e-2e0ce52c40e5', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 11:48:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('55a5553d-43b5-4453-b6e7-979b81e04f16', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 35.6400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 09:28:41');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('55af3201-58e7-4942-9e1c-37b88a1a589e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 100.0000, 100.0000, '后台充值', '2026-05-22 17:07:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('56fad44a-6502-4975-84a6-a89aa885691c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.3150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-11 11:48:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('57074a07-3cbe-4653-8fa2-c98bb51d8216', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.9010, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:26:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('573593dc-08d3-4885-b1a0-d9374ee92f54', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1000, 19.8000, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 19:37:40');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('573997af-edc4-4b10-917c-da9329899474', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 101.6500, '图片生成：gpt-image-2', '2026-05-28 21:24:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('58b8a9c6-e612-4b15-9269-5055b5bdcc85', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1500, 8.2650, '图片生成：gpt-image-2', '2026-06-09 23:07:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('596bc534-faea-4270-969f-ba4c08c5978b', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 08:47:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('599d4f0d-3461-457a-8a7c-78c06afed772', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 104.5350, '图片生成：gpt-image-2', '2026-05-28 11:11:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('59b0fd45-e68a-45f9-b0d7-3f0d251d99be', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8610, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:29:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5a8f4b6e-1e67-4988-b05f-32d0e0e2226e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.2700, 1.0110, '图片生成：gpt-image-2(AI-PAI) / 生图激励计划 / 活动折扣', '2026-06-16 13:18:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5b45170c-51af-4cd9-a5da-120cac315946', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.9350, '图片生成：gpt-image-2', '2026-05-26 09:57:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5b7a84f1-8bcd-4113-95b5-8380e05109ac', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.4700, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 16:21:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5b94eca6-b5d5-4ad5-92cc-aa156bd77620', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.2500, 98.1750, '每日签到奖励', '2026-05-25 23:01:02');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5c61dce5-ed6a-43a8-a13f-66009d0df3cc', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 49.8000, '邀请奖励：2414206462@qq.com', '2026-06-01 17:50:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5cbbe0dc-ce9b-478d-9daf-11b0c40e00b3', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 6.8150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:40:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5cc056cf-7eb0-4365-b973-ab43956703fa', '00000000-0000-4000-8000-000000000003', 'recharge', 100.0000, 100.0000, '旧系统用户余额迁移（旧ID: 3，用户名: sk）', '2026-05-12 03:51:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5d18f040-8b9e-4cb2-8b91-e3993312185d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.6150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-09 16:49:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5d53ccb8-73cf-4bff-913a-2f5a5f498eea', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 99.3700, '图片生成：gpt-image-2', '2026-05-24 14:24:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5e5d78c2-4975-443c-8e0d-68821be7349f', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 7.7700, '图片生成：gpt-image-2', '2026-05-31 12:39:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5e5eb8c7-be08-4323-9c40-f1fe06ec7d90', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 00:33:41');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5f12e399-0d7b-4628-8c10-24e33b337249', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 104.1700, 0.0050, '后台额度调整', '2026-05-31 17:45:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('5ff74fa8-ff0d-4a3c-a986-586469294bc5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.9700, '图片生成：gpt-image-2', '2026-05-24 14:36:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('605065de-bdc6-4e0f-864f-94089c526bca', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.5000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 16:19:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('6191abca-1f78-4b69-b54f-80362af15568', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0000, 7.2700, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 12:50:41');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('620a0e56-04ec-49c1-8934-c85d55e373ff', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.4750, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 17:20:38');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('622a030e-931b-4e9c-97ea-fe8d37714438', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 44.8000, '邀请奖励：756477101@qq.com', '2026-06-01 17:42:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('62d0a8a7-ac67-4496-98d3-2b133585d22a', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.4100, '图片生成：gpt-image-2', '2026-05-31 10:18:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('63a06443-486d-4e73-919b-5aa8f278b762', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 8.4150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-09 23:03:37');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('64bd2fbd-2da8-414e-affb-deb61d4ee3f4', '00000000-0000-4000-8000-000000000002', 'recharge', 99999.0000, 99999.0000, '旧系统用户余额迁移（旧ID: 2，用户名: myuser）', '2026-05-11 12:42:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('64f0b175-e492-423d-833c-0e625166c448', '17b4c1c1-079e-4639-92d4-e76233f13de4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 17:45:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('64f42814-c7a1-4742-a02c-2851bd424a40', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.7650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 14:53:23');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('652c4e65-6ad9-401e-a0cb-295a8be900f9', '00000000-0000-4000-8000-000000000001', 'deduct', 994.0100, 0.0000, '后台额度调整', '2026-05-31 17:44:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('654f3012-7048-46ab-a35e-a2251357270b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8510, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:40:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('656850ed-4e54-4e41-a45c-b3d588128ef6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.8950, '图片生成：gpt-image-2', '2026-05-27 16:10:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('65d0f7e5-16b1-4fc2-94c8-0101e2b8993e', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 101.8800, '图片生成：gpt-image-2', '2026-05-29 19:42:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('66521619-525a-4421-b24b-a6bc8ced0514', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.6700, '图片生成：gpt-image-2', '2026-05-29 10:12:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('66d71703-80ec-4813-9df5-37ff8ccac004', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.6100, '图片生成：gpt-image-2', '2026-05-22 19:33:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('66e159ee-16e4-41bb-b404-9b12f3cc8493', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.9000, '图片生成：gpt-image-2', '2026-05-23 13:55:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('66e7eded-1db9-41a3-b455-3bea3ea61135', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 97.9250, '删除签到记录扣回奖励', '2026-05-25 23:00:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('677639da-7f35-4e51-a0f2-b928d56bcfc8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0080, 2.3970, '图片生成：gpt-image-2-API', '2026-06-13 14:08:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('6a6fe367-0882-43af-ab6d-5333f94d3a6d', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 101.8900, '图片生成：gpt-image-2', '2026-05-28 21:18:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('6d0fcf90-6869-4704-ab99-0b97ea1b89e1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.6150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 15:11:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('6f559a15-ae15-441b-af0a-786f82070054', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.5700, '图片生成：gpt-image-2', '2026-05-29 22:29:57');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('6fb5bac6-53d2-4f03-a5d0-182280042dd1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.2500, 105.0250, '每日签到奖励', '2026-05-26 17:47:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('70194421-0527-4424-8676-26d40665e304', '00000000-0000-4000-8000-000000000009', 'recharge', 0.3000, 36.0400, '每日签到奖励', '2026-05-31 09:24:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('70202c9c-1685-44e4-a70d-ec101c374ef9', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.3600, '图片生成：gpt-image-2', '2026-05-29 10:53:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('712dbd1d-52e6-415d-b763-bf7ac6a1fc95', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0080, 2.3890, '图片生成：gpt-image-2-API', '2026-06-13 15:39:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('713d0d30-9299-425c-be8f-0cff3c42877b', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.4400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 17:05:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('719823e1-21ba-40dc-90c1-8ade5a8e6de1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.0150, '图片生成：gpt-image-2', '2026-05-26 09:54:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('719abc4b-b93b-4b8e-861c-e1fadfbc5c0f', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 104.1750, '图片生成：gpt-image-2', '2026-05-28 11:26:47');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('71a6b592-aa2a-46ab-aaeb-bd633606d5c8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 1.0000, 3.4550, '图片生成：gpt-image-2（2线）', '2026-06-12 22:24:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('71b7bbce-0238-4e3f-b7b5-4fac3f2130e4', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.6550, '图片生成：gpt-image-2', '2026-05-27 16:22:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7263ce32-abe6-4bac-9f56-19ba23addbf7', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 7.6650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 11:54:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('728c3aca-e448-44dd-8350-52c4be7c54fd', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.4400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 17:58:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('72a71882-4567-49b9-b8df-e045b19cea81', '00000000-0000-4000-8000-000000000010', 'recharge', 0.4000, 8.9700, '每日签到奖励', '2026-05-29 11:52:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('734be0d9-a6c4-4be2-8201-e7eabc87bd9a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.7750, '图片生成：gpt-image-2', '2026-05-26 17:46:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('74417141-f552-4d16-a972-4c6e2d88c033', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0500, 79.7500, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 15:56:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('74a58a2e-ef5a-43a1-bd79-86edf3719b41', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.9550, '图片生成：gpt-image-2(AI-PAI)', '2026-06-04 19:02:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('75dc6423-c529-44c0-a019-494ffc9abbf9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.4000, 105.3750, '每日签到奖励', '2026-05-27 13:53:34');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('768b3e19-f0a9-41a5-8d96-a60212c41802', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0500, 102.4800, '图片生成：gpt-image-2', '2026-05-28 23:29:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('77d4b77f-b36b-4e51-b34f-fbde8a354495', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 99.8800, '图片生成：gpt-image-2', '2026-05-28 13:39:53');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('77d94b04-a1fc-461f-9a7f-84cd5d9eee33', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9500, '图片生成：gpt-image-2', '2026-05-31 09:27:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7835266d-759e-48d8-94ff-2e49a7481227', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.8250, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 16:27:29');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('787df5a9-f819-436a-a864-72dd0153bd45', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.3310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 10:08:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('78c81197-b312-4f22-81a0-e723f2e6bf0c', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.0100, '图片生成：gpt-image-2', '2026-05-31 11:43:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7a5d7176-bc55-4b3f-90b8-63e0830e9755', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 74.8000, '邀请奖励：564153549@qq.com', '2026-06-02 08:57:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7c7906f0-6460-45fb-9eca-d8ad61afce32', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 100.2400, '图片生成：gpt-image-2', '2026-05-23 11:28:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7d7e6c83-1aab-48ad-a859-0a979225500a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 6.8050, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 14:14:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('7f8c673b-6d91-49a2-a9a6-4ca34e112a27', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 19:01:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('803d5804-273a-4264-837a-1dbed524cafc', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.6500, '图片生成：gpt-image-2', '2026-05-29 11:12:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('80cd12d4-b9c1-4d6e-a197-780416ed6fad', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 11:38:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('82759950-f780-43a3-8b0a-486ff2e71bec', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0300, 7.1500, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 18:17:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('829759f6-a8a0-40c4-82f3-05c8e06ad05e', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.6500, '图片生成：gpt-image-2', '2026-05-31 10:13:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('837caf48-ccd6-4633-ba41-0f787a0931bb', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 34.6700, '图片生成：gpt-image-2', '2026-06-03 18:20:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('83dbf506-c284-4bcd-803f-c699ec29f67b', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:03:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('840d958a-ce99-40f9-8368-4a032a20931a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.2500, '图片生成：gpt-image-2', '2026-05-24 15:03:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('84b6a719-758f-44c5-b49c-f7426dea6c40', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 6.6850, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 15:44:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('86ac5143-8479-4020-a915-9368fbdf7801', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0525, 98.2850, '图片生成：firefly-gpt-image', '2026-05-24 20:08:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('86c6b5c1-60b1-4198-b2ac-dfe59fde0765', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0800, 35.5900, '图片生成：gpt-image-2', '2026-05-29 10:13:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8780be15-e4b2-4d57-b241-9386c2d330a7', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.3300, '图片生成：gpt-image-2', '2026-05-31 10:21:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('87873563-f4e2-4272-a48b-3913a73f8453', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 7.6900, '图片生成：gpt-image-2', '2026-05-31 15:20:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('87a7b1d9-765c-4474-bf36-9c969a6529a2', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.2500, 97.9250, '删除签到记录扣回奖励', '2026-05-25 22:58:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('882f2aa8-d61e-456f-8e92-496ac5e5063c', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:12:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('88606e91-d06b-4da1-ad3f-e10e9d024dc2', '00000000-0000-4000-8000-000000000008', 'recharge', 12.5000, 12.5000, '旧系统用户余额迁移（旧ID: 8，用户名: q528371990）', '2026-05-17 07:26:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('88eea29d-328e-45f2-a027-28b5840f4150', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 64.8000, '邀请奖励：51799096@qq.com', '2026-06-01 18:58:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('891da529-e49b-49a3-89f2-2e51d83d92fa', 'd6803fbb-2ffa-45be-b131-f1a6b6bed0ca', 'recharge', 2.0000, 2.0000, '支付宝充值 2.00 元', '2026-06-04 08:10:37');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('89375368-d148-4df2-9755-31f8ae2a568b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.5000, 97.9250, '删除签到记录扣回奖励', '2026-05-25 17:46:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('896ab5f4-009a-4472-85f7-72c3b7d5501d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 8.9150, 'API 聊天调用：gpt-5-5', '2026-06-08 11:32:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8a0c4370-ca3a-4329-8a20-adab67c13727', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 1.0000, 98.3375, '卡密兑换：AI-KD6TEI-A6G1VR', '2026-05-24 20:07:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8af74452-f23d-4f55-8bfa-7b0f66609738', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.5000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 20:59:57');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8b34b0c5-f4f9-4727-bf01-f79eb7e1b5ef', '00000000-0000-4000-8000-000000000009', 'recharge', 0.5500, 35.6800, '每日签到奖励', '2026-05-29 10:09:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8bd63605-dfc8-4650-8619-c6f1f32d5d2a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 7.9150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 11:41:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8bdd7622-9283-402a-880b-49453c158f33', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 09:08:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8cceb9e8-d0a8-4358-8a21-200bc29085d0', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0000, 49.8000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:51:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8d1dc077-16e3-496e-89de-aad360f88627', '00000000-0000-4000-8000-000000000003', 'recharge', 1.0000, 100.8800, '支付宝充值 1.00 元', '2026-05-28 13:42:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('8da13e7b-1df0-42ae-be96-750167ea3c24', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.6700, '图片生成：gpt-image-2', '2026-05-30 20:48:19');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('909e1074-f446-45e3-9ed2-67dbc4cffd17', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.5400, '图片生成：gpt-image-2', '2026-05-29 17:00:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('90f3ff09-248a-4f98-a521-fc9f8d791154', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.2150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 01:07:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('928ff5f2-00b1-48d1-9791-edb546c4c328', '00000000-0000-4000-8000-000000000003', 'recharge', 0.4000, 102.2800, '每日签到奖励', '2026-05-29 21:04:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('93ca9586-7896-4b9e-81f2-580f073e3707', '00000000-0000-4000-8000-000000000011', 'recharge', 6.5000, 6.5000, '旧系统用户余额迁移（旧ID: 11，用户名: qq1208641763）', '2026-05-18 11:24:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9408ff40-f042-4a7e-893d-8d276e2ccbb7', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 23:05:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('941a7e74-5e33-4065-960b-32d874cf5a36', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.8150, '图片生成：gpt-image-2', '2026-05-27 16:14:23');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9576c982-0e8c-4057-9ac9-e31a9c9a95e5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.7350, '图片生成：gpt-image-2', '2026-05-27 16:20:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9638b6ef-c1af-4b03-b1dd-7a9af55dcfc7', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 54.8000, '邀请奖励：963643930@qq.com', '2026-06-01 17:54:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('965630da-5cf7-4d4a-8024-890376c7b348', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 99.6900, '图片生成：gpt-image-2', '2026-05-23 15:29:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('96e54415-18cd-4bcc-b9c8-c0d47d59863b', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.7900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 16:13:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9722c23a-ebeb-4ae2-981c-43fc9bf6a4b2', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 1.0000, 104.1750, '支付宝充值 1.00 元', '2026-05-25 23:10:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('97b86539-28d7-40a4-930f-a4d765deaff1', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0500, 102.3000, '图片生成：gpt-image-2', '2026-05-28 14:37:43');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('97e49f76-f6c4-40cf-9d83-cbb838c9fb49', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.0310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 20:57:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('98163387-215d-4922-8be8-57a04b63a3bb', '00000000-0000-4000-8000-000000000011', 'recharge', 0.3000, 6.8000, '每日签到奖励', '2026-05-29 01:19:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('983e24de-9050-4681-a476-0d2edad106a4', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.1700, '图片生成：gpt-image-2', '2026-05-24 15:56:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('98790cc3-049d-4de4-88ed-8e6604917b3e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.0150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:28:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('99260671-bb2f-4120-a20e-d1c8605263d5', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:42:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9936e571-5e61-4c2c-b668-c2d3fb188dd8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.7700, '图片生成：gpt-image-2', '2026-05-23 14:36:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('99491d8b-dc26-4258-93de-18c533fbd339', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:52:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('995f3cd4-a204-493d-bcab-1d38a1d29a85', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.2400, '图片生成：gpt-image-2', '2026-05-29 19:29:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('999d71db-9d84-4afe-a024-a5ff51f1a62c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 5.0000, 103.1750, '邀请奖励：48686@qq.com', '2026-05-25 23:06:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('99e21ba2-f873-44e3-a2a7-58315c8f987e', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 11:49:09');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9a3fae6b-6df2-44ab-be4e-f04e486a1f6d', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0600, 0.8100, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:44:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9ac0c193-8e76-4258-85bd-cb82a1408e8b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.1650, '图片生成：gpt-image-2', '2026-05-24 20:12:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9ad08361-3f87-4c99-b7e4-e8fcacb75735', '00000000-0000-4000-8000-000000000009', 'recharge', 35.1300, 35.1300, '旧系统用户余额迁移（旧ID: 9，用户名: 514691511）', '2026-05-17 10:28:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9b6dc016-fff8-443d-8821-6874c0ed9c75', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0400, 0.9710, '图片生成：gpt-image-2(AI-PAI) / 生图激励计划 / 活动折扣', '2026-06-16 16:28:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9c50a3aa-140a-4f65-8267-5b57fa1f0fff', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 7.9300, '图片生成：gpt-image-2', '2026-05-31 12:20:40');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9cd74bf2-8fea-4d26-94a8-c546fd9936c2', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0200, 0.8800, '图片生成：gpt-image-2', '2026-05-30 15:49:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9d07a7d1-ea50-4aea-bd76-d42f487a3c44', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.6900, '图片生成：gpt-image-2', '2026-05-23 14:44:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9de66dff-9ba1-4841-be2c-8e3013785d61', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0500, 102.2500, '图片生成：gpt-image-2', '2026-05-28 14:40:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9e331e89-5f09-4700-b49e-5aa18654f349', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.9210, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:16:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9e4fc572-30ea-4171-a9fc-a3f48013547d', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0300, 7.2400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 10:47:53');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('9fe367e9-4b82-4da2-acdb-e805f89a0571', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 11:42:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a006591c-f89f-4332-bcf8-8c7ede13d75b', '00000000-0000-4000-8000-000000000015', 'recharge', 0.3000, 1.2000, '每日签到奖励', '2026-05-30 00:15:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a1351a85-cf9c-4b8b-bca0-47a1009a969a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.2250, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 17:50:29');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a13e32bc-b5e9-4240-9638-d5428406c354', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:45:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a18ac615-c8a3-4a7d-8b67-4a1661e1107d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 6.9150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:37:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a1de89b7-7064-4036-8ffa-6797561d6766', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.0050, '图片生成：gpt-image-2', '2026-05-25 16:22:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a3216edf-c4a1-4651-87e3-fdc4b0b3e1c5', '00000000-0000-4000-8000-000000000013', 'recharge', 4.4100, 4.4100, '旧系统用户余额迁移（旧ID: 13，用户名: GYY1）', '2026-05-20 12:32:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a39080b3-d755-449a-bce2-81d8faf39184', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.5000, 98.4250, '每日签到奖励', '2026-05-25 17:39:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a3962e61-5fc9-4755-8eed-b80129f13571', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 6.7950, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 14:33:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a3b51f32-b8e7-4223-9e12-ef738e9b8259', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 99.6900, '图片生成：gpt-image-2', '2026-05-23 15:15:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a3fa1d5f-58a5-44a9-b858-3da2143d15b7', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.4900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 16:51:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a536ea48-5632-44b5-aed3-0ecce6bbbe50', '60182ab2-6ae9-486a-ab26-13c1b33cd7dc', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 09:41:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a54b999f-140f-463b-9906-f7d7a1281e35', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 00:42:37');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a5a672ca-bfe8-4aac-a3be-76ce53f6d5cb', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 16:23:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a5a8f0f9-9810-4c5d-88b0-7222cc4ea318', '00000000-0000-4000-8000-000000000009', 'deduct', 0.1200, 35.0200, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:11:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a618fd89-c554-48ca-a15c-0cafeeeb6665', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.5500, '图片生成：gpt-image-2', '2026-05-29 16:42:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a61ffb79-4214-4b97-9b36-658dae8a3c62', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0525, 0.4725, '图片生成：firefly-nano-banana', '2026-06-03 16:37:36');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a62327d1-976c-43fe-878f-fa0b653e867b', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0100, 0.9000, '图片生成：gpt-image-2', '2026-05-30 15:23:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a6d7cd26-c830-4011-9378-fe5f18866b3a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.0850, '图片生成：gpt-image-2', '2026-05-24 20:44:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a93acc9e-b56e-46ed-8a9d-18c16cd2f873', '00000000-0000-4000-8000-000000000014', 'recharge', 1.2000, 1.2000, '旧系统用户余额迁移（旧ID: 14，用户名: ykkk）', '2026-05-22 12:47:29');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('a9911e55-93a3-40e7-9a2a-ef0337984bea', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0800, 35.9600, '图片生成：gpt-image-2', '2026-05-31 09:26:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('aa634ae1-f04e-424c-8fef-8d15847d9d28', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 97.9250, '删除签到记录扣回奖励', '2026-05-25 22:52:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('aa82d7b1-3651-4023-a223-6eaca8ed09e1', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 14:25:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('aad599ca-a675-46e1-8fd5-c264b6594a2c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.7410, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 01:02:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ab0f7233-3983-4aeb-84b2-a8891fe479aa', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:01:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('abb4008a-bb2b-4ee6-a394-c2b3a8b274ee', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.6600, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 21:18:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('abed2f7a-8d36-4d9a-ad06-ccba1ea70cae', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9400, '图片生成：gpt-image-2', '2026-05-31 09:40:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ac2e7a4a-f6f4-4aa4-b943-14f3f06c163d', '00000000-0000-4000-8000-000000000015', 'recharge', 0.9000, 0.9000, '旧系统用户余额迁移（旧ID: 15，用户名: xairiqq）', '2026-05-23 12:40:02');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ad30c38b-456a-46e3-abfe-4280f53362ea', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.0100, '图片生成：gpt-image-2', '2026-05-24 15:07:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ae64cdd1-a375-4bd7-b9be-1618b4a0d536', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:09:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('aeaffc07-68e3-4c46-80ad-3e128cdeaaac', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 11:55:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('aec242fe-8c89-4d42-bc9e-c08ab001b620', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.3300, '图片生成：gpt-image-2', '2026-05-31 10:18:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('afed458b-c23a-4877-a090-5f1dd3a4020c', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0525, 0.2275, '图片生成：firefly-nano-banana', '2026-06-03 16:53:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b06256e0-8e59-4a23-b4f7-1f6f21b9db57', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 10:06:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b09af30d-70c2-4d88-a265-b6728223b4a1', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.9200, '图片生成：gpt-image-2', '2026-05-31 10:58:57');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b1d7afa0-1d70-4a75-93e3-20a55b490c94', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.9450, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 09:56:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b2dde78f-3dca-464f-9739-7440d76b39dd', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.1650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 12:15:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b48bb64a-63d2-4476-9f76-cef974bca838', '00000000-0000-4000-8000-000000000012', 'recharge', 1.5000, 1.5000, '旧系统用户余额迁移（旧ID: 12，用户名: nyzx0322）', '2026-05-20 10:19:34');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b5c3341c-ee74-4a4f-965e-3e0a206e3874', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 15:00:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b628e3f8-176c-4bec-b1f7-287411bf10e3', '00000000-0000-4000-8000-000000000003', 'recharge', 1.0000, 102.3500, '支付宝充值 1.00 元', '2026-05-28 13:57:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b647c22e-59e6-4ef0-9d56-8d5e3330a812', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0400, 7.2700, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 16:09:08');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b700da7c-049a-4885-8d94-57d46c4c27ce', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.5900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 20:50:11');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b7b97943-540b-4979-8a22-4330d521e4c8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 1.0000, 99.0050, '每日签到奖励', '2026-05-25 16:34:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b8850efb-7b2b-4a49-a083-cd3b46ff0515', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 00:23:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b924c139-1ab1-4219-b8ab-d0579c235809', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 35.6900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:19:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b947f1a4-4c5d-4b7d-98da-b39a48886b3c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.7700, '图片生成：gpt-image-2', '2026-05-24 15:14:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('b949e700-0de7-4da1-8c08-5eeb5f890029', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.2310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 10:25:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ba23545e-888e-4779-9c04-46b34ecdc284', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.3700, '图片生成：gpt-image-2', '2026-05-22 23:47:40');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('bc1f94a3-3ad2-436c-a52f-efc59335cf13', '00000000-0000-4000-8000-000000000013', 'recharge', 0.3000, 4.7300, '每日签到奖励', '2026-05-31 10:11:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('bc2ccbf7-7e2d-4a84-9af6-7236529de64f', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:07:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('bf05b0e0-623b-4d93-9d3b-69bc55fc9acd', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.0100, '图片生成：gpt-image-2', '2026-05-28 15:24:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('bf4544df-b1ef-4415-bb3c-1e4382f47b61', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 7.8150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 11:43:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c0673f8d-f7dd-4b99-98f4-c3cf9583511f', '6774bdc0-9de6-4ce1-9982-e4fd0de93b1a', 'deduct', 0.3500, 0.6500, '图片生成：firefly-nano-banana2', '2026-05-31 20:19:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c187c67e-c508-4bb0-abbb-df7971e89023', '00000000-0000-4000-8000-000000000003', 'recharge', 1.0000, 102.5300, '支付宝充值 1.00 元', '2026-05-28 23:25:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c26da835-376b-4ae7-9073-1320e372613c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 7.3650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 15:17:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c44b61eb-d1fc-4a2c-8ee2-0d5dbfef1e5d', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 19:02:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c4994ef6-52f3-47f8-946e-fe01b0c17057', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 99.8500, '图片生成：gpt-image-2', '2026-05-23 14:31:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c4a23cb3-0a92-46e6-86c9-718cf4850bfa', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.5600, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 15:00:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c5161213-6d1a-4924-9b3f-b80610fdf263', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.7200, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 20:09:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c543523e-14b4-4f46-af87-976163f6f5f2', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.5300, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 15:45:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c5511326-03b9-40a1-bfcb-3fb538adc883', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.8200, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 11:12:55');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c6231cf6-adc8-4922-aaf2-c8d24ff4df47', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.8700, '图片生成：gpt-image-2', '2026-05-31 15:25:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c6e43e24-e0c2-496f-aaca-c19fb423f323', '00000000-0000-4000-8000-000000000009', 'recharge', 0.2000, 35.7400, '每日签到奖励', '2026-05-30 10:06:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c7da2932-7c2e-4aac-bd84-8a4ba530f5f4', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 34.8000, '邀请奖励：584836163@qq.com', '2026-06-01 17:38:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c81111d7-75d4-46ea-83a4-9c3471c2d246', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 9.1450, '图片生成：gpt-image-2', '2026-06-06 19:36:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c9660828-9be5-42d5-93f3-6eb23d209f8c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.0650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 13:26:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c984fa4d-571b-4c21-a776-2a740a822800', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 10.0000, 10.0050, '后台额度调整', '2026-06-04 19:01:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('c9b9a845-6f68-4207-8f58-4b93b8192aad', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 97.3900, '图片生成：gpt-image-2', '2026-05-24 19:45:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ca1a91b1-cffb-4ed5-b4dc-1af76156f533', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.8800, '图片生成：gpt-image-2', '2026-05-31 15:12:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cb67e937-9a7e-4a2b-8d12-f2af19228182', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.5900, '图片生成：gpt-image-2', '2026-05-30 20:51:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cbe7bfcd-f1a1-42d8-a643-909a66b7f74d', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.4300, '图片生成：gpt-image-2', '2026-05-30 21:05:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cd1b651a-4d5b-4f85-b226-1181463cfa0b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 99.4900, '图片生成：gpt-image-2', '2026-05-24 14:12:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cd3f3f1c-0b5a-4b1d-bab1-2e8085c67c6b', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 18:20:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cd67cf49-7c40-43c0-a835-cd0930fb1326', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.9800, '图片生成：gpt-image-2', '2026-05-23 13:17:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ce6e1956-ee62-4ee2-8989-3341644aac4e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 8.9150, 'API 流式聊天调用：gpt-5-5', '2026-06-08 11:36:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ce8c3cef-4118-4a24-8d9b-639a3b6d9645', '17b4c1c1-079e-4639-92d4-e76233f13de4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 17:57:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cedd5fee-17f9-4d8f-b47f-3c25f53dc862', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.8100, '图片生成：gpt-image-2', '2026-05-29 12:38:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cee1a836-36d9-4e9d-8775-40dec47ef986', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0000, 19.8000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:32:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cef60045-94d2-4c3a-ad74-eeae3d5c8bf9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 104.9750, '图片生成：gpt-image-2', '2026-05-27 13:49:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('cfca1f26-3117-4439-927d-7014e3126178', '00000000-0000-4000-8000-000000000009', 'deduct', 0.1200, 34.7800, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:12:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d1bc0078-eea9-4d4e-9682-288804471364', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:09:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d1e7e506-499f-4ae2-ae1d-a962b1d700fd', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:49:47');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d2185300-d062-40a6-a0eb-693c2a93cf0b', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 09:48:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d26f6a16-a974-4b6c-a790-5887da91918c', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 39.8000, '邀请奖励：712360768@QQ.COM', '2026-06-01 17:40:49');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d2daad07-a6fd-4f70-afb3-4d6418a5d79b', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 35.4100, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:00:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d36e15fc-be89-4a5e-9a10-a2c2ee1a3f26', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 105.2150, '图片生成：gpt-image-2', '2026-05-27 15:47:07');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d3b46b59-f8d7-4ef6-b992-0c709a61dbf6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 7.2650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-12 01:05:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d4396247-9196-4475-844b-c98a7e8ecc18', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0500, 7.6400, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 18:01:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d6127d71-1b80-4ad8-80cb-8c17656286f8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.4100, '图片生成：gpt-image-2', '2026-05-24 15:46:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d62318c0-4982-47b0-90d8-f9f214b7073b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8410, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:40:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d67820c8-c35d-4a9d-9e1f-a8b6188a59e3', '00000000-0000-4000-8000-000000000003', 'recharge', 0.5500, 101.3500, '每日签到奖励', '2026-05-28 13:46:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d6d45fcc-cf30-472e-bc10-4d596a076cd2', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.6300, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 21:27:41');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d7310bcf-3c16-4398-a695-e98e896d5ac5', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0400, 1.1600, '图片生成：gpt-image-2', '2026-05-30 00:45:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d74b4c37-9657-4faa-a908-42785255392c', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 10:17:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d7bdac4d-0b1f-4ed1-91ae-b0f1b1bb076e', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.5800, '图片生成：gpt-image-2', '2026-05-29 10:14:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d7ceb829-3914-4b1f-89dd-073001b1044f', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 08:56:26');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d7d29ff7-f2f9-4bb2-bdaf-5f0b8df26542', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.1975, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 17:08:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d8085ef9-a17f-4e60-9683-72abbd08376b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 1.0000, 4.4550, '图片生成：gpt-image-2（2线）', '2026-06-12 22:16:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d83432d3-6d8c-493e-ac82-7e7355846b1a', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 18:40:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d9413fe0-3f96-40e3-96b8-ab3eaae18c2c', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.7300, '图片生成：gpt-image-2', '2026-05-29 11:08:42');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d9b6e745-58ad-49bb-bb98-ea633b01ee19', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.8500, 100.8500, '后台充值', '2026-05-22 17:08:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('d9d6b86a-0f05-4b74-9abe-caba037bf5e1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'recharge', 0.0500, 97.9750, '每日签到奖励', '2026-05-25 17:47:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dade2aa8-d1ca-4aa0-9bef-12b8a63557a0', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 09:07:22');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('db2cff0e-57de-433b-a4a6-81e3d63644ff', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.8900, '图片生成：gpt-image-2', '2026-05-31 14:55:16');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('db5a34f9-1f19-4295-9fbc-ddc635d89f4a', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 29.8000, '邀请奖励：2363469479@qq.com', '2026-06-01 17:37:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('db91148b-9b7a-4239-846b-eb1acd8e896e', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.4500, '图片生成：gpt-image-2', '2026-05-22 23:22:02');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dbb35397-fdd4-460f-882c-65423818626b', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 101.7700, '图片生成：gpt-image-2', '2026-05-28 21:22:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dc163023-346e-4264-ba87-7c2628a26668', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 7.4650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 15:15:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dc1aed31-2b5e-4f5e-bc07-b0e46d59aecf', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 35.5900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 15:00:32');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dd33e6a7-c47d-476b-885d-7b1086bd1791', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.0450, '图片生成：gpt-image-2(AI-PAI)', '2026-06-07 02:51:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dd86e927-c2dd-4920-a565-5bf35131448c', '87d292ad-2c09-463b-925a-9a82ea5d8a6a', 'recharge', 120.0000, 120.0000, '后台充值', '2026-05-26 20:29:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('def43593-4418-4f6c-a0ce-ed7a93fc9a04', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0800, 102.2000, '图片生成：gpt-image-2', '2026-05-30 18:06:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('df994726-1b1f-47ce-8318-bb7114285ad6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.8650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 11:36:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('dfb41637-f78a-4b6c-ad19-b449783354be', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.4050, '图片生成：gpt-image-2(AI-PAI)', '2026-06-13 14:07:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e0048238-eafd-4613-b8b2-9a550090b455', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 08:51:01');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e03672a3-f872-48be-a98f-9648a1e754c5', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.8300, '图片生成：gpt-image-2', '2026-05-30 20:21:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e072c46b-5e9f-45b0-9474-7c3bb0ed81ef', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.7310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 01:15:53');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e13017a4-3b6e-4a85-b0b7-7a96cb7384bc', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0500, 34.6200, '图片生成：gpt-image-2', '2026-06-03 18:21:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e1304c07-87a3-48c3-9be8-b5f5d1051828', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.2900, '图片生成：gpt-image-2', '2026-05-23 11:22:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e1538dc1-b21c-40d3-bae9-185d5820b77a', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0200, 0.9100, '图片生成：gpt-image-2', '2026-05-30 15:14:12');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e194a81d-5ea4-4031-8b90-cfbf1a4ac66b', '00000000-0000-4000-8000-000000000001', 'recharge', 994.0100, 994.0100, '旧系统用户余额迁移（旧ID: 1，用户名: admin）', '2026-05-11 12:15:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e199e1a6-80a5-43d4-afd6-09ec8208f9f0', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 11:44:31');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e1e6e738-2a8d-4e3b-9e87-d711389f439d', '87d292ad-2c09-463b-925a-9a82ea5d8a6a', 'deduct', 110.0000, 10.0000, '后台额度调整', '2026-05-26 20:43:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e20495ef-92d2-4513-b99f-214b544ee291', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 19:39:10');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e231d0d5-427d-4d13-9e86-6b89cba14bb0', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 6.6050, '图片生成：gpt-image-2(2线)', '2026-06-12 20:32:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e33adf19-00f9-4b19-bb0f-3786291738a3', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.6500, '图片生成：gpt-image-2', '2026-05-29 12:42:15');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e3a07f01-7c67-4fec-af75-98669bbf3e77', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.2900, '图片生成：gpt-image-2', '2026-05-24 14:28:51');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e3c7a929-cfd6-4c5c-bad8-de8bd90fec71', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 99.6100, '图片生成：gpt-image-2', '2026-05-24 14:07:45');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e46632c2-c755-4721-bac4-fda4fcb5b57d', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.5600, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 20:53:40');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e48dec8d-ba44-4c09-8d51-276b890c7d6a', '00000000-0000-4000-8000-000000000013', 'recharge', 0.5000, 4.9100, '每日签到奖励', '2026-05-30 15:15:25');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e56f68f6-8ff5-4b9c-8327-8764eaeefef9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0080, 2.3810, '图片生成：gpt-image-2-API', '2026-06-14 01:19:05');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e58bedea-6abd-46ff-a8ec-2c2eb75f83a5', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.5100, '图片生成：gpt-image-2', '2026-05-30 20:56:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e7da79cd-7c27-4e57-99f8-22568d425fbb', '00000000-0000-4000-8000-000000000002', 'recharge', 99999.0000, 99999.0000, '旧系统用户余额迁移（旧ID: 2，用户名: myuser）', '2026-05-11 12:42:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e7db4424-2f9f-4f4f-8bfc-8c33579608c0', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0300, 7.2100, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 18:07:53');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e8a2aad8-d19f-43df-9359-48cf56cdb55c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 1.7810, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:41:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e8af8d90-e539-41ef-96ae-3e26e3c94346', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.1300, '图片生成：gpt-image-2', '2026-05-24 15:05:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e8ee4d45-0753-4ddc-9009-236734f093ab', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-01 17:52:46');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e9e755c1-8210-45ad-9f56-48a9865105ef', '00000000-0000-4000-8000-000000000009', 'deduct', 0.1200, 35.1400, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:10:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e9ebdbdc-5500-4f2c-aa8e-5b6260c39b04', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0400, 102.0400, '图片生成：gpt-image-2(AI-PAI)', '2026-05-31 12:51:19');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('e9f14a65-e55a-44b4-9a00-e212d1b1f1bd', '00000000-0000-4000-8000-000000000003', 'deduct', 82.0400, 20.0000, '后台额度调整', '2026-05-31 17:44:52');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ea0c54b8-2d96-4112-8ae7-d460138e61c5', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.0900, '图片生成：gpt-image-2', '2026-05-31 11:39:40');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('eab824f7-e85e-4c25-aee4-0f6daa43f737', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.9250, '图片生成：gpt-image-2', '2026-05-25 16:49:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('eb874f26-245d-4ad3-bf3c-ad26132bef1d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.2000, 9.2750, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 17:22:00');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ecb1a207-46e8-46a9-b599-cd22acb52723', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 98.4500, '图片生成：gpt-image-2', '2026-05-24 15:02:28');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ecbf29ac-c4dc-4b68-a1c6-1f5e71f0511e', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0800, 100.8000, '图片生成：gpt-image-2', '2026-05-28 13:45:38');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ed181012-1ff0-4089-a5ee-4b42c09c8409', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0300, 34.7500, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 18:06:21');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ed228c0c-75f7-4b29-a588-8aa3bf9efd70', '00000000-0000-4000-8000-000000000013', 'deduct', 0.0800, 4.2500, '图片生成：gpt-image-2', '2026-05-31 10:32:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ed4398e1-1165-468d-9368-694ef0771c11', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 2.2810, '图片生成：gpt-image-2(AI-PAI)', '2026-06-14 10:17:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ee76666d-0347-4318-8d6c-299a87a24a32', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-01 19:00:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('efc3faa8-09be-4bbb-b15b-0bb5ef12970a', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0300, 9.9250, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 15:55:13');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f07d2901-a287-46e5-9eb8-34e78b5a93b1', '00000000-0000-4000-8000-000000000009', 'deduct', 0.1200, 35.2600, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:10:06');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f0b8c401-b542-4102-81dc-a6a9b59b1601', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 9.8750, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 16:12:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f0d6758e-787d-4b47-a4fe-cfce55aa25ab', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 104.8550, '图片生成：gpt-image-2', '2026-05-26 10:41:58');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f2353e13-6525-4693-9da9-6bbe59c9df0c', '00000000-0000-4000-8000-000000000003', 'deduct', 0.1200, 102.1300, '图片生成：gpt-image-2', '2026-05-28 14:43:09');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f27d92ad-584f-4fff-90d5-54802e073999', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0500, 8.8150, '图片生成：gpt-image-2(AI-PAI)', '2026-06-08 11:38:20');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f2a7f176-2300-4760-88d0-6972a7b0dcb0', '00000000-0000-4000-8000-000000000001', 'recharge', 994.0100, 994.0100, '旧系统用户余额迁移（旧ID: 1，用户名: admin）', '2026-05-11 12:15:27');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f2b36a2f-cceb-4ef6-94e9-b4afab27e607', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0000, 8.9150, 'API 聊天调用：gpt-5-5', '2026-06-08 11:31:59');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f32a6d24-18e9-49e1-8de7-9ac4c9e21ed6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0100, 1.8910, '图片生成：gpt-image-2(AI-PAI)', '2026-06-16 00:26:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f3b30823-0325-4b5f-bde6-bdb4f29fdf22', '00000000-0000-4000-8000-000000000009', 'deduct', 0.1200, 34.9000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 18:11:47');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f4524c24-cd39-440a-bc9d-5013c5c98926', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.2000, 9.5250, '图片生成：gpt-image-2(AI-PAI)', '2026-06-06 16:33:17');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f5c0b4b9-a963-4637-9514-863424586f7a', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.2500, '图片生成：gpt-image-2', '2026-05-31 10:21:57');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f61dda67-68b6-4d10-8242-883bd8140eff', '6774bdc0-9de6-4ce1-9982-e4fd0de93b1a', 'recharge', 1.0000, 1.0000, '支付宝充值 1.00 元', '2026-05-31 20:12:30');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f722d226-0182-41ec-9e22-458e9ce7b64f', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.6900, '图片生成：gpt-image-2', '2026-05-22 18:10:24');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f77a6263-e5f2-4043-afca-fc45c69f84d1', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 09:10:39');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f85e2764-b8f2-496a-bbdf-3dcbc41a7ab9', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 7.8500, '图片生成：gpt-image-2', '2026-05-31 12:29:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('f8bd1eab-4ee2-48ca-8a0e-dd81cf4d2f2b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 1.9310, '图片生成：gpt-image-2(AI-PAI)', '2026-06-15 13:15:04');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fa6072a4-b9da-4ef4-99cc-6ee850a26ea7', '00000000-0000-4000-8000-000000000011', 'deduct', 0.0300, 7.1800, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 18:13:54');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('faa0cc60-1c88-4a14-a9b2-16eb04f0b58e', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.6900, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 20:25:19');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fac91ef9-206c-42aa-83c7-cd17f07fec66', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 98.7700, '图片生成：gpt-image-2', '2026-05-24 14:54:18');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fb3a685b-7a4e-49ae-836d-ec014fefaf87', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.0800, 100.0600, '图片生成：gpt-image-2', '2026-05-23 12:09:47');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fb7f0335-66ea-451f-a3e3-6805eb824e92', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2(AI-PAI)', '2026-06-02 10:02:35');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fb914b8c-0a71-4365-96f1-65d19281a7c8', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 79.8000, '邀请奖励：lion8545@sina.com', '2026-06-02 14:57:03');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fc037470-be93-48e5-b9e6-feae2d628f52', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0300, 0.1675, '图片生成：gpt-image-2(AI-PAI)', '2026-06-03 17:11:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fc0b99c7-bcd0-4d0f-a347-7e3923320a63', '00000000-0000-4000-8000-000000000010', 'deduct', 0.0800, 8.5700, '图片生成：gpt-image-2', '2026-05-29 11:14:48');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fdb04b5a-d668-4f2e-bd5a-f6f5da45c89d', '00000000-0000-4000-8000-000000000009', 'deduct', 0.0100, 35.8600, '图片生成：gpt-image-2', '2026-05-31 15:38:50');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fdc113c1-a362-4f28-af08-aa8ca273f8e1', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1200, 97.6500, '图片生成：gpt-image-2', '2026-05-24 15:43:14');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('fdeec2a4-d61e-4088-a619-8fbc712b019d', '00000000-0000-4000-8000-000000000003', 'recharge', 5.0000, 59.8000, '邀请奖励：3918937335@qq.com', '2026-06-01 18:04:56');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ff194010-1bbd-4a7d-ad8e-2717935c7e63', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'deduct', 0.1000, 8.0650, '图片生成：gpt-image-2(AI-PAI)', '2026-06-10 00:55:38');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ff4e028e-c7ba-44f1-9d8d-7d39f4ce4062', '00000000-0000-4000-8000-000000000015', 'deduct', 0.0525, 0.5775, '图片生成：firefly-gpt-image', '2026-06-03 16:17:33');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('ffe72584-a369-4e7d-9881-1d39159e7d5a', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'deduct', 0.0000, 0.0000, '图片生成：gpt-image-2', '2026-06-02 13:27:44');
-INSERT INTO public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) VALUES ('df038543-1314-4296-af5e-f5db25975086', '00000000-0000-4000-8000-000000000003', 'deduct', 0.0300, 79.7200, '图片生成：gpt-image-2', '2026-06-20 12:58:46.753854');
+COPY public.credit_logs (id, user_id, type, amount, balance_after, remark, created_at) FROM stdin;
+3b0ab742-f74a-48e9-addc-f8e346d89643	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	deduct	2.0000	86.0800	图片生成：gpt-image-2	2026-07-05 11:18:22.288413
+bad95ce4-bf5a-4f35-8611-11c83f4af7a1	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	deduct	2.0000	84.0800	图片生成：gpt-image-2	2026-07-05 13:40:39.986615
+d3d1853e-353a-4c09-9d02-7d5077d7ebc5	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	deduct	10.0000	74.0800	图片生成：gpt-image-2	2026-07-05 13:41:22.278391
+\.
 
 
 --
 -- Data for Name: generation_tasks; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.generation_tasks (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json, favorite_enabled, public_status, public_requested_at, public_reviewed_at, display_enabled, display_note, created_at, updated_at) VALUES ('72d9165c-6c74-48cb-9b20-f4f8b9f2e4c9', '00000000-0000-4000-8000-000000000003', 'b0869fad-973f-4b44-a093-7c8060e375a0', '4e29543e-7b8a-4ee0-bea7-629e2103e287', 'chat_image', '奥特曼', NULL, '2k', '2048x2048', 'jpeg', false, 1, '172.20.0.1:55316', 0.0000, 0.0000, 79.7500, 0.575, 'failed', '密钥无效或已失效，请重新登录', NULL, false, 'private', NULL, NULL, false, NULL, '2026-06-20 11:51:38.551992', '2026-06-20 11:51:38.551992');
-INSERT INTO public.generation_tasks (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json, favorite_enabled, public_status, public_requested_at, public_reviewed_at, display_enabled, display_note, created_at, updated_at) VALUES ('8e11cfb4-4dec-4c70-8c95-b363142b0edb', '00000000-0000-4000-8000-000000000003', '1c3a9c87-80be-465d-864b-be4ca3f6f77c', '4e29543e-7b8a-4ee0-bea7-629e2103e287', 'chat_image', '奥特曼', NULL, '2k', '2048x2048', 'jpeg', false, 1, '172.20.0.1:44470', 0.0300, 0.0000, 79.7200, 43.188, 'success', NULL, '{"data": [{"url": "https://free-api.yccc.me/images/2026/06/20/1781931526_5b87e8d843d1fdac75e4204cea443025.png", "type": "url"}]}', false, 'private', NULL, NULL, false, NULL, '2026-06-20 12:58:03.561903', '2026-06-20 12:58:03.561903');
+COPY public.generation_tasks (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json, favorite_enabled, public_status, public_requested_at, public_reviewed_at, display_enabled, display_note, created_at, updated_at, user_deleted_at) FROM stdin;
+40b55d89-513d-4b51-953c-cf0fb1938c13	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	奥特曼	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:52368	0.0000	0.0000	88.0800	15.538	failed	no available free image quota	\N	f	private	\N	\N	f	\N	2026-07-05 11:13:11.402467	2026-07-05 11:13:11.402467	\N
+ff1eaf83-5619-4967-b55f-34de90840cca	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	奥特曼	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:52368	2.0000	0.0000	86.0800	44.370	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783221501_1addb0db8e01258aeea4ead6e7eb035f.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 11:17:37.912972	2026-07-05 11:17:37.912972	\N
+d296eb5d-3cef-4a99-bc34-a01fda37350e	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	奥特曼变声	["/api/tasks/ff1eaf83-5619-4967-b55f-34de90840cca/images/0","/api/tasks/ff1eaf83-5619-4967-b55f-34de90840cca/images/0"]	2k	2048x2048	jpeg	f	1	127.0.0.1:60673	0.0000	0.0000	86.0800	0.273	failed	invalid base64 image data	\N	f	private	\N	\N	f	\N	2026-07-05 11:25:18.278283	2026-07-05 11:25:18.278283	\N
+882ede28-f386-4fe3-b569-c3965c06b2f7	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	奥特曼	http://127.0.0.1:3001/api/tasks/ff1eaf83-5619-4967-b55f-34de90840cca/images/0	2k	2048x2048	jpeg	f	1	127.0.0.1:58955	2.0000	0.0000	84.0800	83.222	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783230032_0983049d999bfdd18c73edffc760a646.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 13:39:16.759346	2026-07-05 13:39:16.759346	\N
+00370698-6f0b-4cd5-a03a-0a4673c0659c	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	NNG	\N	2k	2048x2048	jpeg	f	5	127.0.0.1:58955	10.0000	0.0000	74.0800	109.873	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783230018_bc546d16123c7c23914d2c0f02319945.png", "type": "url"}, {"url": "https://free-api.yccc.me/images/2026/07/05/1783230022_51a2ba2cd09f6b39493a0d22c937c6cc.png", "type": "url"}, {"url": "https://free-api.yccc.me/images/2026/07/05/1783230081_3b5d424a1228cc93582364a3268d3253.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 13:39:32.399192	2026-07-05 13:39:32.399192	\N
+5302a79b-1535-4cf6-9f7a-eb3171e15205	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	NNG	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:62517	0.0000	0.0000	0.0000	54.368	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783239505_25eb99a1588bff5071a1f9f0d441ec1f.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 16:17:32.454349	2026-07-05 16:17:32.454349	\N
+6db729c7-0b6f-4ce2-9e55-c25ced7811c5	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	BBG	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:62182	0.0000	0.0000	0.0000	50.611	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783239594_0075bcc88e6b8319ad27dd76655a851f.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 16:19:05.214834	2026-07-05 16:19:05.214834	\N
+02146afc-519a-4b7e-950e-928dd6aab11b	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	无畏契约	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:57816	0.0000	0.0000	0.0000	55.842	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783239697_a5c77c8175be980b5f54a506a46e60bc.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 16:20:42.276284	2026-07-05 16:20:42.276284	\N
+8ce80dc6-1cf2-4547-b4f3-bd4c4551a4b1	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	ook	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:61563	0.0000	0.0000	0.0000	9.347	failed	你这条里只给了尺寸要求（1:1，2048×2048，2K高清），但没有说要生成什么内容。\n\n你想画的具体画面是什么？比如：人物、场景、产品、插画风格、动漫风、写实风等都可以。只要给出主体和风格，我就可以按你这个尺寸要求直接生成。	\N	f	private	\N	\N	f	\N	2026-07-05 17:10:50.591945	2026-07-05 17:10:50.591945	\N
+8c14af97-5057-4a9d-a4a3-bac9ab34cbbd	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	112	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:61563	0.0000	0.0000	0.0000	10.674	failed	你这边只给了尺寸和“112”，但没有说明要画什么内容。\n\n你想生成的画面主体是什么？比如：\n- 112相关的紧急救援场景（警察/救护车/消防）\n- 某个数字艺术设计（如“112”数字海报）\n- 其他具体画面（人物/城市/产品/风景）\n\n补充一句描述，我就可以按你要求的 1:1、2048×2048 高质量直接生成。	\N	f	private	\N	\N	f	\N	2026-07-05 17:11:03.616584	2026-07-05 17:11:03.616584	\N
+da3143c7-720a-4533-8374-80c0a58e0966	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	NNG	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:56677	0.0000	0.0000	0.0000	44.463	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783242726_0155f987c62aeb17bc8c813034b0d525.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 17:11:23.199773	2026-07-05 17:11:23.199773	\N
+a625eec7-b818-4b4d-8025-8117843b1680	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	NNG	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:56677	0.0000	0.0000	0.0000	42.804	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783242730_3b39f6329f0a572c15155e2b81bb79e0.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 17:11:28.88363	2026-07-05 17:11:28.88363	\N
+fd4a7ff8-1df0-4f01-aa9b-8549fb121c69	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	1c3a9c87-80be-465d-864b-be4ca3f6f77c	4e29543e-7b8a-4ee0-bea7-629e2103e287	chat_image	警察/救护车/消防	\N	2k	2048x2048	jpeg	f	1	127.0.0.1:51434	0.0000	0.0000	0.0000	56.319	success	\N	{"data": [{"url": "https://free-api.yccc.me/images/2026/07/05/1783242994_5f776d9932f4c311463b5ad37b675ee2.png", "type": "url"}]}	f	private	\N	\N	f	\N	2026-07-05 17:15:39.263112	2026-07-05 17:15:39.263112	\N
+\.
 
 
 --
 -- Data for Name: oauth_access_tokens; Type: TABLE DATA; Schema: public; Owner: -
 --
 
+COPY public.oauth_access_tokens (token_hash, client_id, user_id, scope, expires_at, created_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: oauth_authorization_codes; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-
-
---
---
-
+COPY public.oauth_authorization_codes (code, client_id, user_id, redirect_uri, scope, expires_at, used_at, created_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: recharge_orders; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('013dc4f0-94c9-4297-9ef4-420ef39268ac', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525145529N8X7Q3UU', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax09614lematcgoowm830c7', 'https://qr.alipay.com/bax09614lematcgoowm830c7', NULL, '2026-05-25 22:55:21', '2026-05-25 22:55:22');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('104e21a4-84f4-4a1e-b6f8-352b9e3b8eb9', '00000000-0000-4000-8000-000000000003', 'AIPI202605280542452DXIP38Q', '2026052823001471971418157497', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax03365alc9mncni1ol30f8', NULL, '2026-05-28 05:43:03', '2026-05-28 13:42:36', '2026-05-28 13:42:55');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('17913d2c-c0b1-43b5-81ab-bf26d6a7b11d', '17b4c1c1-079e-4639-92d4-e76233f13de4', 'AIPI202606030941227AC0LNCN', '2026060322001454911423662773', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax09665kuqen5tbic2v30f4', NULL, '2026-06-03 09:41:36', '2026-06-03 17:41:22', '2026-06-03 17:41:36');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('192592c7-bf50-47dc-a75e-3276c0af86b5', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525144917864E2F54', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax07922aumj8977qqop250c', 'https://qr.alipay.com/bax07922aumj8977qqop250c', NULL, '2026-05-25 22:49:10', '2026-05-25 22:49:10');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('239e2fdc-49ba-4a15-b4fb-415489ec5f29', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'AIPI20260601095054L9WQOFZ6', '2026060123001452911413685305', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax09207m4d18l3gaw9q55f2', NULL, '2026-06-01 09:51:36', '2026-06-01 17:50:54', '2026-06-01 17:51:36');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('24d198c7-97a6-45ac-87eb-959f10498f26', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'AIPI20260602065713MPVXYWEP', '2026060223001410591414512838', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax0637203jqwkp8mb4k00df', NULL, '2026-06-02 06:58:02', '2026-06-02 14:57:13', '2026-06-02 14:58:02');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('31e1b038-e9b2-42c3-b24c-bf8fa18fa445', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260528041821CAJNVZSL', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax09738rnvpulrj3uxt55a9', 'data:image/png;base64,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', NULL, '2026-05-28 12:18:12', '2026-05-28 12:18:13');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('351d2a12-0b0e-4421-9107-ead706ead1eb', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'AIPI20260601095506MX7H1BDG', '2026060123001415311426007469', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax05209jkd5bjhw2upb55f8', NULL, '2026-06-01 09:55:21', '2026-06-01 17:55:06', '2026-06-01 17:55:21');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('3892a413-35c1-45c6-b4da-65af0c84f7af', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI202605251509556YOHFR5X', '2026052523001471971459376101', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax09528n8ufuxioc6rb3059', 'data:image/png;base64,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', '2026-05-25 15:10:30', '2026-05-25 23:09:47', '2026-05-25 23:10:22');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('3e686622-b215-408a-ad93-9bd27c2c23f5', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 'AIPI202606010942518N6YH752', '2026060123001415221444939802', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax08745ntf381ipfk1c00e2', NULL, '2026-06-01 09:43:41', '2026-06-01 17:42:51', '2026-06-01 17:43:41');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('545dc4df-7435-4ae6-a5f1-86bb313ed0bf', '00000000-0000-4000-8000-000000000011', 'AIPI202606020355454LQAA47R', '2026060222001460751432404833', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax05503xpzir10hkwbc3059', NULL, '2026-06-02 03:56:09', '2026-06-02 11:55:45', '2026-06-02 11:56:09');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('54b0dda4-1a59-44e8-b9fb-e9705af5d829', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'AIPI20260602033518P4JBTZDY', '2026060222001415311422884189', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax046912hc34sqzqzef0075', NULL, '2026-06-02 03:35:36', '2026-06-02 11:35:18', '2026-06-02 11:35:36');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('59d2cfde-93f7-40f3-98b2-8b78554b92cc', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260527073606VXXY0JT8', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax09817pl2kqjzkp89o30f8', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAAEECAYAAADOCEoKAAAAAklEQVR4AewaftIAAAj6SURBVO3BsZFdSYxFwUtEOwAZMvw3CDJkmMBlxEKtx4maffzN2ZP54+cvAoBfTACwTACwTACwTACwTACwTACwTACwvvQbnqH/kqnWGzxDT6ZaNzxDt6ZatzxDb5hqPfEMnUy1nniGTqZatzxD/yVTrRMTACwTACwTACwTACwTACwTAKwv/QtTre/IM/QGz9DJVOu78Qy9Zap1wzP0ZKp14hl6MtU68Qw9mWrdmGp9R56hGyYAWCYAWCYAWCYAWCYAWCYAWCYAWF96kWfoDVOtN3iGnky1TjxDt6Zat6ZaJ56hJ1OtE8/QE8/QyVTrlmfoZKp1a6r1CZ6hN0y13mACgGUCgGUCgGUCgGUCgGUCgPUl/J+Yaj3xDN2Yaj3xDN3yDJ1MtW55hm5NtW55hm5NtSCZAGCZAGCZAGCZAGCZAGCZAGCZAGB9Cf+YZ+jWVOsNU60Tz9CTqdaJZ+jWVOsNnqFbUy38ngkAlgkAlgkAlgkAlgkAlgkA1pdeNNX6L5lqnXiGnniGvhvP0K2p1g3P0K2p1i3P0JOp1humWn8TEwAsEwAsEwAsEwAsEwAsEwAsEwCsL/0LniH8M1OtE8/QyVTriWfoZKr1xDN0MtV64hk6mWrdmmqdeIaeTLX+NM/Qf4kJAJYJAJYJAJYJAJYJAJYJANaXfmOqhf/lGbrlGfrTPENPplq3plo3plpPPEPfzVTr/wsTACwTACwTACwTACwTACwTAKwv/YZn6GSq9cQz9N1MtU6mWrc8Q2/wDL3FM3RrqvWGqdaJZ+gTPEPfzVTrDSYAWCYAWCYAWCYAWCYAWCYAWCYAWF/6janWiWfoyVTrDZ6hJ1OtG56hW1OtJ56hG1OtJ56hk6nWWzxDb5hq3fIMnUy1PmGqdeIZeotn6GSqdWICgGUCgGUCgGUCgGUCgGUCgPXj5y+65Bn620y1bnmGbk21/jTP0JOp1i3P0MlU68QzdGuq9bfxDJ1MtZ54hm5NtW6YAGCZAGCZAGCZAGCZAGCZAGCZAGB96UVTrTd4hp5MtU48Q7emWrc8QydTrVueoU+Yap14hr4bz9CTqdaf5hm6NdV64hk6mWqdmABgmQBgmQBgmQBgmQBgmQBg/fj5ix54ht4w1XqLZ+hvMtX623iGbky1nniGTqZafxvP0K2p1p9mAoBlAoBlAoBlAoBlAoBlAoD14+cvuuQZujXVeuIZujXVOvEMnUy13uIZujHVeuIZesNU6w2eoVtTrSeeoT9tqvUJnqFbU60TEwAsEwAsEwAsEwAsEwAsEwAsEwCsL71oqnVrqnXiGXriGfrTPENv8Azdmmrd8gy9Yar1xDN0a6p1yzP0Bs/QranWranWDRMALBMALBMALBMALBMALBMArB8/f9EDz9AnTLX+NM/Qk6nWf4ln6GSq9cQz9KdNtZ54hv6/mGq9wQQAywQAywQAywQAywQAywQAywQA60svmmqdeIZueYZuTbVOplpPPEN/2lTrEzxDT6ZaJ56hk6nWLc/Qk6nWiWfo1lTrxDP0lqnWLc/QyVTrxAQAywQAywQAywQAywQAywQA68fPX3TJM/RkqnXiGXoy1XqDZ+gTplonnqFbU603eIY+Yap1yzN0MtV64hl6w1TrxDP0CVOtExMALBMALBMALBMALBMALBMALBMArC/9C1Ot78gzdGOq9cQzdDLVeuIZOplqnXiGnniGPmGqdcMzdMsz9GSqdeIZejLVOvEM3fIMnUy1nniGTqZabzABwDIBwDIBwDIBwDIBwDIBwPrx8xdd8gzdmmp9gmfoZKr1xDN0a6p14hn6hKnWiWfoDVOtt3iGTqZab/AMfcJU6w0mAFgmAFgmAFgmAFgmAFgmAFhf+g3P0MlU6xM8Q7emWieeoSdTrRPP0BPP0BumWrc8QydTrTd4hvDPTLVOPEO3plonJgBYJgBYJgBYJgBYJgBYJgBYJgBYX/oQz9CTqdbJVOsTPEMnU61bnqGTqdYtz9CTqdYtz9DJVOtkqvXEM3Qy1XriGTrxDL1hqvUWz9DJVOuJZ+iGCQCWCQCWCQCWCQCWCQCWCQDWlz5kqvXEM/TdTLVOPENv8Aw9mWrd8gydTLXe4Bl6y1TrT/MMfYJn6MlU64YJAJYJAJYJAJYJAJYJAJYJAJYJANaXXuQZesNU65Zn6A1TrSeeoRtTrbdMtW5NtW5MtZ54hk48Q7emWk88QydTre9mqvXEM3Qy1ToxAcAyAcAyAcAyAcAyAcAyAcD60oumWrc8Q7c8QydTrRPP0C3P0Bs8Q2/xDN2aar1hqnXiGbrlGbrlGXrDVOuWZ+gNJgBYJgBYJgBYJgBYJgBYJgBYJgBYX/qNqdYnTLVuTbXe4Bk6mWrd8gzdmmp9N56hT5hqnXiGnky13uAZuuUZOplqPfEM3TABwDIBwDIBwDIBwDIBwDIBwPrSb3iG/kumWidTre9mqnXLM/RkqnXLM3Qy1brlGTqZaj3xDL3BM3Qy1foEz9CTqdYNEwAsEwAsEwAsEwAsEwAsEwCsL/0LU63vyDN0wzP0ZKp1yzN0MtU68Qw9mWp9wlTrxDP0Bs/Qk6nWiWfo1lTrDZ6hW1OtN5gAYJkAYJkAYJkAYJkAYJkAYJkAYH3pRZ6hN0y18L88Q5/gGbox1XriGTqZar3FM/TdTLX+NBMALBMALBMALBMALBMALBMArC/hH/MMnUy1/jaeoVtTrRueoSdTrRPP0JOp1slU64ln6GSqdcszdDLVeotn6GSqdWICgGUCgGUCgGUCgGUCgGUCgGUCgPUl/GNTrVtTrTdMtT7BM3RjqvXEM3Qy1brlGbrlGbo11fqEqdYNEwAsEwAsEwAsEwAsEwAsEwCsL71oqvU3mWp9gmfolmfoZKr1xDN0MtV6g2folmfoyVTrZKp1yzN0MtV64hl6w1TrDSYAWCYAWCYAWCYAWCYAWCYAWCYAWF/6FzxD/yWeoU+Yat3yDL3BM/SGqdZbPENvmGqdeIaeTLVOPENPplonnqEnU60bJgBYJgBYJgBYJgBYJgBYJgBYP37+IgD4xQQAywQAywQAywQAywQAywQA638AJ0Dlk2ETbVQAAAAASUVORK5CYII=', NULL, '2026-05-27 15:35:58', '2026-05-27 15:35:59');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('5e6d2791-d2cd-4224-a5d6-30c2284f0372', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151456FATTTV2E', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax062113xmadm6al4zc3020', 'data:image/png;base64,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', NULL, '2026-05-25 23:14:49', '2026-05-25 23:14:49');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('6187081a-e6a7-4160-b172-3d5b6b0da988', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151353LUN5YMHM', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax04524mcifq27qkfcd0032', 'data:image/png;base64,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', NULL, '2026-05-25 23:13:45', '2026-05-25 23:13:46');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('64031b29-a02c-4df8-bc79-978d998c1d46', '00000000-0000-4000-8000-000000000003', 'AIPI20260528152542ZM43BF1H', '2026052823001471971421691663', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax07285wkb311p9en5y30b7', NULL, '2026-05-28 15:25:54', '2026-05-28 23:25:42', '2026-05-28 23:25:54');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('6ce7f642-75bb-4b29-8ef7-318cc041f2b8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525145829N2G5QTRC', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax07072y3kbdj8oxpwk5514', 'https://qr.alipay.com/bax07072y3kbdj8oxpwk5514', NULL, '2026-05-25 22:58:21', '2026-05-25 22:58:22');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('6fbcd0f4-74da-4534-a027-24f0c0500047', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151144RWDYA2NH', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax05712a663rgy1y3mm304b', 'data:image/png;base64,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', NULL, '2026-05-25 23:11:36', '2026-05-25 23:11:36');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('78a343e1-2d19-42c0-a675-c469b2919f94', '00000000-0000-4000-8000-000000000003', 'AIPI20260601093118IVQ05TE4', '2026060123001471971418750704', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax05166zpxzkfqcrpps0000', NULL, '2026-06-01 09:31:34', '2026-06-01 17:31:18', '2026-06-01 17:31:34');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('9142d27d-4da8-432f-ada0-24ecf423d32d', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 'AIPI20260602004559POHS6YPY', '2026060222001449131432556604', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax09612xaoh9ruknc7o00ea', NULL, '2026-06-02 00:46:47', '2026-06-02 08:45:59', '2026-06-02 08:46:47');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('96a53fd0-4bed-4935-b95b-75ed4fc8a171', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151105ZYKRZ4P0', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax02920atyomj4vn4ll9041', 'data:image/png;base64,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', NULL, '2026-05-25 23:10:58', '2026-05-25 23:10:58');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('9c5f77bc-2ab8-4db2-83a7-7597f843ff5c', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260527074222O6UKTWG6', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax08345ariwwrizmxbd55b2', 'data:image/png;base64,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', NULL, '2026-05-27 15:42:14', '2026-05-27 15:42:14');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('a33a00d0-034b-4061-bf69-1afdf902a7d9', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151446DRTG2RTM', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax05771zhbmjls3czto5597', 'data:image/png;base64,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', NULL, '2026-05-25 23:14:38', '2026-05-25 23:14:39');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('a57c8f5a-3afd-46ab-807d-936913706444', '6774bdc0-9de6-4ce1-9982-e4fd0de93b1a', 'AIPI20260531121144RORT7GJH', '2026053123001456451456739345', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax01818j2xg3xb1v1kh302c', NULL, '2026-05-31 12:12:30', '2026-05-31 20:11:44', '2026-05-31 20:12:30');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('b4e8a47c-082d-4c0b-97fb-37dff3e3f55a', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 'AIPI202606030055514QGNHU3V', '2026060322001415311429747874', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax02426xbkbbv1fvzsq30b1', NULL, '2026-06-03 00:56:00', '2026-06-03 08:55:51', '2026-06-03 08:56:00');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('bc0c1681-1303-4cb6-9fc5-d652dce33f1b', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151220VA0TPY15', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax00108offtyglfbzmo900f', 'data:image/png;base64,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', NULL, '2026-05-25 23:12:12', '2026-05-25 23:12:12');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('bcfd0e33-c52e-4a3c-8602-b471a71cde14', '60182ab2-6ae9-486a-ab26-13c1b33cd7dc', 'AIPI202606011005078RX7009O', '2026060122001437041443709695', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax02457yroyfiwgeic40011', NULL, '2026-06-01 10:05:29', '2026-06-01 18:05:07', '2026-06-01 18:05:29');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('d7d827e8-9962-41b8-a716-78083ec7507d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260524045353YC58FNUN', NULL, 'recharge', NULL, 10.00, 10.0000, 'pending', 'https://qr.alipay.com/bax00789c1dzcsbmq16w55ea', 'https://qr.alipay.com/bax00789c1dzcsbmq16w55ea', NULL, '2026-05-24 12:53:49', '2026-05-24 12:53:49');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('daaad916-b059-4313-93ab-342167a6690d', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151056JBXTLAQK', NULL, 'recharge', NULL, 10.00, 12.0000, 'pending', 'https://qr.alipay.com/bax01433ilgrjezvyblw00cf', 'data:image/png;base64,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', NULL, '2026-05-25 23:10:48', '2026-05-25 23:10:48');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('e678be93-3549-44e3-8be9-1a3b90f49db4', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 'AIPI20260601093731SAV5TB0K', '2026060123001420171451922418', 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'paid', 'https://qr.alipay.com/bax09151gljnvrh2q8c500b3', NULL, '2026-06-01 09:39:10', '2026-06-01 17:37:31', '2026-06-01 17:39:10');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('e71663c5-0830-4b4d-9643-652784a4a130', '00000000-0000-4000-8000-000000000003', 'AIPI202605280557038P87MBBM', '2026052822001471971419676898', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax03315uwgjmmnboilk305e', NULL, '2026-05-28 05:57:16', '2026-05-28 13:56:55', '2026-05-28 13:57:08');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('ec46931d-1adf-4f3a-b7ea-acee07f3cfa4', 'd6803fbb-2ffa-45be-b131-f1a6b6bed0ca', 'AIPI202606040010131PPI0VRR', '2026060422001409051445373579', 'recharge', NULL, 2.00, 2.0000, 'paid', 'https://qr.alipay.com/bax04769lrjdlgb43ckk5519', NULL, '2026-06-04 00:10:37', '2026-06-04 08:10:13', '2026-06-04 08:10:37');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('f5dd5f78-574f-4f7d-8233-a65ba2155387', '00000000-0000-4000-8000-000000000003', 'AIPI20260614053753F5DD5F78', NULL, 'recharge', NULL, 1.00, 1.0000, 'pending', 'https://qr.alipay.com/bax03336t6fqq88eueci90f5', 'https://qr.alipay.com/bax03336t6fqq88eueci90f5', NULL, '2026-06-14 05:37:40', '2026-06-14 05:37:40');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('fd5ad899-5197-43a4-b16e-f07064c7e144', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'AIPI20260525151418CV9KSJQ1', '2026052522001471971402217996', 'recharge', NULL, 1.00, 1.0000, 'paid', 'https://qr.alipay.com/bax023535o8izkhgaf500039', 'data:image/png;base64,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', '2026-05-25 15:14:30', '2026-05-25 23:14:10', '2026-05-25 23:14:22');
-INSERT INTO public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at) VALUES ('fdc83531-be35-4730-a710-53c235b456d0', 'd5df4751-347b-46ab-bf66-1c77b687ea46', 'AIPI202606010940311AMJEQQ4', NULL, 'subscription', '2827ef14-02af-46b2-b5a0-acabf34271d3', 0.01, 0.0000, 'pending', 'https://qr.alipay.com/bax093942u2aijdcxh1o304b', NULL, NULL, '2026-06-01 17:40:31', '2026-06-01 17:40:33');
-
-
---
---
-
+COPY public.recharge_orders (id, user_id, out_trade_no, trade_no, order_type, subscription_plan_id, amount, credits, status, pay_url, qr_code, paid_at, created_at, updated_at, recharge_rate) FROM stdin;
+8325a4ad-ac41-4ef9-ae45-36ef128e4d54	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	AIPI202607051715038325A4AD	2026070523001471971437445900	subscription	4c363beb-8326-4734-b1e2-6f1e861935ad	1.00	0.0000	paid	https://qr.alipay.com/bax020282p5fgvduwglr3015	https://qr.alipay.com/bax020282p5fgvduwglr3015	2026-07-05 17:15:12.919153	2026-07-05 17:15:03.717544	2026-07-05 17:15:12.91858	\N
+\.
 
 
 --
 -- Data for Name: redeem_codes; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.redeem_codes (id, code, credits, status, remark, user_id, used_at, expires_at, created_at, updated_at) VALUES ('a8acd6cb-80a2-4b36-bd3c-9697836325f4', 'AI-KD6TEI-A6G1VR', 1.0000, 'used', NULL, '9689cda1-334c-4709-96a5-5ee7d81f93a5', '2026-05-24 20:07:03', NULL, '2026-05-24 19:36:49', '2026-05-24 20:07:03');
+COPY public.redeem_codes (id, code, credits, status, remark, user_id, used_at, expires_at, created_at, updated_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: subscription_plans; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.subscription_plans (id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at) VALUES ('2827ef14-02af-46b2-b5a0-acabf34271d3', '喷印联盟-专用', NULL, 0.01, 1, 20, 0.0000, 100.00, '["4e29543e-7b8a-4ee0-bea7-629e2103e287", "85a17b11-14c5-43fc-b8f3-a3061f7ffeac"]', '["b0869fad-973f-4b44-a093-7c8060e375a0", "8faec4b5-28e4-4e01-b488-93411ac71915"]', NULL, 0, 'active', '2026-06-01 17:30:35', '2026-06-01 18:02:50');
-INSERT INTO public.subscription_plans (id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at) VALUES ('410e7288-5cd3-11f1-a311-009e04343ac0', '月度会员', '适合稳定创作用户，开通后享受模型折扣和周期额度', 21.00, 30, 300, 0.0000, 100.00, '["4e29543e-7b8a-4ee0-bea7-629e2103e287", "85a17b11-14c5-43fc-b8f3-a3061f7ffeac"]', '["b0869fad-973f-4b44-a093-7c8060e375a0", "8faec4b5-28e4-4e01-b488-93411ac71915"]', '推荐', 10, 'active', '2026-05-31 17:29:42', '2026-05-31 19:05:02');
-INSERT INTO public.subscription_plans (id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at) VALUES ('410eb1f2-5cd3-11f1-a311-009e04343ac0', '季度会员', '更长周期更划算，适合高频创作者', 79.00, 90, 1000, 0.0000, 100.00, '["4e29543e-7b8a-4ee0-bea7-629e2103e287", "85a17b11-14c5-43fc-b8f3-a3061f7ffeac"]', '["b0869fad-973f-4b44-a093-7c8060e375a0", "8faec4b5-28e4-4e01-b488-93411ac71915"]', '热门', 20, 'active', '2026-05-31 17:29:42', '2026-05-31 19:05:08');
+COPY public.subscription_plans (id, name, description, amount, duration_days, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at, concurrent_limit, conversation_limit, quota_images) FROM stdin;
+4c363beb-8326-4734-b1e2-6f1e861935ad	1日卡	1日无限次数生成图片	1.00	1	0.0000	100.00	["4e29543e-7b8a-4ee0-bea7-629e2103e287"]	["1c3a9c87-80be-465d-864b-be4ca3f6f77c"]	热销	0	active	2026-07-05 13:42:35.32993	2026-07-05 15:24:10.501403	1	10	999
+10f4f42d-4285-48a4-99fa-bb1f0456b6d2	30日卡	30日无限制生成图片	21.00	30	0.0000	100.00	["4e29543e-7b8a-4ee0-bea7-629e2103e287"]	["1c3a9c87-80be-465d-864b-be4ca3f6f77c"]	划算	0	active	2026-07-05 13:43:24.393221	2026-07-05 15:24:27.733495	1	10	9999
+\.
 
 
 --
 -- Data for Name: system_settings; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveStackingMode', 'best', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailFromName', 'AIπ - AI生图站', '2026-05-23 09:31:14');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('registerRewardCredits', '0', '2026-05-25 17:59:29');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportEmail', '', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('rechargeMinAmount', '1', '2026-05-24 13:00:11');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('checkinEnabled', 'false', '2026-05-31 14:05:32');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('creditName', '积分', '2026-05-22 16:11:45');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportQq', '3960917592', '2026-05-27 13:50:50');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportQrCodeUrl', '', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailPassword', 'zewehpyfxhmiccff', '2026-05-23 09:31:14');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveEnabled', 'true', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('promptModerationEnabled', 'true', '2026-06-07 02:10:19');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('alipayGateway', 'https://openapi.alipay.com/gateway.do', '2026-05-24 12:23:34');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkTitlePrefix', 'AIπ', '2026-06-08 15:38:16');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveEndAt', '', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailEnabled', 'true', '2026-05-23 10:13:59');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveNewUserDays', '7', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkNotifyProviderFailure', 'false', '2026-06-08 15:43:57');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveName', '生图激励计划', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('streamGenerationEnabled', 'false', '2026-06-08 10:33:49');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkEnabled', 'true', '2026-06-08 15:43:57');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('promptModerationPoliticalKeywords', '习近平
-毛泽东
-共产党
-中共
-台湾独立
-台独
-港独
-藏独
-疆独
-六四
-法轮功
-政治宣传
-推翻政府', '2026-06-07 02:10:19');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('siteName', 'AIπ - 在线生图站', '2026-05-24 13:22:02');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('registerEmailVerification', 'false', '2026-05-25 22:53:22');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('frontendUrl', 'http://localhost:5173', '2026-05-22 16:11:45');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('rechargeRate', '1', '2026-05-24 12:23:34');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportEnabled', 'true', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportDescription', '遇到订阅、生成或账号问题，可以通过下面方式联系管理员。', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailHost', 'smtp.qq.com', '2026-05-23 09:31:14');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkDeviceKey', '5WCDULVp3F7ffg7RajctWJ', '2026-06-08 15:43:57');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkServerUrl', 'https://api.day.app', '2026-06-08 15:38:16');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveStartAt', '', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('promptModerationAdultKeywords', '裸体
-裸露
-色情
-黄图
-成人
-性爱
-性交
-做爱
-露点
-私处
-乳头
-生殖器
-强奸
-未成年色情', '2026-06-07 02:10:19');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('promptModerationRejectMessage', '提示词包含不支持生成的敏感内容，请修改后再试。', '2026-06-07 02:10:19');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkNotifyTaskTimeout', 'true', '2026-06-08 15:41:58');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('inviteRewardCredits', '5', '2026-05-24 19:36:30');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('alipayPublicKey', 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgZ5/IUrN9eodqxzy09HCB6qHGUlRJ7y6OK0FB1QdALUJqTYz94ax6pqQHiXT84GhtyoKNJakUuiFu+qnd1RucbfyBvH9XlpmuQd/CENeu3NpxvnYX9RwLDHriG4Adige4GD9BqzFS5WhRVfK6iaWuJGJ5htBCwc0Vbbs78sOCL+voAf8+HQA0KpVsRDvHE4hxp50FQ0hMDl8NiYV36/fvMJ2GFBQyan9AXEKNwyzTolUJ/mT6rOeoNZIQ3zmHgej5aDK4JW+ypfq/M+PWAaNu5d92i25OSFyNKAvJMJwc52qeXeWs40inGraY4NqivqTEGrAZW0PzURHRqxoqu3D+QIDAQAB', '2026-05-24 12:46:51');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('accountPoolApiKey', 'YCCC-5K8fJ7dL2nQ9p36feregqqf6521R6tW1zX3cV4bN7mY2aE', '2026-06-07 10:15:24');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('rechargePresets', '10,30,50,100', '2026-05-24 12:23:34');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('alipayAppId', '2018042760030703', '2026-05-24 12:46:51');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailPort', '465', '2026-05-23 00:34:56');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('taskTimeoutMinutes', '10', '2026-05-27 16:26:50');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailUser', 'ycggtw@qq.com', '2026-05-23 09:31:14');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailSecure', 'true', '2026-05-23 00:34:56');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('announcementContent', '欢迎使用 AIπ 生图工作台，充值后即可开始创作。
-
-新客户端兼容旧平台数据，可直接使用原账号直接登录使用！
-
-', '2026-05-28 23:24:20');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('inviteEnabled', 'true', '2026-05-24 18:24:58');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('accountPoolEndpoint', 'https://free-api.yccc.me/api/accounts', '2026-05-31 12:07:46');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkSound', '', '2026-06-08 15:38:16');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('registerMode', 'open', '2026-05-25 22:53:25');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('logoText', 'AIπ', '2026-05-24 13:40:33');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('announcementEnabled', 'true', '2026-05-31 14:05:32');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportTitle', '联系客服', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('alipayPrivateKey', 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCXE2B2z7DWxfBYYLbz+UgxW8UBP3ZsSUVWsX3RnAGkj/CJBuRFDOyRAGYgNoETMi4uk038SmX61XP41JLBdpUTPfijYU24OprxpCr9OD+G9bjjaUIwg8OYk7ayE1wU5MJff1RExULaplXtuDX1dkOGd6VNcu0dYLUDaFIxL4KQBiUA5vONIFApgLrhUNp0b2sD7Hx3CsJRpbJCQwlazyqKkyMoE9BLQ+zOUUytVN3IL/AkQW/NflebRmSIkcqMCQQdih2TRJ/6XnzG+w7NwNkrLROwQAnYtA6F1aF9Ls8LQlTVt/+ES6C1kdB4EJWOU+wvMhimFj7n/ojMYnReS0lrAgMBAAECggEAYNywlZy2Eg4Y+mEQDD8BFXx0REePQwB7b4kfVVxEBWGwY/rCMq+FobZyxCaN/WPIDl6tupts5TUkRR7t9RJ1pD+wgfgqH3ubymBqm64LtRko8M2U/YwNxW63zVbyTAcbxKTbv7gGFDBfmanpFrc7tiRSHOUZuCNAC65APH7spC/9zHkadwqjcXe4R4chNrY0gsTxczXy9zetXLN9sNMpzLzWsW4HuQ5+fPECF8tG8mh7UxJ+3uQgGwF3qlXllzv3FvkjyWGNkumAvZBVwHDPaQBF1QmPloNmi5Q/b5jO6eLtCapd7Eawk9FRQlj8wb4ylr5UbvDM0oHl73TKZIFwqQKBgQDhlccrbPUA2jyg6DlJsLmDlL0gx3tEh/mLGd2NADhcOBTrcRZFV4IQHCKjm9ySDHfUgjeBhtMlkQhyf970JdxSoSmFKZJ11kXZ8iW75LBG9xy+JmBreHdMLzXglHrYgM3ahuumZGVHyJYTYJhgVDakwrauVrRFZHqvt4DnnKqIRQKBgQCrcdtgL+GNH5EmBb5fhRoGyt/DvpN3+wrCc+6R/5+FPldgHMd4mFHqXvlmVRgdisBUDVQYSyWQIBq6EESjGxAl5sArakp7p9PRR7HEJxnegCxLJiSt4X7Zmw5ZrD7sYWSEE5hZ7+S1mflTVyWM8r3AwYJfLv5gT3AtwkGo3xFd7wKBgBZ1sB/NuFL+Z3zpwhJpKv9DxtTFp6s6Eolb6OgJ9pKP7t1GJB6BSOzLsFMzyHEuFpws3tPhlZIu73Ve79bFEjuT2its6S0cSVYautELQtW98rmn3n+0vcPzC10xy01U/andNwcZBdBw0yhYvLMSj2I2FLQk48vo5iIqlgX5Xi01AoGBAJdhSi4NOSANznD/Q1A+S3PR8HB7NuUK4j4+dVmulyDkoev4nVxrSnEieR6VZly3ZgkRV763o6w13MOLl79ZJxIARJBRIwE6d/pjTqB/UgU3sWSNgneSExp7IdmmEE1R1ZoVX0GSY6TCFvcyjLJ+p3Oqqb331Z4eplORIb7FcCU7AoGAclxUox25x1OiZ7rHk8+yWtvJxuXLNgy+a+ViFHgcvKe9drUTQ/O0Z/zvd/8lZ3GWYPATpN1AZrSnKpfylO43A6dX/oHFa4ybljWI5ilugFq6QgI087m/D60emCFmnzZLgFcG/tGACDaNMaHMMO5BFhDxYMVy0UTLWRS7ZEXJ1+M=', '2026-05-24 12:46:51');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportUrl', '', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('announcementTitle', '更新通知', '2026-05-28 23:24:42');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveMinUnitPrice', '0.001', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('incentiveRules', '[{"minImages":10,"discountPercent":10},{"minImages":30,"discountPercent":20},{"minImages":60,"discountPercent":30}]', '2026-06-16 01:22:39');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('emailFromAddress', 'ycggtw@qq.com', '2026-05-23 09:31:14');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('backendUrl', 'http://localhost:3001', '2026-05-22 16:11:45');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('checkinRewards', '0.05,0.1.0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55', '2026-05-25 17:47:03');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('supportWechat', '', '2026-05-27 08:57:35');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('barkNotifyGenerationFailure', 'true', '2026-06-08 15:38:16');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('accountPoolAuthHeader', 'Authorization', '2026-05-31 12:07:46');
-INSERT INTO public.system_settings (setting_key, setting_value, updated_at) VALUES ('rechargeEnabled', 'true', '2026-05-24 12:23:34');
+COPY public.system_settings (setting_key, setting_value, updated_at) FROM stdin;
+incentiveStackingMode	best	2026-06-16 01:22:39
+inviteRewardType	subscription	2026-07-05 17:21:06.543574
+inviteRewardPlanId	4c363beb-8326-4734-b1e2-6f1e861935ad	2026-07-05 17:21:06.543574
+emailEnabled	true	2026-05-23 10:13:59
+emailFromName	AIπ - AI生图站	2026-05-23 09:31:14
+supportEmail		2026-05-27 08:57:35
+accountPoolApiKey	YCCC-5K8fJ7dL2nQ9p36feregqqf6521R6tW1zX3cV4bN7mY2aE	2026-06-07 10:15:24
+alipayGateway	https://openapi.alipay.com/gateway.do	2026-05-24 12:23:34
+supportTitle	联系客服	2026-05-27 08:57:35
+backendUrl	http://localhost:3001	2026-05-22 16:11:45
+emailUser	ai_pais@163.com	2026-05-23 09:31:14
+frontendUrl	http://localhost:5173	2026-05-22 16:11:45
+supportEnabled	true	2026-05-27 08:57:35
+supportWechat		2026-05-27 08:57:35
+supportUrl		2026-05-27 08:57:35
+logoText	AIπ	2026-05-24 13:40:33
+registerMode	open	2026-05-25 22:53:25
+freeGenerationQuota	100	2026-07-05 15:25:02.932953
+siteName	AIπ - 在线生图站	2026-05-24 13:22:02
+supportDescription	遇到充值、生成或账号问题，可以通过下面方式联系管理员。	2026-05-27 08:57:35
+alipayPublicKey	MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgZ5/IUrN9eodqxzy09HCB6qHGUlRJ7y6OK0FB1QdALUJqTYz94ax6pqQHiXT84GhtyoKNJakUuiFu+qnd1RucbfyBvH9XlpmuQd/CENeu3NpxvnYX9RwLDHriG4Adige4GD9BqzFS5WhRVfK6iaWuJGJ5htBCwc0Vbbs78sOCL+voAf8+HQA0KpVsRDvHE4hxp50FQ0hMDl8NiYV36/fvMJ2GFBQyan9AXEKNwyzTolUJ/mT6rOeoNZIQ3zmHgej5aDK4JW+ypfq/M+PWAaNu5d92i25OSFyNKAvJMJwc52qeXeWs40inGraY4NqivqTEGrAZW0PzURHRqxoqu3D+QIDAQAB	2026-05-24 12:46:51
+emailPort	465	2026-05-23 00:34:56
+emailPassword	RPNiadTAPJwwcScH	2026-05-23 09:31:14
+supportQrCodeUrl		2026-05-27 08:57:35
+accountPoolEndpoint	https://free-api.yccc.me/api/accounts	2026-05-31 12:07:46
+accountPoolAuthHeader	Authorization	2026-05-31 12:07:46
+inviteEnabled	true	2026-05-24 18:24:58
+freeDailyGenerationQuota	10	2026-07-05 15:40:09.486497
+alipayAppId	2018042760030703	2026-05-24 12:46:51
+freeHourlyGenerationQuota	3	2026-07-05 15:40:09.486497
+streamGenerationEnabled	false	2026-06-08 10:33:49
+supportQq	3960917592	2026-05-27 13:50:50
+alipayPrivateKey	MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCXE2B2z7DWxfBYYLbz+UgxW8UBP3ZsSUVWsX3RnAGkj/CJBuRFDOyRAGYgNoETMi4uk038SmX61XP41JLBdpUTPfijYU24OprxpCr9OD+G9bjjaUIwg8OYk7ayE1wU5MJff1RExULaplXtuDX1dkOGd6VNcu0dYLUDaFIxL4KQBiUA5vONIFApgLrhUNp0b2sD7Hx3CsJRpbJCQwlazyqKkyMoE9BLQ+zOUUytVN3IL/AkQW/NflebRmSIkcqMCQQdih2TRJ/6XnzG+w7NwNkrLROwQAnYtA6F1aF9Ls8LQlTVt/+ES6C1kdB4EJWOU+wvMhimFj7n/ojMYnReS0lrAgMBAAECggEAYNywlZy2Eg4Y+mEQDD8BFXx0REePQwB7b4kfVVxEBWGwY/rCMq+FobZyxCaN/WPIDl6tupts5TUkRR7t9RJ1pD+wgfgqH3ubymBqm64LtRko8M2U/YwNxW63zVbyTAcbxKTbv7gGFDBfmanpFrc7tiRSHOUZuCNAC65APH7spC/9zHkadwqjcXe4R4chNrY0gsTxczXy9zetXLN9sNMpzLzWsW4HuQ5+fPECF8tG8mh7UxJ+3uQgGwF3qlXllzv3FvkjyWGNkumAvZBVwHDPaQBF1QmPloNmi5Q/b5jO6eLtCapd7Eawk9FRQlj8wb4ylr5UbvDM0oHl73TKZIFwqQKBgQDhlccrbPUA2jyg6DlJsLmDlL0gx3tEh/mLGd2NADhcOBTrcRZFV4IQHCKjm9ySDHfUgjeBhtMlkQhyf970JdxSoSmFKZJ11kXZ8iW75LBG9xy+JmBreHdMLzXglHrYgM3ahuumZGVHyJYTYJhgVDakwrauVrRFZHqvt4DnnKqIRQKBgQCrcdtgL+GNH5EmBb5fhRoGyt/DvpN3+wrCc+6R/5+FPldgHMd4mFHqXvlmVRgdisBUDVQYSyWQIBq6EESjGxAl5sArakp7p9PRR7HEJxnegCxLJiSt4X7Zmw5ZrD7sYWSEE5hZ7+S1mflTVyWM8r3AwYJfLv5gT3AtwkGo3xFd7wKBgBZ1sB/NuFL+Z3zpwhJpKv9DxtTFp6s6Eolb6OgJ9pKP7t1GJB6BSOzLsFMzyHEuFpws3tPhlZIu73Ve79bFEjuT2its6S0cSVYautELQtW98rmn3n+0vcPzC10xy01U/andNwcZBdBw0yhYvLMSj2I2FLQk48vo5iIqlgX5Xi01AoGBAJdhSi4NOSANznD/Q1A+S3PR8HB7NuUK4j4+dVmulyDkoev4nVxrSnEieR6VZly3ZgkRV763o6w13MOLl79ZJxIARJBRIwE6d/pjTqB/UgU3sWSNgneSExp7IdmmEE1R1ZoVX0GSY6TCFvcyjLJ+p3Oqqb331Z4eplORIb7FcCU7AoGAclxUox25x1OiZ7rHk8+yWtvJxuXLNgy+a+ViFHgcvKe9drUTQ/O0Z/zvd/8lZ3GWYPATpN1AZrSnKpfylO43A6dX/oHFa4ybljWI5ilugFq6QgI087m/D60emCFmnzZLgFcG/tGACDaNMaHMMO5BFhDxYMVy0UTLWRS7ZEXJ1+M=	2026-05-24 12:46:51
+emailHost	smtp.163.com	2026-05-23 09:31:14
+emailSecure	true	2026-05-23 00:34:56
+registerEmailVerification	true	2026-05-25 22:53:22
+taskTimeoutMinutes	10	2026-05-27 16:26:50
+emailFromAddress	ai_pais@163.com	2026-05-23 09:31:14
+\.
 
 
 --
 -- Data for Name: user_api_keys; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.user_api_keys (id, user_id, name, key_prefix, key_hash, key_plain, encrypted_key, status, last_used_at, deleted_at, created_at, updated_at) VALUES ('598775cc-11d5-4461-bbdd-94cfdbba57e2', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'API Key', 'sk-aipi-xNu2B4Qr', '10abf4ce6c861fe1acd62b582b19b40f91f0859fa6f8572b70cef90a0bdf6352', 'sk-aipi-xNu2B4QrjN9liH2F8zbedVTypdxvyf8R8lUmD8lrWYE', NULL, 'active', '2026-06-12 18:00:05', NULL, '2026-06-09 22:59:29', '2026-06-12 18:00:05');
-INSERT INTO public.user_api_keys (id, user_id, name, key_prefix, key_hash, key_plain, encrypted_key, status, last_used_at, deleted_at, created_at, updated_at) VALUES ('5e3d42d9-c848-4f78-abe3-5093132615d3', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 'API Key', 'sk-aipi-EdEyCo-y', '5d909b6f851a894d3de04c3b387fc8611220cd772a2073da09d0648e121fab48', 'sk-aipi-EdEyCo-y7yw81yRC207kkthisdTHuDft8mLVH2QQhJA', NULL, 'disabled', NULL, '2026-06-08 13:23:51', '2026-06-08 13:23:49', '2026-06-08 13:23:51');
+COPY public.user_api_keys (id, user_id, name, key_prefix, key_hash, key_plain, encrypted_key, status, last_used_at, deleted_at, created_at, updated_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: user_checkins; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('0771367d-2a5e-4312-8699-f35eb28a4da5', '00000000-0000-4000-8000-000000000013', 0.3000, '2026-05-31', '::ffff:127.0.0.1', '2026-05-31 10:11:20');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('0e606b2e-e09f-4c8e-a26e-4571adab59bf', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 0.4000, '2026-05-27', '::1', '2026-05-27 13:53:34');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('10b9862e-9e90-41a3-bf99-01b9e0ae0be8', '00000000-0000-4000-8000-000000000009', 0.2000, '2026-05-30', '::ffff:127.0.0.1', '2026-05-30 10:06:01');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('446c86a6-2745-4e12-aa20-ff70e42a1aea', '00000000-0000-4000-8000-000000000011', 0.3000, '2026-05-29', '::ffff:127.0.0.1', '2026-05-29 01:19:26');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('4c4b7f87-771d-4faf-89c2-126f8d5919a6', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 0.2500, '2026-05-25', '::1', '2026-05-25 23:01:02');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('4ddfffa8-e98e-424c-91aa-b0c052a3bef8', '00000000-0000-4000-8000-000000000010', 0.4000, '2026-05-29', '::ffff:127.0.0.1', '2026-05-29 11:52:18');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('57e8b161-7ca8-4b57-aa69-7795ab5ae558', '00000000-0000-4000-8000-000000000015', 0.3000, '2026-05-30', '::ffff:127.0.0.1', '2026-05-30 00:15:14');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('6631c53e-e3ac-47dd-b483-9c350c23e171', '00000000-0000-4000-8000-000000000003', 0.4000, '2026-05-29', '::ffff:127.0.0.1', '2026-05-29 21:04:08');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('a07eb37d-5118-4d30-bbe8-99f9b84b7ff8', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 0.3000, '2026-05-24', '::1', '2026-05-24 19:43:12');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('a8d1935a-a026-4f4d-891a-98e6c1e649c4', '9689cda1-334c-4709-96a5-5ee7d81f93a5', 0.2500, '2026-05-26', '::1', '2026-05-26 17:47:18');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('cf148cd5-7b47-46c4-9a8d-26f37d040d60', '00000000-0000-4000-8000-000000000013', 0.5000, '2026-05-30', '::ffff:127.0.0.1', '2026-05-30 15:15:25');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('d3e6c21f-4184-4ff3-88cb-5dfce43f01c5', '00000000-0000-4000-8000-000000000009', 0.5500, '2026-05-29', '::ffff:127.0.0.1', '2026-05-29 10:09:43');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('e6652136-a964-46a0-86a3-dcc0e6e36d08', '00000000-0000-4000-8000-000000000009', 0.3000, '2026-05-31', '::ffff:127.0.0.1', '2026-05-31 09:24:52');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('e735ff91-a7db-4f80-abcf-19a7fbd736ad', '00000000-0000-4000-8000-000000000011', 0.5500, '2026-05-31', '::ffff:127.0.0.1', '2026-05-31 13:33:44');
-INSERT INTO public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) VALUES ('f74cbda1-b6ee-400c-9e1f-f8c59ea794d5', '00000000-0000-4000-8000-000000000003', 0.5500, '2026-05-28', '::1', '2026-05-28 13:46:12');
+COPY public.user_checkins (id, user_id, reward_credits, checkin_date, user_ip, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: user_credit_ratio_backup; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.user_credit_ratio_backup (migration_key, user_id, email, credits_before, credits_after, created_at) FROM stdin;
+\.
 
 
 --
 -- Data for Name: user_email_tokens; Type: TABLE DATA; Schema: public; Owner: -
 --
 
+COPY public.user_email_tokens (token_hash, user_id, purpose, expires_at, used_at, created_at) FROM stdin;
+5a45b54dbb7fe4ece21e2b3a9a3d8b1f93074c12ae91f3cc4b85355cf269e7b8	019972a8-fb54-4cb7-a222-824fe00a00c0	verify_email	2026-07-06 18:58:36.67765	2026-07-05 18:59:56.376888	2026-07-05 18:58:36.679194
+\.
 
 
 --
 -- Data for Name: user_invites; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('0f4608dd-6ad3-4d5a-95b8-d87fbff17407', '9689cda1-334c-4709-96a5-5ee7d81f93a5', '87d292ad-2c09-463b-925a-9a82ea5d8a6a', 5.0000, '::1', '2026-05-25 23:06:12');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('1122a5cb-409d-4a97-9866-e11c1cd0943a', '00000000-0000-4000-8000-000000000003', '60182ab2-6ae9-486a-ab26-13c1b33cd7dc', 5.0000, '39.172.3.42', '2026-06-01 18:04:56');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('416cd3f4-cc3a-470a-a233-83496030f0a0', '00000000-0000-4000-8000-000000000003', 'd5df4751-347b-46ab-bf66-1c77b687ea46', 5.0000, '182.240.12.141', '2026-06-01 17:38:51');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('55a63d9d-64b7-4af5-9a90-447386c3fb47', '00000000-0000-4000-8000-000000000003', 'fd75c2d1-6042-4070-9c64-57a749859d42', 5.0000, '120.225.158.45', '2026-06-01 17:40:49');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('611df15b-53ca-40fb-a4f1-293bf86803ca', '00000000-0000-4000-8000-000000000003', 'c4f75018-5553-4559-9ac6-80195df2fff2', 5.0000, '14.107.182.212', '2026-06-02 08:57:18');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('8d88b6c7-5720-4392-b351-26575657da50', '00000000-0000-4000-8000-000000000003', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', 5.0000, '182.99.110.15', '2026-06-01 17:50:42');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('a4d529f1-283b-48af-a949-822d58b8bf91', '00000000-0000-4000-8000-000000000003', '41ee1a00-78a5-4b4e-b7e6-657042d17453', 5.0000, '14.155.53.38', '2026-06-01 18:58:30');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('bbd572c7-aac4-44fb-b548-0c84aa7dba14', '00000000-0000-4000-8000-000000000003', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', 5.0000, '120.85.182.151', '2026-06-01 17:37:21');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('c4c248d0-a51c-4d89-9ed8-3ed0ec8ca46b', '00000000-0000-4000-8000-000000000003', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', 5.0000, '183.185.9.69', '2026-06-01 17:42:03');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('cae566f9-aa63-4ceb-87b7-ffe6fe78eb24', '00000000-0000-4000-8000-000000000003', '3ac2fe66-51ff-4c85-ada3-5a5f719ebae4', 5.0000, '27.21.158.45', '2026-06-02 08:18:28');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('db5f4cc2-6aff-46dd-b374-6a6121619c92', '00000000-0000-4000-8000-000000000003', 'd3533f05-a703-453b-aace-0b59d52d9828', 5.0000, '15.204.86.205', '2026-06-01 17:32:44');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('e0ec7449-b207-4e81-b39e-42e5e709808b', '00000000-0000-4000-8000-000000000003', 'd632f5fe-e78a-4418-841a-fc8084f02a31', 5.0000, '125.42.98.153', '2026-06-01 17:54:32');
-INSERT INTO public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at) VALUES ('eea8c066-8b1a-4d96-9fcb-b2b6029a5170', '00000000-0000-4000-8000-000000000003', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 5.0000, '183.221.54.89', '2026-06-02 14:57:03');
+COPY public.user_invites (id, inviter_id, invitee_id, reward_credits, invitee_ip, created_at, reward_type, reward_plan_id, reward_label) FROM stdin;
+0724347e-38b0-4802-9102-ea613f381f1d	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	019972a8-fb54-4cb7-a222-824fe00a00c0	0.0000	127.0.0.1:55653	2026-07-05 18:58:36.666208	subscription	4c363beb-8326-4734-b1e2-6f1e861935ad	1日卡
+\.
 
 
 --
 -- Data for Name: user_subscriptions; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('4a799a89-5e85-4e61-b5d9-edb1b8cbc2a7', '00000000-0000-4000-8000-000000000011', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-02 03:56:09', '2026-06-03 03:56:09', '2026-06-02 11:56:09', '2026-06-03 08:51:13');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('4c529a03-4b19-48f4-9b8e-43e88e45e169', '00000000-0000-4000-8000-000000000003', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-01 09:31:34', '2026-06-02 09:31:34', '2026-06-01 17:31:34', '2026-06-02 11:08:44');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('5156112b-19a2-4be6-9a45-fedaef29fa35', '3b9bd6d0-b3be-47fe-9381-4dd31a762e31', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-02 06:58:02', '2026-06-03 06:58:02', '2026-06-02 14:58:02', '2026-06-03 08:51:13');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('64dc820b-fc67-4878-a195-a9740251a1a6', 'd632f5fe-e78a-4418-841a-fc8084f02a31', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-03 00:56:00', '2026-06-04 00:56:00', '2026-06-01 17:55:21', '2026-06-04 08:53:13');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('7066dee9-9ea1-4cdf-abd5-fc10463ccf96', '039746b0-2a47-4f2f-9077-5ee8ee24ea1a', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-01 09:39:10', '2026-06-02 09:39:10', '2026-06-01 17:39:10', '2026-06-02 11:08:44');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('7dc2f5c9-b306-478d-8834-121e9e7d736a', 'd22b6897-c248-48c6-88dd-19b6fd9a9701', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-01 09:43:41', '2026-06-02 09:43:41', '2026-06-01 17:43:41', '2026-06-02 11:08:44');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('b4552421-52e2-43c1-abaa-11ab15139b3c', '60182ab2-6ae9-486a-ab26-13c1b33cd7dc', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-01 10:05:29', '2026-06-02 10:05:29', '2026-06-01 18:05:29', '2026-06-02 11:08:44');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('b707b984-b7c1-4a53-9636-fe5723314306', '17b4c1c1-079e-4639-92d4-e76233f13de4', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-03 09:41:36', '2026-06-04 09:41:36', '2026-06-03 17:41:36', '2026-06-04 13:11:49');
-INSERT INTO public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) VALUES ('f7d775be-d5e9-4679-b384-5b1955260588', '26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', '2827ef14-02af-46b2-b5a0-acabf34271d3', 'expired', '2026-06-02 00:46:47', '2026-06-03 01:51:36', '2026-06-01 17:51:36', '2026-06-03 08:51:13');
+COPY public.user_subscriptions (id, user_id, plan_id, status, started_at, expires_at, created_at, updated_at) FROM stdin;
+80ef4b7e-b179-4d58-9f46-6b11f626fb66	9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	4c363beb-8326-4734-b1e2-6f1e861935ad	active	2026-07-05 18:58:36.668187	2026-07-08 17:15:12.919153	2026-07-05 17:15:12.91858	2026-07-05 18:58:36.666208
+\.
 
 
 --
 -- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000001', 'admin@local.com', '$2a$10$Hjij39vRJV9dr/LkBAsysu1R/xk1WIsHZMYXSQeGOrg4ZANFBzS2u', 'admin', 'active', '2026-05-11 12:15:27', '2026-05-11 12:15:27', '2026-05-31 17:44:30', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000004', 'a97493280@126.com', '$2a$10$q5Bv.8Cd.d4gq8ngBZ6JJ.uHCE0E2k3L8u.ONCWHj/POeZ/UsZIA.', 'user', 'active', '2026-05-14 14:06:52', '2026-05-14 14:06:52', '2026-05-15 00:32:54', 0.1000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000005', '2110056312@qq.com', '$2a$10$aC7BBAZrU9FEVAvc2oU5cOku/Pb/ucC0JAm5.HcdMdzDG9Wunet5S', 'user', 'active', '2026-05-16 01:36:43', '2026-05-16 01:36:43', '2026-05-31 17:45:11', 11.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000006', '2085307562@qq.com', '$2a$10$eiyqpOnm0FCocqDTUMOjBeHrFQzLUVbX/eypBvTTL4Uys/SpzZkDi', 'user', 'active', '2026-05-16 11:44:28', '2026-05-16 11:44:28', '2026-05-16 11:49:05', 0.9000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000007', 'doujun1976@126.com', '$2a$10$BYK3n15pkUPgczrASECQ0O5Q2OyQ4dhjHDwlYuPHsv0Z1qrVf1zAS', 'user', 'active', '2026-05-17 07:25:51', '2026-05-17 07:25:51', '2026-05-17 07:36:56', 1.2000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000008', '528371990@qq.com', '$2a$10$FLly6zBmPi5csbPlfu6KM.AW5ITHNGrIg2VdAV2/BAG5jBIFR6ecu', 'user', 'active', '2026-05-17 07:26:42', '2026-05-17 07:26:42', '2026-05-17 12:56:22', 12.5000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000009', '514691511@qq.com', '$2a$10$FvZkW5VQZyUblwXg.QCUWeUr7m0EaANNZX5RnfPo4lV0FPAuOXUoy', 'user', 'active', '2026-05-17 10:28:05', '2026-05-17 10:28:05', '2026-06-03 20:59:57', 34.5000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000010', '2190889075@qq.com', '$2a$10$22xFpm.F..aw4TUXnA1zvel76.POGVegPR4/XeVlChNW28d4SKg0.', 'user', 'active', '2026-05-18 01:13:55', '2026-05-18 01:13:55', '2026-06-02 17:10:56', 7.3900);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000011', '1208641763@qq.com', '$2a$10$Wvn8pMHeutxPUA6QIr87qeJdE6J49R1xmFHrNCJN2DNtprcUdL3JW', 'user', 'active', '2026-05-18 11:24:51', '2026-05-18 11:24:51', '2026-06-03 18:17:24', 7.1500);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000012', '2987981960@qq.com', '$2a$10$Cc9m22AtBZpFl2jfECFcA.aq2Ak//RRWfNIruEL87lNxtnyCrAgFm', 'user', 'active', '2026-05-20 10:19:34', '2026-05-20 10:19:34', '2026-05-20 10:19:41', 1.5000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000013', '1527867616@qq.com', '$2a$10$cHTkbXC90c2ZOkbNlxuY0OvJZ/tP4aC7cOF6J9DbbA.GGy9xHgkmm', 'user', 'active', '2026-05-20 12:32:28', '2026-05-20 12:32:28', '2026-05-31 14:25:30', 4.0900);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000014', '1596848231@qq.com', '$2a$10$fFJ9eRy9v0daYeLH5VAHCea5CLiYhRpst2hC3/J7HyM9KkMcK.g3O', 'user', 'active', '2026-05-22 12:47:29', '2026-05-22 12:47:29', '2026-05-22 12:47:41', 1.2000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000015', '1911856412@qq.com', '$2a$10$Pm.ZMVF4pMJXJhReYTG3KO0NgI5SUJaSWFdjzGWu4NrwVlDEkfDr.', 'user', 'active', '2026-05-23 12:40:02', '2026-05-23 12:40:02', '2026-06-03 17:11:14', 0.1675);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('039746b0-2a47-4f2f-9077-5ee8ee24ea1a', '2363469479@qq.com', '120000:d0f6fc826ac665d604c072361cc6ac85:5d814f3883708c1ebd40178b3c2685b6e7f9bf36f99da3df94d55faeea6f5d2cdc4f50f993953a56270649ec0da003cbe71ae3a280c31ba10328c492f1587a78', 'user', 'active', '2026-06-01 09:37:21', '2026-06-01 17:37:21', '2026-06-01 17:37:21', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('17b4c1c1-079e-4639-92d4-e76233f13de4', '2839870322@qq.com', '120000:0bb917201ccb4de756d31586d8063773:77acd57e76611369ff7c90f8998a1e70c84676d38cdca70cd9d203c6107644374e913623924c8ff72089864c98accf4f4dea5fbfbc8d3318824c95aa92ab65cc', 'user', 'active', '2026-06-03 09:41:17', '2026-06-03 17:41:17', '2026-06-03 17:41:17', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('26bc1bf5-630b-4571-a9f1-fb2f8dc963f4', '2414206462@qq.com', '120000:a3999bbad1a238d8bab478da071a1dca:299b0dcc2459a74915c54224ea5c697346f7583cd8fca3f2a931e7d4042d766793197cb9696b13de58ced3cdd2efd64b0419c3e912dba7c45ee42f72d7bad4f6', 'user', 'active', '2026-06-01 09:50:42', '2026-06-01 17:50:42', '2026-06-01 17:50:42', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('3ac2fe66-51ff-4c85-ada3-5a5f719ebae4', '277721351@qq.om', '120000:6e8acb6a54afc54f1cf0410c2da5e395:11cf38992347974dd88a3c1bd576f60a4cfb61ce6575d504faf07153b7147f6cec4a5ff293153a29bec288eb79ab7bba006eebd3b0220c90e697283e1e4cbfd9', 'user', 'active', '2026-06-02 00:18:27', '2026-06-02 08:18:27', '2026-06-02 08:18:27', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('3b9bd6d0-b3be-47fe-9381-4dd31a762e31', 'lion8545@sina.com', '120000:bc58cc1370ebfaec1526a2a5740657fe:d7a7d78fd854adc76b022f85469334ec017aebc44671eb3c66901f3dd8020193b69113adc923bc5488c8f84d7d7e3d392dcdfe85a1db41aa3f5750e120a43d07', 'user', 'active', '2026-06-02 06:57:03', '2026-06-02 14:57:03', '2026-06-02 14:57:03', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('41ee1a00-78a5-4b4e-b7e6-657042d17453', '51799096@qq.com', '120000:a5cf27a67de648c8e9fffb8112c56c8c:552e938a1bda703af3c151ca4df53a6c3d4c707ad50e665a628a4aa39f62e2915114d2ccd3f203c1a2de05be0522b1bb13a414452eb27d8795cb1f0924594d70', 'user', 'active', '2026-06-01 10:58:30', '2026-06-01 18:58:30', '2026-06-01 18:58:30', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('60182ab2-6ae9-486a-ab26-13c1b33cd7dc', '3918937335@qq.com', '120000:d1058f43b411380def2aa71295b67dcb:dd61ff38b947f5ab4ec26afd2335fa8b295746aec00275e040babbbbc553836cebf9b244215cc16e81b2223b8bfb7a116dd4c29df55af9aa2fb41e438f97a34f', 'user', 'active', '2026-06-01 10:04:56', '2026-06-01 18:04:56', '2026-06-01 18:04:56', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('6774bdc0-9de6-4ce1-9982-e4fd0de93b1a', '67854590@qq.com', '120000:cdb1b893d24b794a14f3971dc37b6f4b:2719fd8ed28dd6e96abe400a5423174e34664a197187ec3f2941f2a8be2975ed1385584a2c538c15590afe6d2b9b0a8516864f043c52776eeaf281715220040d', 'user', 'active', '2026-05-31 12:10:47', '2026-05-31 20:10:47', '2026-05-31 20:19:13', 0.6500);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('8b9be972-e802-4e32-9184-8bb43bfa70f4', '1364547785@qq.com', '120000:6715c206b764f57b88063efc4df2e83f:35c51b2d2ba61d76e8fa9166df7539bc6cbd8f216fb2e9834845ce2de5ccf4d9bb98e4ba7d6bc9524070dd08ebdcc5867b794bea1dbc6811819eebea7c3db5aa', 'user', 'active', '2026-06-04 07:09:05', '2026-06-04 15:09:05', '2026-06-04 15:09:05', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('9689cda1-334c-4709-96a5-5ee7d81f93a5', 'fly.ljxxx@gmail.com', '120000:642762c98ae65a92b86a46945a83e9f5:f2fe240bb8a874dcf881bb2bd03cb2137088546da977eeab9d8600c5098de6aefafc85fe52afdd323c88ce29dcadb16f1acc05dcbb8e2f43d22bfddb0a8c8b03', 'user', 'active', '2026-05-23 11:13:25', '2026-05-22 16:47:10', '2026-06-16 16:28:56', 0.9710);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('aa7b05fd-14c9-4ab6-9082-a0e49379fe8e', '307279880@qq.com', '120000:6dad8bae32adf894adb4978195ca6f00:018aec3954163f5a622a16d173062f05c3698e070f1b3b6e408cfc03f7f963a8a25faed3fef16cba16b8e767daf067a2b6b4f93fdcf864888ce33b00e6435383', 'user', 'active', '2026-06-01 02:16:51', '2026-06-01 10:16:51', '2026-06-01 10:16:51', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('c4f75018-5553-4559-9ac6-80195df2fff2', '564153549@qq.com', '120000:14d6ca4518abbf6dfb64256bc8e1e1ac:cf3bb6a9e4c817dee59c0aea52be1d7448c28aa3118822f4f953277993a10d6c5539c8cb6960138dcb6f66eca96a5c37b54820ecadb24ae025b1d216bc2d4151', 'user', 'active', '2026-06-02 00:57:18', '2026-06-02 08:57:18', '2026-06-02 08:57:18', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d22b6897-c248-48c6-88dd-19b6fd9a9701', '756477101@qq.com', '120000:ffbf0cc54b0c99f7cf9be1df11d1a2c9:c8147cc18db1b16d7f7ff159c965cfe7db773ea502dd698ef167376c33df9ccc7b4ddde9ea4946750c59d5d5d5f74312bbb251bd37f09bd7c82e56879d3f813e', 'user', 'active', '2026-06-01 09:42:03', '2026-06-01 17:42:03', '2026-06-01 17:42:03', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d3533f05-a703-453b-aace-0b59d52d9828', '123@qq.com', '120000:3d64b7338b39b461e3ed53159b38c630:c87faae9e2917e8e539d55e1d34a1adcb950fbdad51bf3ad991803e2d80f5fbe0eb3779ebf7ce7b71f8d4b1b399e07c668636af6e6e7f4e522f9f47adb050b17', 'user', 'active', '2026-06-01 09:32:44', '2026-06-01 17:32:44', '2026-06-01 17:32:44', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d38ed899-b52b-4644-b486-2239357fa7d9', '2164440741@qq.com', '120000:92d662a414b348b4e2890b252159eb9e:f93b6bd53db7976d2c0876cb9fb3971e3e17d496c2f610437943cd987e6a87c73337208fecf8c01aed1fb82113c9c240df20718a06dcbf3cba93443a6d71ebea', 'user', 'active', '2026-06-01 11:16:03', '2026-06-01 19:16:03', '2026-06-01 19:16:03', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d5df4751-347b-46ab-bf66-1c77b687ea46', '584836163@qq.com', '120000:348eefbcd4732a77d5b48018d9d5e317:ac127fdb129770256f06a371a30faef09bafd82b7279920e0402e8c0fc1890f523821838a626d87c78e382d0143eb80054011545409800e2e8997a8c689675b0', 'user', 'active', '2026-06-01 09:38:51', '2026-06-01 17:38:51', '2026-06-01 17:38:51', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d632f5fe-e78a-4418-841a-fc8084f02a31', '963643930@qq.com', '120000:a1f571aa912b9e5daaa5b28455d50691:b63672cdbb2bcade0bcaa037a17778a5194ca573099178e0af6bc20ed451a686554d1fba14e5dd32105e97ab4bf2a39a0e3c9463067b31ad9d1f4a69d837cd1e', 'user', 'active', '2026-06-01 09:54:32', '2026-06-01 17:54:32', '2026-06-01 17:54:32', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('d6803fbb-2ffa-45be-b131-f1a6b6bed0ca', '710601149@qq.com', '120000:1c50ba72deb6bcd9728c0f6f814354b5:da8c3665708ff10e8080a1cce06feeff27c3105e3603e27fa1ff48dcfe33bc023afeef2b45bb1d46bfa52afa4d585baae40211e3d365f36a3c7f60917b1d761b', 'user', 'active', '2026-06-04 00:09:01', '2026-06-04 08:09:01', '2026-06-04 08:10:37', 2.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('e7b47fe9-fe4e-43a6-b28b-6d8f7dfa5492', '2048382139@qq.com', '120000:50f48b7df9572cd662b1814930081ba0:c4bdf1a6fb061b7df47b90f189723be4ef871ba4dfb99d6194fa36a57f0391bd1f14ce175f80898255ef07174b81565b6154dc5ab10c2d0507fc092dc6a3d088', 'user', 'active', '2026-06-03 10:03:44', '2026-06-03 18:03:44', '2026-06-03 18:03:44', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('fd75c2d1-6042-4070-9c64-57a749859d42', '712360768@QQ.COM', '120000:f61fb5c6a0aa5627b9d51df075894749:dea051f76753f59424481fcd840e9439031c6a67afb36479f06db77bff492a91b3c1e179e87ce9211897342c966e9e75ac9264f526905e51961bc700ddf3edac', 'user', 'active', '2026-06-01 09:40:49', '2026-06-01 17:40:49', '2026-06-01 17:40:49', 0.0000);
-INSERT INTO public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits) VALUES ('00000000-0000-4000-8000-000000000003', 'ycggtw@qq.com', '$2a$10$ea.7hT0HGnyVGimcPc1LD.L.532D4j5xsWWHm2HbxCHwMeS6l5T1u', 'user', 'active', '2026-05-12 03:51:54', '2026-05-12 03:51:54', '2026-06-03 15:56:44', 79.7200);
+COPY public.users (id, email, password_hash, role, status, email_verified_at, created_at, updated_at, credits, invite_code) FROM stdin;
+9b12d5b4-e32d-4e0d-bc04-eb192f393b1e	admin@local.com	$2a$10$we60QqmiubZSAAUKDc7EKuqUbFcVUNLe7z6GrXGwWdcGSvK1pd5RW	admin	active	2026-06-23 21:34:10.403716	2026-06-23 21:34:10.461921	2026-07-05 20:00:31.476702	74.0800	5DJF4TDR
+019972a8-fb54-4cb7-a222-824fe00a00c0	486861634@qq.com	$2a$10$CGa88ZHBotzbT1RQ0Xk9GuvEMcX3XADnwvrMnjEnknOJ2GdiVfMxu	user	active	2026-07-05 18:59:56.385241	2026-07-05 18:58:36.660606	2026-07-05 18:58:36.660606	0.0000	MBFJYV3G
+\.
 
 
 --
@@ -1312,11 +725,6 @@ ALTER TABLE ONLY public.announcement_users
 
 ALTER TABLE ONLY public.announcements
     ADD CONSTRAINT announcements_pkey PRIMARY KEY (id);
-
-
---
---
-
 
 
 --
@@ -1360,11 +768,6 @@ ALTER TABLE ONLY public.oauth_authorization_codes
 
 
 --
---
-
-
-
---
 -- Name: recharge_orders recharge_orders_out_trade_no_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1378,11 +781,6 @@ ALTER TABLE ONLY public.recharge_orders
 
 ALTER TABLE ONLY public.recharge_orders
     ADD CONSTRAINT recharge_orders_pkey PRIMARY KEY (id);
-
-
---
---
-
 
 
 --
@@ -1455,6 +853,14 @@ ALTER TABLE ONLY public.user_api_keys
 
 ALTER TABLE ONLY public.user_checkins
     ADD CONSTRAINT user_checkins_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_credit_ratio_backup user_credit_ratio_backup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_credit_ratio_backup
+    ADD CONSTRAINT user_credit_ratio_backup_pkey PRIMARY KEY (migration_key, user_id);
 
 
 --
@@ -1539,51 +945,6 @@ CREATE INDEX idx_announcement_users_user_id ON public.announcement_users USING b
 --
 
 CREATE INDEX idx_announcements_status_sort ON public.announcements USING btree (status, sort_order, created_at);
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
-
-
---
---
-
 
 
 --
@@ -1720,11 +1081,6 @@ CREATE INDEX idx_oauth_tokens_user_id ON public.oauth_access_tokens USING btree 
 
 
 --
---
-
-
-
---
 -- Name: idx_recharge_orders_out_trade_no; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1757,11 +1113,6 @@ CREATE INDEX idx_recharge_orders_user_id ON public.recharge_orders USING btree (
 --
 
 CREATE INDEX idx_recharge_orders_user_id_created_at ON public.recharge_orders USING btree (user_id, created_at);
-
-
---
---
-
 
 
 --
@@ -1870,8 +1221,22 @@ CREATE INDEX idx_user_subscriptions_user_status ON public.user_subscriptions USI
 
 
 --
+-- Name: idx_users_invite_code; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_users_invite_code ON public.users USING btree (invite_code);
+
+
+--
+-- Name: uq_users_invite_code; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_users_invite_code ON public.users USING btree (invite_code);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict H10KUMteLsbpeRov8nkDtAT4vla7RO4uw0x7hLj3YXC6cpc072GdzhAKWR2c70K
+\unrestrict v62Lv3YrVWuwkf7g24sTbutecEr2LKc20glWT98cRRRKgkFtSKDOszAnZuUmLG3
 
