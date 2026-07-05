@@ -2,7 +2,7 @@ import { clientApi } from '../common/api.js'
 import { localReceipts, receiptKey, saveReceipt } from '../common/announcementReceipts.js'
 import { formatCurrency, formatDate } from '../common/format.js'
 import { renderMarkdown } from '../common/markdown.js'
-import { pageFromHash } from '../common/navigation.js?v=20260705-ai-pai-brand-v1'
+import { pageFromHash } from '../common/navigation.js?v=20260705-ai-pai-display-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260705-ai-pai-brand-v1'
+const WEB_ASSET_VERSION = '20260705-ai-pai-display-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -45,9 +45,12 @@ const HistoryPage = lazyPage(() => import(`../pages/history.js?v=${WEB_ASSET_VER
 const ProfilePage = lazyPage(() => import(`../pages/profile.js?v=${WEB_ASSET_VERSION}`), 'ProfilePage')
 const InvitePage = lazyPage(() => import(`../pages/invite.js?v=${WEB_ASSET_VERSION}`), 'InvitePage')
 
-function displayBrandName(value, fallback = 'ai-pai') {
+function displayBrandName(value, fallback = 'AI-PAI') {
   const text = String(value || fallback).trim() || fallback
-  return text.replace(/AIπ/g, 'ai-pai').replace(/AI PAI/g, 'ai-pai')
+  return text
+    .replace(/AIπ/g, 'AI-PAI')
+    .replace(/\bAI\s+PAI\b/gi, 'AI-PAI')
+    .replace(/\bai-pai\b/gi, 'AI-PAI')
 }
 
 export const RootApp = {
@@ -65,8 +68,8 @@ export const RootApp = {
     const cachedUser = getCurrentUser()
     const currentUser = ref(cachedUser ? { ...cachedUser } : null)
     const settings = ref(null)
-    const siteName = ref('ai-pai')
-    const logoText = ref('ai-pai')
+    const siteName = ref('AI-PAI')
+    const logoText = ref('AI-PAI')
     const loginOpen = ref(false)
     const authMode = ref('login')
     const subscriptionOpen = ref(false)
@@ -170,7 +173,7 @@ export const RootApp = {
     })
     const shortSiteName = computed(() => {
       const name = displayBrandName(siteName.value)
-      return name.split(/[·-]/)[0]?.trim() || name
+      return name.split(/[·]/)[0]?.trim() || name
     })
     const oauthParams = computed(() => {
       const params = new URLSearchParams(window.location.search)
@@ -869,7 +872,7 @@ export const RootApp = {
             <button class="web-mobile-brand plain-btn" type="button" @click="setPage('home')">
               <img src="/favicon.svg" alt="" />
               <span>
-                <strong>{{ activePage === 'home' ? 'ai-pai' : shortSiteName }}</strong>
+                <strong>{{ activePage === 'home' ? 'AI-PAI' : shortSiteName }}</strong>
                 <small>创作工作台</small>
               </span>
             </button>

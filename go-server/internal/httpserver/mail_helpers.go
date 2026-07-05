@@ -57,6 +57,18 @@ func smtpSettingsFromMap(values map[string]any) smtpSettings {
 	}
 }
 
+func displayBrandName(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "AI-PAI"
+	}
+	normalized := strings.ReplaceAll(text, "AIπ", "AI-PAI")
+	if strings.EqualFold(normalized, "ai-pai") || strings.EqualFold(normalized, "AI PAI") {
+		return "AI-PAI"
+	}
+	return normalized
+}
+
 func sendSMTPMail(settings smtpSettings, to string, subject string, text string, actions ...mailAction) error {
 	if err := settings.validate(); err != nil {
 		return err
@@ -73,9 +85,7 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string,
 	if fromName == "" {
 		fromName = settings.SiteName
 	}
-	if fromName == "" {
-		fromName = "ai-pai"
-	}
+	fromName = displayBrandName(fromName)
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	auth := smtp.PlainAuth("", settings.User, settings.Password, settings.Host)
 	action := mailAction{}
@@ -188,9 +198,7 @@ func buildMailMessage(fromName string, fromAddress string, to string, subject st
 
 func buildMailHTML(fromName string, subject string, text string, action mailAction) string {
 	brand := strings.TrimSpace(fromName)
-	if brand == "" {
-		brand = "ai-pai"
-	}
+	brand = displayBrandName(brand)
 	actionHTML := ""
 	copyLinkHTML := ""
 	actionURL := strings.TrimSpace(action.URL)

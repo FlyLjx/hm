@@ -10,7 +10,7 @@ const mailTemplates = [
     subject: '你的 AI 创作工作台已准备好',
     content: `你好呀，
 
-ai-pai 已经准备好继续创作，你可以用它快速生成海报、产品图、门店物料和社媒配图。
+AI-PAI 已经准备好继续创作，你可以用它快速生成海报、产品图、门店物料和社媒配图。
 
 如果你有常用场景，可以直接从一句需求开始，选择模型和比例后提交生成。
 
@@ -302,7 +302,7 @@ export const MailBroadcastPage = {
             </div>
           </div>
           <article class="mail-preview-card">
-            <div class="mail-preview-brand">ai-pai 通知</div>
+            <div class="mail-preview-brand">AI-PAI 通知</div>
             <div class="mail-preview-subject">{{ form.subject || '未填写邮件标题' }}</div>
             <div class="mail-preview-content">{{ form.content || '未填写邮件正文' }}</div>
             <a v-if="form.actionUrl" class="mail-preview-button" :href="form.actionUrl" target="_blank">{{ form.actionText || '立即查看' }}</a>

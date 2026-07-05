@@ -121,7 +121,7 @@ export const InvitePage = {
         notifyError(new Error('邀请码生成中，请稍后刷新'))
         return
       }
-      const site = props.siteName || 'ai-pai'
+      const site = props.siteName || 'AI-PAI'
       const text = `${site} 可以对话生图、参考图改图和保存作品。用我的邀请链接注册即可开始体验：${inviteUrl.value}`
       copyText(text, '邀请文案已复制')
     }

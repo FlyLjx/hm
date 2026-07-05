@@ -3,8 +3,8 @@ package settings
 type Settings map[string]any
 
 var Defaults = Settings{
-	"siteName":                  "ai-pai",
-	"logoText":                  "ai-pai",
+	"siteName":                  "AI-PAI",
+	"logoText":                  "AI-PAI",
 	"frontendUrl":               "http://localhost:5173",
 	"backendUrl":                "http://localhost:3001",
 	"supportEnabled":            true,
@@ -34,7 +34,7 @@ var Defaults = Settings{
 	"emailSecure":               true,
 	"emailUser":                 "",
 	"emailPassword":             "",
-	"emailFromName":             "ai-pai",
+	"emailFromName":             "AI-PAI",
 	"emailFromAddress":          "",
 	"registerEmailVerification": false,
 	"accountPoolEndpoint":       "https://free-api.yccc.me/api/accounts",

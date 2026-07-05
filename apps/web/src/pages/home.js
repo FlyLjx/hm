@@ -33,7 +33,7 @@ export const HomePage = {
 
           <div class="ai-pai-home-copy">
             <span class="ai-pai-home-kicker">AI IMAGE CREATOR</span>
-            <h1>ai-pai</h1>
+            <h1>AI-PAI</h1>
             <p>用 AI 生成高质量图片，进入对话生图后选择模型、比例和参数继续创作。</p>
           </div>
 

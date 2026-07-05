@@ -90,8 +90,8 @@ func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {
 	if settingValues, err := settings.NewRepository(r.db).Get(ctx); err == nil {
 		smtpConfig := smtpSettingsFromMap(settingValues)
 		if smtpConfig.validate() == nil {
-			body := "你正在重置 ai-pai 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-			if err := sendSMTPMail(smtpConfig, user.Email, "重置 ai-pai 账户密码", body); err != nil {
+			body := "你正在重置 AI-PAI 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
+			if err := sendSMTPMail(smtpConfig, user.Email, "重置 AI-PAI 账户密码", body); err != nil {
 				message = "密码重置链接已生成，但邮件发送失败：" + err.Error()
 			} else {
 				message = "密码重置邮件已发送，请查收。"
@@ -149,9 +149,7 @@ func (r *Router) sendRegistrationVerification(ctx context.Context, req *http.Req
 	smtpConfig := smtpSettingsFromMap(settingValues)
 	if smtpConfig.validate() == nil {
 		siteName := strings.TrimSpace(anyString(settingValues["siteName"]))
-		if siteName == "" {
-			siteName = "ai-pai"
-		}
+		siteName = displayBrandName(siteName)
 		body := "你正在注册 " + siteName + " 账号，请在 24 小时内打开以下链接完成邮箱验证：\n\n" + verifyURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
 		if err := sendSMTPMail(smtpConfig, user.Email, "验证 "+siteName+" 账号邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
 			message = "注册成功，但验证邮件发送失败：" + err.Error()

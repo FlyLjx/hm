@@ -5,8 +5,8 @@ const { computed, reactive, ref, watch } = Vue
 const { message, Modal } = antd
 
 const defaultSettings = {
-  siteName: 'ai-pai',
-  logoText: 'ai-pai',
+  siteName: 'AI-PAI',
+  logoText: 'AI-PAI',
   frontendUrl: window.location.origin,
   backendUrl: window.location.origin,
   supportEnabled: true,
@@ -33,9 +33,21 @@ const defaultSettings = {
   emailSecure: true,
   emailUser: '',
   emailPassword: '',
-  emailFromName: 'ai-pai',
+  emailFromName: 'AI-PAI',
   emailFromAddress: '',
   registerEmailVerification: false,
+}
+
+function displayBrandName(value, fallback = 'AI-PAI') {
+  const text = String(value || fallback).trim() || fallback
+  const normalized = text.replace(/AIπ/g, 'AI-PAI')
+  return /^(ai-pai|ai\s+pai)$/i.test(normalized) ? 'AI-PAI' : normalized
+}
+
+function normalizeBrandFields(target) {
+  ;['siteName', 'logoText', 'emailFromName'].forEach((key) => {
+    target[key] = displayBrandName(target[key])
+  })
 }
 
 export const SettingsPage = {
@@ -43,6 +55,7 @@ export const SettingsPage = {
   emits: ['refresh-settings'],
   setup(props, { emit }) {
     const form = reactive({ ...defaultSettings, ...(props.settings || {}) })
+    normalizeBrandFields(form)
     const settingsVisible = ref(false)
     const groups = [
       { title: '站点与注册', fields: [
@@ -68,7 +81,7 @@ export const SettingsPage = {
       ] },
     ]
     const statusItems = computed(() => [
-      ['当前站点', form.siteName || 'ai-pai'],
+      ['当前站点', displayBrandName(form.siteName)],
       ['注册状态', form.registerMode === 'closed' ? '关闭注册' : '开放注册'],
       ['免费额度', `${toNumber(form.freeHourlyGenerationQuota, 2)} 张/小时 · ${toNumber(form.freeDailyGenerationQuota, 5)} 张/日 · ${toNumber(form.freeGenerationQuota, 10)} 张/月`],
       ['生图模式', form.streamGenerationEnabled ? '流式' : '普通'],
@@ -76,6 +89,7 @@ export const SettingsPage = {
     ])
     watch(() => props.settings, (next) => {
       Object.assign(form, defaultSettings, next || {})
+      normalizeBrandFields(form)
     }, { deep: true })
 
     function normalizeInput() {
@@ -83,6 +97,7 @@ export const SettingsPage = {
       groups.forEach((group) => group.fields.forEach((field) => { input[field.key] = form[field.key] }))
       ;['supportEnabled', 'streamGenerationEnabled', 'emailEnabled', 'emailSecure', 'registerEmailVerification'].forEach((key) => { input[key] = input[key] === true || input[key] === 'true' })
       ;['freeHourlyGenerationQuota', 'freeDailyGenerationQuota', 'freeGenerationQuota', 'taskTimeoutMinutes', 'emailPort'].forEach((key) => { input[key] = toNumber(input[key], defaultSettings[key]) })
+      normalizeBrandFields(input)
       input.frontendUrl = input.frontendUrl || window.location.origin
       input.backendUrl = input.backendUrl || window.location.origin
       return input
