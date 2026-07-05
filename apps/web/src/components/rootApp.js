@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260705-ai-pai-display-v1'
+const WEB_ASSET_VERSION = '20260705-ai-brand-title-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -65,6 +65,7 @@ export const RootApp = {
   },
   setup() {
     const activePage = ref(pageFromHash())
+    const brandIconUrl = `/favicon.svg?v=${WEB_ASSET_VERSION}`
     const cachedUser = getCurrentUser()
     const currentUser = ref(cachedUser ? { ...cachedUser } : null)
     const settings = ref(null)
@@ -790,6 +791,7 @@ export const RootApp = {
 
     return {
       activePage,
+      brandIconUrl,
       currentUser,
       settings,
       siteName,
@@ -870,9 +872,9 @@ export const RootApp = {
         <header class="web-topbar">
           <div class="web-nav-left">
             <button class="web-mobile-brand plain-btn" type="button" @click="setPage('home')">
-              <img src="/favicon.svg" alt="" />
+              <img :src="brandIconUrl" alt="" />
               <span>
-                <strong>{{ activePage === 'home' ? 'AI-PAI' : shortSiteName }}</strong>
+                <strong>AI PAI</strong>
                 <small>创作工作台</small>
               </span>
             </button>

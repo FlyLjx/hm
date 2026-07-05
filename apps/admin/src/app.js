@@ -2,7 +2,7 @@ import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.j
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260705-ai-pai-display-v1'
+const ADMIN_ASSET_VERSION = '20260705-ai-logo-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -174,7 +174,7 @@ const App = {
     <div v-if="authChecking" class="admin-login-page"><div class="admin-login-card"><div class="admin-login-title">正在验证后台登录</div></div></div>
     <div v-else-if="!authed" class="admin-login-page">
       <form class="admin-login-card" @submit.prevent="login">
-        <div class="admin-login-logo">AI-PAI</div>
+        <div class="admin-login-logo">AI</div>
         <div class="admin-login-title">后台管理登录</div>
         <div class="admin-login-subtitle">请使用管理员账号进入控制台</div>
         <a-input v-model:value="loginForm.email" size="large" placeholder="管理员账号 / 邮箱" autocomplete="username" />
@@ -185,7 +185,7 @@ const App = {
     <div v-else class="admin-shell">
       <div class="admin-mobile-scrim" :class="{ 'is-open': mobileMenuOpen }" @click="closeMobileMenu"></div>
       <aside class="admin-sidebar" :class="{ 'is-open': mobileMenuOpen }">
-        <a class="admin-brand" href="#/console"><span class="admin-brand-mark">AI-PAI</span><span>{{ displayLogoText }} Admin</span></a>
+        <a class="admin-brand" href="#/console"><span class="admin-brand-mark">AI</span><span>{{ displayLogoText }} Admin</span></a>
         <div v-for="group in menuGroups" :key="group.title" class="admin-menu-group">
           <div class="admin-menu-title">{{ group.title }}</div>
           <div v-for="item in group.items" :key="item.id" class="admin-menu-item" :class="{ 'is-active': activeMenuId === item.id }" @click="navigate(item.id)">
