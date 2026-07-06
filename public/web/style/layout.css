@@ -3995,10 +3995,62 @@ body.chat-page-active .support-float {
 
 @media (max-width: 860px) {
   .web-bottom-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     border-radius: 10px;
   }
 
   .web-bottom-nav button.active {
     color: #111;
+  }
+
+  body .mobile-account-panel {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1200;
+    display: grid;
+    width: min(264px, calc(100vw - 86px));
+    height: 100dvh;
+    grid-column: auto;
+    align-content: start;
+    gap: 10px;
+    padding: 14px 10px max(14px, env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    border: 0;
+    border-right: 1px solid #dcebe2;
+    border-radius: 0;
+    background: rgba(255, 255, 255, .985);
+    box-shadow: 12px 0 32px rgba(21, 69, 42, .14);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body .mobile-account-summary {
+    padding: 0 2px 12px;
+  }
+
+  body .mobile-account-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  body .mobile-account-actions button {
+    display: grid;
+    min-height: 40px;
+    grid-template-columns: 26px minmax(0, 1fr);
+    place-items: initial;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    border-radius: 7px;
+    background: #fff;
+    text-align: left;
+  }
+
+  body .mobile-account-actions i {
+    justify-self: center;
+    font-size: 17px;
+  }
+
+  body .support-float {
+    display: none !important;
   }
 }

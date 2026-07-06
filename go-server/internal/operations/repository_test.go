@@ -31,7 +31,7 @@ func TestGenerationUsageQuantityFallsBackToRequestedQuantity(t *testing.T) {
 func TestShouldHitLotteryPrizeReturnsFalseWhenMonthlyLimitIsUsed(t *testing.T) {
 	got, err := shouldHitLotteryPrize([]LotteryPrize{
 		{MonthlyStock: 7, MonthUsed: 7, Weight: 1},
-	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 100)
+	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 100, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestShouldHitLotteryPrizeReturnsFalseWhenMonthlyLimitIsUsed(t *testing.T) {
 func TestShouldHitLotteryPrizeAllowsUnlimitedPrize(t *testing.T) {
 	got, err := shouldHitLotteryPrize([]LotteryPrize{
 		{MonthlyStock: 0, MonthUsed: 0, Weight: 1},
-	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 100)
+	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 100, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,26 @@ func TestShouldHitLotteryPrizeAllowsUnlimitedPrize(t *testing.T) {
 	}
 }
 
-func TestShouldHitLotteryPrizeCatchesUpNearMonthEnd(t *testing.T) {
-	got, err := shouldHitLotteryPrize([]LotteryPrize{
+func TestLotteryHitThresholdUsesConservativeGlobalDrawEstimate(t *testing.T) {
+	got := lotteryHitThreshold([]LotteryPrize{
 		{MonthlyStock: 7, MonthUsed: 1, Weight: 1},
-	}, time.Date(2026, 7, 31, 12, 0, 0, 0, time.Local), 100)
-	if err != nil {
-		t.Fatal(err)
+	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 1, 1)
+	if got <= 0 {
+		t.Fatal("expected a positive hit threshold")
 	}
-	if !got {
-		t.Fatal("expected remaining monthly quota to be drawable near month end")
+	if got >= 30 {
+		t.Fatalf("expected conservative probability below 0.3%%, got threshold %d", got)
+	}
+}
+
+func TestLotteryHitThresholdScalesWithActiveUsers(t *testing.T) {
+	oneUser := lotteryHitThreshold([]LotteryPrize{
+		{MonthlyStock: 7, MonthUsed: 1, Weight: 1},
+	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 1, 1)
+	manyUsers := lotteryHitThreshold([]LotteryPrize{
+		{MonthlyStock: 7, MonthUsed: 1, Weight: 1},
+	}, time.Date(2026, 7, 6, 12, 0, 0, 0, time.Local), 1, 1000)
+	if manyUsers >= oneUser {
+		t.Fatalf("expected lower probability with more active users, got one=%d many=%d", oneUser, manyUsers)
 	}
 }

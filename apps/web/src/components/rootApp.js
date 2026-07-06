@@ -1,8 +1,8 @@
-import { clientApi } from '../common/api.js?v=20260706-lottery-copy-v1'
+import { clientApi } from '../common/api.js?v=20260706-mobile-fit-v7'
 import { localReceipts, receiptKey, saveReceipt } from '../common/announcementReceipts.js'
 import { formatCurrency, formatDate } from '../common/format.js'
 import { renderMarkdown } from '../common/markdown.js'
-import { pageFromHash } from '../common/navigation.js?v=20260706-lottery-copy-v1'
+import { pageFromHash } from '../common/navigation.js?v=20260706-mobile-fit-v7'
 import { notifyError, notifySuccess } from '../common/notify.js'
 import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260706-lottery-copy-v1'
+const WEB_ASSET_VERSION = '20260706-mobile-fit-v7'
 
 const PageLoading = markRaw({
   template: `
@@ -1239,4 +1239,3 @@ export const RootApp = {
     </main>
   `,
 }
-

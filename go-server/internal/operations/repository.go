@@ -23,6 +23,8 @@ type Repository struct {
 var ErrNoLotteryPrize = errors.New("no active lottery prize")
 
 const lotteryAutoThanksPrizeID = "auto-thanks"
+const lotteryChanceScale = 10000
+const lotteryBaselineDailyDraws = 100
 
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
@@ -1141,7 +1143,11 @@ func (r *Repository) DrawSubscriptionLottery(ctx context.Context, userID string,
 		if err != nil {
 			return nil, err
 		}
-		shouldHit, err := shouldHitLotteryPrize(prizes, time.Now(), monthDrawCount)
+		activeUserCount, err := lotteryActiveUserCount(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		shouldHit, err := shouldHitLotteryPrize(prizes, time.Now(), monthDrawCount, activeUserCount)
 		if err != nil {
 			return nil, err
 		}
@@ -1397,6 +1403,12 @@ func lotteryMonthDrawCount(ctx context.Context, tx *database.Tx, monthStart stri
 	return total, err
 }
 
+func lotteryActiveUserCount(ctx context.Context, tx *database.Tx) (int, error) {
+	var total int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE status='active'`).Scan(&total)
+	return total, err
+}
+
 func chooseLotteryPrize(items []LotteryPrize) (LotteryPrize, error) {
 	total := 0
 	for _, item := range items {
@@ -1425,7 +1437,22 @@ func chooseLotteryPrize(items []LotteryPrize) (LotteryPrize, error) {
 	return items[len(items)-1], nil
 }
 
-func shouldHitLotteryPrize(items []LotteryPrize, now time.Time, monthDrawCount int) (bool, error) {
+func shouldHitLotteryPrize(items []LotteryPrize, now time.Time, monthDrawCount int, activeUserCount int) (bool, error) {
+	threshold := lotteryHitThreshold(items, now, monthDrawCount, activeUserCount)
+	if threshold <= 0 {
+		return false, nil
+	}
+	if threshold >= lotteryChanceScale {
+		return true, nil
+	}
+	value, err := rand.Int(rand.Reader, big.NewInt(lotteryChanceScale))
+	if err != nil {
+		return false, err
+	}
+	return int(value.Int64()) < threshold, nil
+}
+
+func lotteryHitThreshold(items []LotteryPrize, now time.Time, monthDrawCount int, activeUserCount int) int {
 	remaining := 0
 	hasMonthlyLimit := false
 	hasUnlimitedPrize := false
@@ -1441,13 +1468,13 @@ func shouldHitLotteryPrize(items []LotteryPrize, now time.Time, monthDrawCount i
 		}
 	}
 	if !hasMonthlyLimit {
-		return true, nil
+		return lotteryChanceScale
 	}
 	if hasUnlimitedPrize {
-		return true, nil
+		return lotteryChanceScale
 	}
 	if remaining <= 0 {
-		return false, nil
+		return 0
 	}
 	_, _, daysInMonth, daysRemaining := lotteryMonthWindow(now)
 	if daysInMonth <= 0 {
@@ -1456,39 +1483,40 @@ func shouldHitLotteryPrize(items []LotteryPrize, now time.Time, monthDrawCount i
 	if daysRemaining <= 0 {
 		daysRemaining = 1
 	}
-	if remaining >= daysRemaining {
-		return true, nil
-	}
 	if monthDrawCount < 0 {
 		monthDrawCount = 0
+	}
+	if activeUserCount < 1 {
+		activeUserCount = 1
 	}
 	elapsedDays := daysInMonth - daysRemaining + 1
 	if elapsedDays < 1 {
 		elapsedDays = 1
 	}
-	projectedMonthDraws := daysInMonth
+	projectedMonthDraws := 0
 	if monthDrawCount > 0 {
 		projectedMonthDraws = (monthDrawCount*daysInMonth + elapsedDays - 1) / elapsedDays
-		if projectedMonthDraws < daysInMonth {
-			projectedMonthDraws = daysInMonth
-		}
+	}
+	baselineDailyDraws := activeUserCount
+	if baselineDailyDraws < lotteryBaselineDailyDraws {
+		baselineDailyDraws = lotteryBaselineDailyDraws
+	}
+	baselineMonthDraws := baselineDailyDraws * daysInMonth
+	if projectedMonthDraws < baselineMonthDraws {
+		projectedMonthDraws = baselineMonthDraws
 	}
 	estimatedRemainingDraws := projectedMonthDraws - monthDrawCount
 	if estimatedRemainingDraws < daysRemaining {
 		estimatedRemainingDraws = daysRemaining
 	}
 	if estimatedRemainingDraws <= remaining {
-		return true, nil
+		return lotteryChanceScale
 	}
-	threshold := (remaining*10000 + estimatedRemainingDraws - 1) / estimatedRemainingDraws
-	if threshold > 10000 {
-		threshold = 10000
+	threshold := (remaining*lotteryChanceScale + estimatedRemainingDraws - 1) / estimatedRemainingDraws
+	if threshold > lotteryChanceScale {
+		threshold = lotteryChanceScale
 	}
-	value, err := rand.Int(rand.Reader, big.NewInt(10000))
-	if err != nil {
-		return false, err
-	}
-	return int(value.Int64()) < threshold, nil
+	return threshold
 }
 
 func lotteryMonthWindow(now time.Time) (string, string, int, int) {

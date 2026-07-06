@@ -276,7 +276,7 @@ export const LotteryPage = {
                     <strong>{{ prizeNameText(item) }}</strong>
                     <small v-if="!isThanksPrize(item)">{{ item.planName || '订阅套餐' }} · {{ durationText(item.durationDays) }} · {{ quotaText(item.quotaImages) }}</small>
                   </div>
-                  <em v-if="!isThanksPrize(item)">{{ item.monthlyText || '本月不限' }}</em>
+                  <em v-if="!isThanksPrize(item)">全站 {{ item.monthlyText || '本月不限' }}</em>
                 </div>
               </div>
               <div v-else class="lottery-empty">

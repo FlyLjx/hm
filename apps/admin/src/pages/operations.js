@@ -36,7 +36,7 @@ export const OperationsPage = {
     const lotteryPrizeFields = computed(() => [
       { key: 'name', label: '奖品名称', required: true, defaultValue: '订阅奖励' },
       { key: 'planId', label: '订阅套餐', type: 'select', options: subscriptionPlanOptions.value },
-      { key: 'monthlyStock', label: '月中奖上限（0 为不限）', type: 'number', number: true, defaultValue: 7 },
+      { key: 'monthlyStock', label: '全站月中奖上限（0 为不限）', type: 'number', number: true, defaultValue: 7 },
       { key: 'sortOrder', label: '排序', type: 'number', number: true, defaultValue: 0 },
       { key: 'status', label: '状态', type: 'select', defaultValue: 'active', options: [{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }] },
     ])
@@ -212,7 +212,7 @@ export const OperationsPage = {
       </a-drawer>
     </div>
     <div v-else-if="mode === 'lottery'" class="feature-page-stack">
-      <CrudPage title="抽奖奖池" singular="奖品" description="只配置可中奖订阅和月中奖上限，未命中由系统自动返回谢谢惠顾。"
+      <CrudPage title="抽奖奖池" singular="奖品" description="只配置可中奖订阅和全站月中奖上限，所有用户合计到达上限后自动返回谢谢惠顾；上限是最多中奖数，不保证发满。"
         :list="adminApi.listLotteryPrizes"
         :create="input => adminApi.createLotteryPrize(normalizeLotteryPrize(input))"
         :update="(id, input) => adminApi.updateLotteryPrize(id, normalizeLotteryPrize(input))"
@@ -223,7 +223,7 @@ export const OperationsPage = {
           { label: '订阅套餐', render: lotteryPlanLabel, width: 180 },
           { label: '有效期', render: lotteryDurationLabel, width: 100 },
           { label: '额度', render: lotteryQuotaLabel, width: 100 },
-          { label: '本月剩余', render: row => row.monthlyText || '本月不限', width: 120 },
+          { label: '全站本月剩余', render: row => row.monthlyText || '本月不限', width: 140 },
           { label: '排序', key: 'sortOrder', width: 90 },
           { label: '状态', key: 'status', format: 'status', width: 90 },
           { label: '更新时间', key: 'updatedAt', format: 'date', width: 180 },
