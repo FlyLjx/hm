@@ -223,6 +223,36 @@ func TestCallImageJSONRetriesTransientCurl56Error(t *testing.T) {
 	}
 }
 
+func TestCallImageJSONRetriesHTMLGatewayTimeout(t *testing.T) {
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt64(&requestCount, 1)
+		if count == 1 {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusGatewayTimeout)
+			_, _ = w.Write([]byte("<html><body><h1>504 Gateway Time-out</h1></body></html>"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": "https://cdn.example.test/html-timeout-retry.png"}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	result, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	if err != nil {
+		t.Fatalf("callImageJSON returned error after HTML 504 retry: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("expected one retry after HTML 504, got %d requests", requestCount)
+	}
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://cdn.example.test/html-timeout-retry.png" {
+		t.Fatalf("unexpected images after HTML 504 retry: %#v", images)
+	}
+}
+
 func TestCallImageJSONRejectsHTMLResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

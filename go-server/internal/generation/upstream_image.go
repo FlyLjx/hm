@@ -145,7 +145,7 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 		)
 	}
 	if isHTMLResponse(resp, responseBytes) {
-		return nil, errors.New("上游返回了网页 HTML，不是图片接口 JSON，请检查接口 Base URL")
+		return nil, htmlImageUpstreamError(resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message := errorMessage
@@ -171,6 +171,24 @@ type imageUpstreamHTTPError struct {
 
 func (e imageUpstreamHTTPError) Error() string {
 	return e.message
+}
+
+func htmlImageUpstreamError(status int) error {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return imageUpstreamHTTPError{
+			status:  status,
+			message: fmt.Sprintf("上游服务网关超时或不可用（HTTP %d），请稍后重试或切换接口", status),
+		}
+	default:
+		if status < 200 || status >= 300 {
+			return imageUpstreamHTTPError{
+				status:  status,
+				message: fmt.Sprintf("上游接口返回了 HTML 错误页（HTTP %d），请检查接口服务状态或 Base URL", status),
+			}
+		}
+		return errors.New("上游返回了网页 HTML，不是图片接口 JSON，请检查接口 Base URL")
+	}
 }
 
 func isRetryableImageUpstreamError(err error) bool {
