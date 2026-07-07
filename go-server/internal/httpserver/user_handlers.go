@@ -108,6 +108,10 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.updateUserStatus(w, req, strings.TrimSuffix(path, "/status"))
 		return
 	}
+	if strings.HasSuffix(path, "/subscription") {
+		r.grantUserSubscription(w, req, strings.TrimSuffix(path, "/subscription"))
+		return
+	}
 	if !strings.Contains(strings.Trim(path, "/"), "/") {
 		switch req.Method {
 		case http.MethodPatch:
@@ -346,8 +350,51 @@ func (r *Router) listUsers(w http.ResponseWriter, req *http.Request) {
 	data := make([]users.PublicUser, 0, len(items))
 	for index := range items {
 		item := items[index]
-		data = append(data, users.ToPublicUser(&item))
+		data = append(data, r.publicUserWithSubscription(ctx, &item))
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	var input struct {
+		PlanID string `json:"planId"`
+	}
+	if err := decodeCompatJSON(req, &input); err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+		return
+	}
+	id = strings.Trim(id, "/")
+	input.PlanID = strings.TrimSpace(input.PlanID)
+	if id == "" || input.PlanID == "" {
+		writeError(w, newAppError(http.StatusBadRequest, "请选择用户和订阅套餐"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	repo := operations.NewRepository(r.db)
+	if err := repo.GrantSubscription(ctx, id, input.PlanID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, newAppError(http.StatusNotFound, "用户或订阅套餐不存在"))
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	user, err := users.NewRepository(r.db).FindByID(ctx, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	data := r.publicUserWithSubscription(ctx, user)
+	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 

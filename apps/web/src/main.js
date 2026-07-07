@@ -1,4 +1,4 @@
-import { RootApp } from './components/rootApp.js?v=20260706-mobile-fit-v7'
+import { RootApp } from './components/rootApp.js?v=20260707-subscription-dialog-compact-v1'
 
 const app = Vue.createApp(RootApp)
 

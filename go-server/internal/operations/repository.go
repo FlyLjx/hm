@@ -317,6 +317,32 @@ func (r *Repository) DeletePlan(ctx context.Context, id string) (bool, error) {
 	return affected(result, err)
 }
 
+func (r *Repository) GrantSubscription(ctx context.Context, userID string, planID string) error {
+	userID = strings.TrimSpace(userID)
+	planID = strings.TrimSpace(planID)
+	if userID == "" || planID == "" {
+		return sql.ErrNoRows
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var existingUserID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? FOR UPDATE`, userID).Scan(&existingUserID); err != nil {
+		return err
+	}
+	var activePlanID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM subscription_plans WHERE id=? AND status='active' FOR UPDATE`, planID).Scan(&activePlanID); err != nil {
+		return err
+	}
+	if err := grantSubscriptionInTx(ctx, tx, existingUserID, activePlanID, 0, time.Now()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) CurrentSubscription(ctx context.Context, userID string, freeLimits FreeQuotaLimits) (*SubscriptionEntitlement, error) {
 	entitlement, err := r.currentPaidSubscription(ctx, userID)
 	if err != nil && err != sql.ErrNoRows {

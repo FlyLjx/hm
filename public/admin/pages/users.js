@@ -1,4 +1,4 @@
-import { adminApi } from '../api.js'
+import { adminApi } from '../api.js?v=20260707-admin-grant-subscription-v2'
 import { amount, formatDate, statusItem, text } from '../format.js'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
@@ -23,6 +23,11 @@ export const UsersPage = {
     const activityRanking = ref([])
     const activityLoading = ref(false)
     const activityDays = ref(7)
+    const subscriptionPlans = ref([])
+    const subscriptionVisible = ref(false)
+    const subscriptionUser = ref(null)
+    const subscriptionSaving = ref(false)
+    const subscriptionForm = reactive({ planId: '' })
 
     async function load() {
       loading.value = true
@@ -45,6 +50,16 @@ export const UsersPage = {
         message.error(error instanceof Error ? error.message : '加载活跃排名失败')
       } finally {
         activityLoading.value = false
+      }
+    }
+
+    async function loadSubscriptionPlans() {
+      try {
+        const response = await adminApi.listSubscriptionPlans()
+        subscriptionPlans.value = (response.data || []).filter((plan) => plan.status === 'active')
+      } catch (error) {
+        subscriptionPlans.value = []
+        message.error(error instanceof Error ? error.message : '加载订阅套餐失败')
       }
     }
 
@@ -71,6 +86,11 @@ export const UsersPage = {
       successTasks: activityRanking.value.reduce((sum, row) => sum + Number(row.successTasks || 0), 0),
       images: activityRanking.value.reduce((sum, row) => sum + Number(row.successImages || 0), 0),
     }))
+    const subscriptionPlanOptions = computed(() => subscriptionPlans.value.map((plan) => ({
+      label: `${plan.name} / ${plan.durationDays} 天 / ${amount(plan.quotaImages || 0)} 张`,
+      value: plan.id,
+      searchText: `${plan.name || ''} ${plan.description || ''}`,
+    })))
 
     watch([query, role, status], () => { page.value = 1 })
     watch(activityDays, loadActivityRanking)
@@ -137,6 +157,41 @@ export const UsersPage = {
       }
     }
 
+    async function openGrantSubscription(row) {
+      subscriptionUser.value = row
+      subscriptionForm.planId = subscriptionPlans.value[0]?.id || ''
+      subscriptionVisible.value = true
+      if (!subscriptionPlans.value.length) {
+        await loadSubscriptionPlans()
+        subscriptionForm.planId = subscriptionPlans.value[0]?.id || ''
+      }
+    }
+
+    async function saveSubscription() {
+      if (!subscriptionUser.value?.id) {
+        message.warning('请选择用户')
+        return
+      }
+      if (!subscriptionForm.planId) {
+        message.warning('请选择订阅套餐')
+        return
+      }
+      subscriptionSaving.value = true
+      try {
+        await adminApi.grantUserSubscription(subscriptionUser.value.id, { planId: subscriptionForm.planId })
+        message.success('订阅已开通')
+        subscriptionVisible.value = false
+        await load()
+        if (detailVisible.value && detailUser.value?.id === subscriptionUser.value.id) {
+          await openDetails(subscriptionUser.value)
+        }
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '开通订阅失败')
+      } finally {
+        subscriptionSaving.value = false
+      }
+    }
+
     function subscriptionLabel(row) {
       const subscription = row?.subscription
       if (!subscription || subscription.status !== 'active') return '未订阅'
@@ -156,11 +211,12 @@ export const UsersPage = {
     onMounted(() => {
       load()
       loadActivityRanking()
+      loadSubscriptionPlans()
     })
     return {
       rows, loading, query, role, status, page, pageSize, editVisible, editing, form,
-      detailVisible, detailUser, detailLoading, detailData, activityRanking, activityLoading, activityDays, activitySummary, filteredRows, visibleRows, summary, load, loadActivityRanking, resetFilters, openCreate,
-      openEdit, saveUser, deleteUser, openDetails, subscriptionLabel, subscriptionColor, subscriptionExpireText,
+      detailVisible, detailUser, detailLoading, detailData, activityRanking, activityLoading, activityDays, activitySummary, subscriptionPlans, subscriptionVisible, subscriptionUser, subscriptionSaving, subscriptionForm, subscriptionPlanOptions, filteredRows, visibleRows, summary, load, loadActivityRanking, loadSubscriptionPlans, resetFilters, openCreate,
+      openEdit, saveUser, deleteUser, openDetails, openGrantSubscription, saveSubscription, subscriptionLabel, subscriptionColor, subscriptionExpireText,
       amount, formatDate, statusItem, text,
     }
   },
@@ -274,6 +330,7 @@ export const UsersPage = {
                     <div class="table-actions">
                       <a-button type="link" size="small" @click="openEdit(row)">编辑</a-button>
                       <a-button type="link" size="small" @click="openDetails(row)">明细</a-button>
+                      <a-button type="link" size="small" @click="openGrantSubscription(row)">订阅</a-button>
                       <a-button type="link" size="small" danger @click="deleteUser(row)">删除</a-button>
                     </div>
                   </td>
@@ -306,10 +363,54 @@ export const UsersPage = {
         </template>
       </a-drawer>
 
+      <a-drawer
+        v-model:open="subscriptionVisible"
+        :title="'开通订阅 - ' + (subscriptionUser?.email || '')"
+        width="min(92vw, 560px)"
+        class="admin-edit-drawer"
+        destroy-on-close
+      >
+        <div class="form-grid drawer-form-grid">
+          <label>
+            <div class="muted">当前订阅</div>
+            <a-input :value="subscriptionLabel(subscriptionUser)" disabled />
+          </label>
+          <label>
+            <div class="muted">当前到期时间</div>
+            <a-input :value="subscriptionExpireText(subscriptionUser)" disabled />
+          </label>
+          <label style="grid-column: 1 / -1">
+            <div class="muted">选择订阅套餐</div>
+            <a-select
+              v-model:value="subscriptionForm.planId"
+              show-search
+              allow-clear
+              option-filter-prop="searchText"
+              placeholder="请选择要开通或追加的订阅套餐"
+              style="width:100%"
+            >
+              <a-select-option v-for="plan in subscriptionPlanOptions" :key="plan.value" :value="plan.value" :label="plan.label" :search-text="plan.searchText">{{ plan.label }}</a-select-option>
+            </a-select>
+          </label>
+        </div>
+        <div class="page-desc" style="margin-top:14px">
+          保存后会按套餐有效期追加订阅；如果用户当前订阅未过期，会从现有到期时间继续延长。
+        </div>
+        <template #footer>
+          <div class="drawer-footer-actions">
+            <a-button @click="subscriptionVisible = false">取消</a-button>
+            <a-button type="primary" :loading="subscriptionSaving" @click="saveSubscription">开通订阅</a-button>
+          </div>
+        </template>
+      </a-drawer>
+
       <a-drawer v-model:open="detailVisible" :title="(detailUser?.email || '') + ' 明细'" width="min(96vw, 1080px)">
         <a-spin :spinning="detailLoading">
           <section class="page-panel" style="margin-bottom:16px">
-            <div class="page-hero"><div><div class="page-title" style="font-size:16px">订阅状态</div></div></div>
+            <div class="page-hero">
+              <div><div class="page-title" style="font-size:16px">订阅状态</div></div>
+              <a-button type="primary" @click="openGrantSubscription(detailData?.user || detailUser)">开通订阅</a-button>
+            </div>
             <div class="summary-grid" style="padding:16px">
               <div class="summary-card"><span>当前套餐</span><b style="font-size:18px">{{ subscriptionLabel(detailData?.user || detailUser) }}</b></div>
               <div class="summary-card"><span>到期时间</span><b style="font-size:18px">{{ subscriptionExpireText(detailData?.user || detailUser) }}</b></div>

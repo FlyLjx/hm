@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI PAI 迁移通知</title>
+  <style>
+    :root {
+      --green: #2b9a70;
+      --green-dark: #174536;
+      --green-light: #edf9f3;
+      --text: #1f2d28;
+      --muted: #68766f;
+      --line: #e4ede8;
+      font-family: "Inter", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--text);
+      background: #f7fbf8;
+    }
+
+    .notice {
+      width: min(100%, 620px);
+      padding: 42px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: #ffffff;
+      box-shadow: 0 18px 50px rgba(20, 70, 50, 0.08);
+      text-align: center;
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 48px;
+      margin-bottom: 22px;
+      border-radius: 15px;
+      color: #ffffff;
+      background: linear-gradient(135deg, #35bf86, #1f7a5c);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--green-dark);
+      font-size: 34px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .desc {
+      margin: 18px auto 0;
+      max-width: 480px;
+      color: #40524a;
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
+    .date {
+      margin: 24px auto 0;
+      padding: 14px 18px;
+      border-radius: 14px;
+      color: var(--green-dark);
+      background: var(--green-light);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.6;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 150px;
+      height: 46px;
+      padding: 0 20px;
+      border: 1px solid transparent;
+      border-radius: 13px;
+      font-size: 15px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .button.primary {
+      color: #ffffff;
+      background: var(--green);
+    }
+
+    .button.secondary {
+      color: var(--green-dark);
+      border-color: var(--line);
+      background: #ffffff;
+    }
+
+    .note {
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 560px) {
+      .notice {
+        padding: 32px 22px;
+        border-radius: 20px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="notice">
+    <div class="logo">AI</div>
+    <h1>AI PAI 服务迁移通知</h1>
+    <p class="desc">
+      AI PAI 已完成新版本迁移。请尽快前往新站点使用服务，旧站点将仅保留短期访问。
+    </p>
+    <div class="date">
+      迁移过渡期：7 天<br />
+      旧站停止维护前，请及时保存需要保留的内容。
+    </div>
+    <div class="actions">
+      <a class="button primary" href="https://example.com">前往新站点</a>
+      <a class="button secondary" href="https://example.com/contact">联系客服</a>
+    </div>
+    <p class="note">
+      如账号余款、余额或历史权益需要处理，请联系客服协助迁移或结算。
+    </p>
+  </main>
+</body>
+</html>

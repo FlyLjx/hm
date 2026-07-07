@@ -1,8 +1,8 @@
-import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260706-lottery-global-cap-v1'
+import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260707-admin-grant-subscription-v2'
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260706-lottery-global-cap-v1'
+const ADMIN_ASSET_VERSION = '20260707-admin-grant-subscription-v2'
 
 const PageLoading = markRaw({
   template: `

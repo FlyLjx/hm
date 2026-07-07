@@ -113,6 +113,10 @@ export const adminApi = {
     return result
   }),
   getUserDetails: (id) => request(`/api/users/${pathId(id)}/details`),
+  grantUserSubscription: (id, input) => request(`/api/users/${pathId(id)}/subscription`, json('POST', input)).then((result) => {
+    clearAdminCache(['/api/users'])
+    return result
+  }),
 
   listApiProviders: () => cachedGet('/api/api-providers', 15000),
   createApiProvider: (input) => request('/api/api-providers', json('POST', input)).then((result) => {
