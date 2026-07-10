@@ -12,13 +12,14 @@ import (
 )
 
 type Queue struct {
-	jobs     chan Job
-	workers  int
-	service  *Service
-	logger   *slog.Logger
-	started  bool
-	mu       sync.Mutex
-	shutdown chan struct{}
+	jobs      chan Job
+	workers   int
+	unlimited bool
+	service   *Service
+	logger    *slog.Logger
+	started   bool
+	mu        sync.Mutex
+	shutdown  chan struct{}
 }
 
 type Job struct {
@@ -26,15 +27,18 @@ type Job struct {
 }
 
 func NewQueue(db *database.DB, logger *slog.Logger, workers int, hub *tasks.Hub, userHub *users.Hub) *Queue {
-	if workers <= 0 {
-		workers = 3
+	unlimited := workers <= 0
+	bufferSize := 1024
+	if !unlimited {
+		bufferSize = workers * 4
 	}
 	return &Queue{
-		jobs:     make(chan Job, workers*4),
-		workers:  workers,
-		service:  NewService(db, logger, hub, userHub),
-		logger:   logger,
-		shutdown: make(chan struct{}),
+		jobs:      make(chan Job, bufferSize),
+		workers:   workers,
+		unlimited: unlimited,
+		service:   NewService(db, logger, hub, userHub),
+		logger:    logger,
+		shutdown:  make(chan struct{}),
 	}
 }
 
@@ -45,6 +49,9 @@ func (q *Queue) Start() {
 		return
 	}
 	q.started = true
+	if q.unlimited {
+		return
+	}
 	for index := 0; index < q.workers; index++ {
 		go q.worker(index + 1)
 	}
@@ -52,7 +59,12 @@ func (q *Queue) Start() {
 
 func (q *Queue) Enqueue(taskID string) {
 	q.Start()
-	q.jobs <- Job{TaskID: taskID}
+	job := Job{TaskID: taskID}
+	if q.unlimited {
+		go q.process(job, "unlimited")
+		return
+	}
+	q.jobs <- job
 }
 
 func (q *Queue) worker(workerID int) {
@@ -61,13 +73,17 @@ func (q *Queue) worker(workerID int) {
 		case <-q.shutdown:
 			return
 		case job := <-q.jobs:
-			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
-			err := q.service.Process(ctx, job.TaskID)
-			cancel()
-			if err != nil {
-				q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)
-			}
+			q.process(job, workerID)
 		}
+	}
+}
+
+func (q *Queue) process(job Job, workerID any) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	err := q.service.Process(ctx, job.TaskID)
+	cancel()
+	if err != nil {
+		q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)
 	}
 }
 

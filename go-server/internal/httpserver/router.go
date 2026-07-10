@@ -42,7 +42,7 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 	}
 	router.taskHub = tasks.NewHub()
 	router.userHub = users.NewHub()
-	router.queue = generation.NewQueue(db, logger, 3, router.taskHub, router.userHub)
+	router.queue = generation.NewQueue(db, logger, 0, router.taskHub, router.userHub)
 	router.queue.Start()
 	router.routes()
 	return router.withMiddleware(router.mux)
