@@ -1,5 +1,5 @@
 import { clientApi } from '../common/api.js'
-import { formatDate, resolveOriginalImageUrl } from '../common/format.js'
+import { formatDate, resolveOriginalImageUrl } from '../common/format.js?v=20260710-shanghai-tz-v1'
 import { saveTransferredPrompt } from '../common/promptTransfer.js'
 
 const { computed, onMounted, ref, watch } = Vue

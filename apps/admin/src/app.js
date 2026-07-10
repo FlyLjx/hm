@@ -1,8 +1,8 @@
-import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260707-admin-grant-subscription-v2'
+import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260710-shanghai-tz-v1'
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260707-admin-grant-subscription-v2'
+const ADMIN_ASSET_VERSION = '20260710-shanghai-tz-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -28,6 +28,7 @@ function lazyPage(loader, exportName) {
 
 const DashboardPage = lazyPage(() => import(`./pages/dashboard.js?v=${ADMIN_ASSET_VERSION}`), 'DashboardPage')
 const UsersPage = lazyPage(() => import(`./pages/users.js?v=${ADMIN_ASSET_VERSION}`), 'UsersPage')
+const ApiAccessPage = lazyPage(() => import(`./pages/api-access.js?v=${ADMIN_ASSET_VERSION}`), 'ApiAccessPage')
 const ModelCenterPage = lazyPage(() => import(`./pages/model-center.js?v=${ADMIN_ASSET_VERSION}`), 'ModelCenterPage')
 const TasksPage = lazyPage(() => import(`./pages/tasks.js?v=${ADMIN_ASSET_VERSION}`), 'TasksPage')
 const FinancePage = lazyPage(() => import(`./pages/finance.js?v=${ADMIN_ASSET_VERSION}`), 'FinancePage')
@@ -40,6 +41,7 @@ const menuGroups = [
   { title: '数据总览', items: [{ id: 'console', label: '控制台中心', desc: '订单与任务概览', icon: 'ti-layout-dashboard', component: DashboardPage }] },
   { title: '基础配置', items: [
     { id: 'users', label: '用户管理', desc: '账号与权限', icon: 'ti-users', component: UsersPage },
+    { id: 'api-access', label: 'API 管理', desc: '用户 Key 与调用', icon: 'ti-key', component: ApiAccessPage },
     { id: 'model-center', label: '模型与接口', desc: '模型、接口、号池', icon: 'ti-robot', component: ModelCenterPage },
   ] },
   { title: '创作内容', items: [

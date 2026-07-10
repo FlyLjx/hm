@@ -1,7 +1,7 @@
 import { adminApi } from '../api.js'
 
 const { computed, defineAsyncComponent, markRaw, onMounted, ref, watch } = Vue
-const ADMIN_ASSET_VERSION = '20260617-01'
+const ADMIN_ASSET_VERSION = '20260710-shanghai-tz-v1'
 
 const TabLoading = markRaw({
   template: `<div class="page-panel"><div class="page-title" style="font-size:16px">模块加载中</div><div class="page-desc">正在按需加载当前标签页。</div></div>`,

@@ -1,5 +1,5 @@
 import { adminApi } from '../api.js?v=20260706-subscription-lottery-v7'
-import { formatDate, text } from '../format.js'
+import { formatDate, text } from '../format.js?v=20260710-shanghai-tz-v1'
 import { CrudPage } from '../components/crud-page.js'
 
 const { computed, onMounted, reactive, ref, watch } = Vue

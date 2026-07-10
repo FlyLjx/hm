@@ -20,13 +20,29 @@ func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 
+type taskStore interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *database.Row
+}
+
 func (r *Repository) Create(ctx context.Context, task Task) (*Task, error) {
+	return r.create(ctx, r.db, task)
+}
+
+func (r *Repository) CreateWithTx(ctx context.Context, tx *database.Tx, task Task) (*Task, error) {
+	if tx == nil {
+		return r.Create(ctx, task)
+	}
+	return r.create(ctx, tx, task)
+}
+
+func (r *Repository) create(ctx context.Context, store taskStore, task Task) (*Task, error) {
 	resultJSON := any(nil)
 	if task.ResultJSON != nil {
 		bytes, _ := json.Marshal(task.ResultJSON)
 		resultJSON = string(bytes)
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := store.ExecContext(ctx, `
 		INSERT INTO generation_tasks
 			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip,
 			 cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json,
@@ -41,7 +57,14 @@ func (r *Repository) Create(ctx context.Context, task Task) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.FindByID(ctx, task.ID)
+	row := store.QueryRowContext(ctx, `
+		SELECT `+taskSelectColumns+`
+		FROM generation_tasks
+		`+taskJoins+`
+		WHERE generation_tasks.id = ?
+		LIMIT 1
+	`, task.ID)
+	return scanTask(row)
 }
 
 func (r *Repository) FindByID(ctx context.Context, id string) (*Task, error) {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"aipi-go/internal/apikeys"
+	"aipi-go/internal/apiaccess"
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
 )
@@ -69,7 +69,7 @@ func (r *Router) compatResponses(w http.ResponseWriter, req *http.Request) {
 	r.forwardOpenAIText(w, req, auth, body, "responses")
 }
 
-func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, auth *apikeys.Authenticated, body map[string]any, upstreamPath string) {
+func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, auth *apiaccess.Authenticated, body map[string]any, upstreamPath string) {
 	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 	defer cancel()
 	modelName := strings.TrimSpace(stringValue(body["model"]))

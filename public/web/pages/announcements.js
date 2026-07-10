@@ -1,5 +1,5 @@
 import { clientApi } from '../common/api.js'
-import { formatDate } from '../common/format.js'
+import { formatDate } from '../common/format.js?v=20260710-shanghai-tz-v1'
 import { renderMarkdown } from '../common/markdown.js'
 
 const { computed, onMounted, ref, watch } = Vue

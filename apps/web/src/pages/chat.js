@@ -1,6 +1,6 @@
 import { clientApi } from '../common/api.js'
 import { chatStoragePrefix, createClientId, createSession, taskImages } from '../common/chatSession.js'
-import { resolveOriginalImageUrl, resolveThumbnailImageUrl } from '../common/format.js'
+import { resolveOriginalImageUrl, resolveThumbnailImageUrl } from '../common/format.js?v=20260710-shanghai-tz-v1'
 import {
   getActiveModelsByCapability,
   getAvailableRatioOptions,

@@ -1,5 +1,5 @@
 import { adminApi } from '../api.js'
-import { amount, formatCurrency, formatDate, statusItem } from '../format.js'
+import { amount, formatCurrency, formatDate, statusItem } from '../format.js?v=20260710-shanghai-tz-v1'
 
 const { computed, onBeforeUnmount, onMounted, ref } = Vue
 const { message } = antd

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/database"
 	"aipi-go/internal/models"
 	"aipi-go/internal/operations"
 	"aipi-go/internal/tasks"
@@ -138,37 +139,41 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusForbidden, "用户已被禁用")
 	}
 
-	if err := r.requireGenerationQuota(ctx, user.ID, *model, input.Quantity); err != nil {
-		return nil, err
-	}
 	size := input.Size
 	if size == "" {
 		size = defaultImageSize(input.SizeTier)
 	}
 	prompt := input.Prompt
-	task := tasks.Task{
-		ID:                    newID(),
-		UserID:                user.ID,
-		ModelID:               model.ID,
-		ProviderID:            model.ProviderID,
-		Capability:            input.Capability,
-		Prompt:                prompt,
-		ReferenceImageURL:     referenceImagePayload(req, input),
-		SizeTier:              input.SizeTier,
-		Size:                  &size,
-		OutputFormat:          effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
-		TransparentBackground: input.TransparentBackground || input.OutputFormat == "png",
-		Quantity:              input.Quantity,
-		UserIP:                requestIP(req),
-		CostCredits:           0,
-		ModelCostCredits:      0,
-		RemainingCredits:      0,
-		DurationSeconds:       0,
-		Status:                tasks.StatusQueued,
-		PublicStatus:          "private",
-	}
-	savedTask, err := tasks.NewRepository(r.db).Create(ctx, task)
-	if err != nil {
+	var savedTask *tasks.Task
+	if err := r.withUserGenerationLock(ctx, user.ID, func(tx *database.Tx) error {
+		if err := r.requireGenerationQuota(ctx, user.ID, *model, input.Quantity); err != nil {
+			return err
+		}
+		task := tasks.Task{
+			ID:                    newID(),
+			UserID:                user.ID,
+			ModelID:               model.ID,
+			ProviderID:            model.ProviderID,
+			Capability:            input.Capability,
+			Prompt:                prompt,
+			ReferenceImageURL:     referenceImagePayload(req, input),
+			SizeTier:              input.SizeTier,
+			Size:                  &size,
+			OutputFormat:          effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
+			TransparentBackground: input.TransparentBackground || input.OutputFormat == "png",
+			Quantity:              input.Quantity,
+			UserIP:                requestIP(req),
+			CostCredits:           0,
+			ModelCostCredits:      0,
+			RemainingCredits:      0,
+			DurationSeconds:       0,
+			Status:                tasks.StatusQueued,
+			PublicStatus:          "private",
+		}
+		var err error
+		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if r.logger != nil {

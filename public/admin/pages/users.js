@@ -1,5 +1,5 @@
-import { adminApi } from '../api.js?v=20260707-admin-grant-subscription-v2'
-import { amount, formatDate, statusItem, text } from '../format.js'
+import { adminApi } from '../api.js?v=20260710-shanghai-tz-v1'
+import { amount, formatDate, statusItem, text } from '../format.js?v=20260710-shanghai-tz-v1'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd

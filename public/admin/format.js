@@ -12,7 +12,10 @@ export function formatDate(value) {
   if (!value) return '-'
   const date = new Date(String(value))
   if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleString('zh-CN', { hour12: false })
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  })
 }
 
 export function amount(value) {

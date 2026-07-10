@@ -1,5 +1,5 @@
 import { adminApi } from '../api.js'
-import { toNumber } from '../format.js'
+import { toNumber } from '../format.js?v=20260710-shanghai-tz-v1'
 
 const { computed, reactive, ref, watch } = Vue
 const { message, Modal } = antd

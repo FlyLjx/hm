@@ -4071,3 +4071,56 @@ a {
     justify-content: flex-start;
   }
 }
+
+/* 20260710: API access admin page. */
+.admin-api-access-page .admin-card-hero {
+  align-items: flex-start;
+}
+
+.admin-api-access-summary .summary-card b {
+  color: #111827;
+}
+
+.admin-api-key-table code,
+.admin-api-log-table code {
+  color: #047857;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.admin-api-success {
+  color: #047857;
+  font-weight: 800;
+}
+
+.admin-api-failed {
+  color: #b42318;
+  font-weight: 800;
+}
+
+.admin-api-log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.admin-api-log-table td,
+.admin-api-key-table td {
+  vertical-align: middle;
+}
+
+@media (max-width: 860px) {
+  .admin-api-log-head {
+    flex-direction: column;
+  }
+
+  .admin-api-log-head .toolbar {
+    width: 100%;
+  }
+
+  .admin-api-log-head .toolbar .ant-input-affix-wrapper,
+  .admin-api-log-head .toolbar .ant-select {
+    width: 100% !important;
+  }
+}

@@ -72,6 +72,12 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/announcements/public", r.publicAnnouncements)
 	r.mux.HandleFunc("/api/announcements", r.announcements)
 	r.mux.HandleFunc("/api/announcements/", r.announcementByID)
+	r.mux.HandleFunc("/api/api-access/keys", r.userAPIAccessKeys)
+	r.mux.HandleFunc("/api/api-access/keys/", r.userAPIAccessKeyByID)
+	r.mux.HandleFunc("/api/api-access/logs", r.userAPIAccessLogs)
+	r.mux.HandleFunc("/api/admin/api-access/keys", r.adminAPIAccessKeys)
+	r.mux.HandleFunc("/api/admin/api-access/keys/", r.adminAPIAccessKeyByID)
+	r.mux.HandleFunc("/api/admin/api-access/logs", r.adminAPIAccessLogs)
 	r.mux.HandleFunc("/api/pricing/activity", r.activityStatus)
 	r.mux.HandleFunc("/api/pricing/incentive", r.incentiveStatus)
 	r.mux.HandleFunc("/api/subscriptions/public/plans", r.plans)
@@ -124,8 +130,6 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/v1/models", r.compatModels)
 	r.mux.HandleFunc("/v1/images/generations", r.compatImageGenerations)
 	r.mux.HandleFunc("/v1/images/edits", r.compatImageEdits)
-	r.mux.HandleFunc("/v1/chat/completions", r.compatChatCompletions)
-	r.mux.HandleFunc("/v1/responses", r.compatResponses)
 	r.mux.HandleFunc("/ws/tasks", r.taskSocket)
 	r.mux.HandleFunc("/ws/users", r.userSocket)
 
@@ -161,6 +165,7 @@ func (r *Router) migrationStatus(w http.ResponseWriter, _ *http.Request) {
 				{"name": "models/providers", "status": "ready"},
 				{"name": "generation/tasks/ws", "status": "ready"},
 				{"name": "openai-compatible-api", "status": "ready"},
+				{"name": "api-access-management", "status": "ready"},
 				{"name": "operations/subscriptions", "status": "ready"},
 			},
 		},

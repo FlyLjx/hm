@@ -66,6 +66,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "subscription_lottery_records", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "prize_id"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_keys", "key_plain", "VARCHAR(255) NULL", "key_hash"); err != nil {
+		return err
+	}
 	if err := dropRemovedFeatureTables(ctx, db); err != nil {
 		return err
 	}
@@ -553,6 +556,37 @@ func schemaBootstrapStatements() []string {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
+			`CREATE TABLE IF NOT EXISTS api_access_keys (
+				id VARCHAR(36) PRIMARY KEY,
+				user_id VARCHAR(36) NOT NULL,
+				name VARCHAR(80) NOT NULL,
+				key_prefix VARCHAR(24) NOT NULL,
+				key_hash VARCHAR(64) NOT NULL UNIQUE,
+				key_plain VARCHAR(255) NULL,
+				status VARCHAR(16) NOT NULL DEFAULT 'active',
+				last_used_at TIMESTAMP NULL,
+				deleted_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS api_access_logs (
+				id VARCHAR(36) PRIMARY KEY,
+				user_id VARCHAR(36) NOT NULL,
+				api_key_id VARCHAR(36) NOT NULL,
+				task_id VARCHAR(36) NULL,
+				endpoint VARCHAR(80) NOT NULL,
+				model VARCHAR(120) NOT NULL,
+				prompt TEXT NOT NULL,
+				size VARCHAR(30) NOT NULL DEFAULT '',
+				quality VARCHAR(30) NOT NULL DEFAULT '',
+				quantity INTEGER NOT NULL DEFAULT 1,
+				image_count INTEGER NOT NULL DEFAULT 0,
+				response_format VARCHAR(30) NOT NULL DEFAULT 'url',
+				status VARCHAR(16) NOT NULL DEFAULT 'queued',
+				error_message TEXT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				finished_at TIMESTAMP NULL
+			)`,
 			`CREATE INDEX IF NOT EXISTS idx_ai_models_status_capability ON ai_models (status, capability)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_created_at ON generation_tasks (created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_id ON generation_tasks (user_id)`,
@@ -577,9 +611,50 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_announcement_users_user_id ON announcement_users (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_api_keys_prefix_status ON user_api_keys (key_prefix, status)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_keys_user_id ON api_access_keys (user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_keys_prefix_status ON api_access_keys (key_prefix, status)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_user_created ON api_access_logs (user_id, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_key_created ON api_access_logs (api_key_id, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_status_created ON api_access_logs (status, created_at)`,
 		}
 	}
 	return []string{
+		`CREATE TABLE IF NOT EXISTS api_access_keys (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL,
+			name VARCHAR(80) NOT NULL,
+			key_prefix VARCHAR(24) NOT NULL,
+			key_hash VARCHAR(64) NOT NULL UNIQUE,
+			key_plain VARCHAR(255) NULL,
+			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			last_used_at DATETIME NULL,
+			deleted_at DATETIME NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_api_access_keys_user_id (user_id),
+			INDEX idx_api_access_keys_prefix_status (key_prefix, status)
+		)`,
+		`CREATE TABLE IF NOT EXISTS api_access_logs (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL,
+			api_key_id VARCHAR(36) NOT NULL,
+			task_id VARCHAR(36) NULL,
+			endpoint VARCHAR(80) NOT NULL,
+			model VARCHAR(120) NOT NULL,
+			prompt TEXT NOT NULL,
+			size VARCHAR(30) NOT NULL DEFAULT '',
+			quality VARCHAR(30) NOT NULL DEFAULT '',
+			quantity INTEGER NOT NULL DEFAULT 1,
+			image_count INTEGER NOT NULL DEFAULT 0,
+			response_format VARCHAR(30) NOT NULL DEFAULT 'url',
+			status VARCHAR(16) NOT NULL DEFAULT 'queued',
+			error_message TEXT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			finished_at DATETIME NULL,
+			INDEX idx_api_access_logs_user_created (user_id, created_at),
+			INDEX idx_api_access_logs_key_created (api_key_id, created_at),
+			INDEX idx_api_access_logs_status_created (status, created_at)
+		)`,
 		`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(80) NOT NULL,

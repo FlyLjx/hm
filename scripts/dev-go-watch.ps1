@@ -90,7 +90,10 @@ $env:PUBLIC_DIR = if ($env:PUBLIC_DIR) { $env:PUBLIC_DIR } else { Join-Path $rep
 $env:LOG_DIR = if ($env:LOG_DIR) { $env:LOG_DIR } else { Join-Path $repoRoot "logs" }
 $env:DB_DRIVER = if ($env:DB_DRIVER) { $env:DB_DRIVER } else { "postgres" }
 $env:DB_HOST = if ($env:DB_HOST) { $env:DB_HOST } else { "127.0.0.1" }
-$env:DB_PORT = if ($env:DB_PORT) { $env:DB_PORT } else { "5432" }
+if (-not $env:DB_PORT) {
+  $aiPaiPort = Get-NetTCPConnection -LocalPort 55432 -State Listen -ErrorAction SilentlyContinue
+  $env:DB_PORT = if ($aiPaiPort) { "55432" } else { "5432" }
+}
 $env:DB_USER = if ($env:DB_USER) { $env:DB_USER } else { "ai_pai" }
 $env:DB_PASSWORD = if ($env:DB_PASSWORD) { $env:DB_PASSWORD } else { "ai_pai_change_me" }
 $env:DB_NAME = if ($env:DB_NAME) { $env:DB_NAME } else { "ai_pai" }

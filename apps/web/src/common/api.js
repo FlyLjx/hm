@@ -108,6 +108,27 @@ export const clientApi = {
   syncRechargeOrder: (id, userId) => request(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId }) }),
   getInviteSummary: (userId) => request(`/api/invites/summary${query({ userId })}`),
 
+  listApiAccessKeys: (input = {}) => request(`/api/api-access/keys${query({ userId: input.userId })}`, {
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+  }),
+  createApiAccessKey: (input = {}) => request('/api/api-access/keys', {
+    method: 'POST',
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+    body: JSON.stringify({ userId: input.userId, name: input.name }),
+  }),
+  updateApiAccessKey: (id, input = {}) => request(`/api/api-access/keys/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+    body: JSON.stringify({ userId: input.userId, status: input.status }),
+  }),
+  deleteApiAccessKey: (id, input = {}) => request(`/api/api-access/keys/${encodeURIComponent(id)}${query({ userId: input.userId })}`, {
+    method: 'DELETE',
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+  }),
+  listApiAccessLogs: (input = {}) => request(`/api/api-access/logs${query({ userId: input.userId, apiKeyId: input.apiKeyId, status: input.status, keyword: input.keyword, page: input.page, pageSize: input.pageSize })}`, {
+    headers: input.token ? { Authorization: `Bearer ${input.token}` } : undefined,
+  }),
+
   getOAuthClient: (input) => request(`/oauth/client${query(input)}`),
   authorizeOAuth: (input) => request('/oauth/authorize', { method: 'POST', body: JSON.stringify(input) }),
 }

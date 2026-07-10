@@ -174,6 +174,11 @@ export const adminApi = {
   deleteLotteryPrize: (id) => request(`/api/lottery/prizes/${pathId(id)}`, { method: 'DELETE' }),
   listLotteryRecords: (params) => request(`/api/lottery/records${query(params)}`),
 
+  listApiAccessKeys: () => request('/api/admin/api-access/keys'),
+  updateApiAccessKey: (id, input) => request(`/api/admin/api-access/keys/${pathId(id)}`, json('PATCH', input)),
+  deleteApiAccessKey: (id) => request(`/api/admin/api-access/keys/${pathId(id)}`, { method: 'DELETE' }),
+  listApiAccessLogs: (params) => request(`/api/admin/api-access/logs${query(params)}`),
+
   listAnnouncements: () => request('/api/announcements'),
   createAnnouncement: (input) => request('/api/announcements', json('POST', input)),
   updateAnnouncement: (id, input) => request(`/api/announcements/${pathId(id)}`, json('PATCH', input)),

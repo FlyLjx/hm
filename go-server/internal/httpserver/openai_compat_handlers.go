@@ -3,14 +3,18 @@ package httpserver
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"aipi-go/internal/apikeys"
+	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/database"
 	"aipi-go/internal/models"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
@@ -40,6 +44,10 @@ func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
+	if _, err := r.authenticateAPIKey(req); err != nil {
+		writeCompatAuthError(w, err)
+		return
+	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	items, err := models.NewRepository(r.db).FindAll(ctx)
@@ -53,7 +61,7 @@ func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 			"id":       item.DisplayName,
 			"object":   "model",
 			"created":  item.CreatedAt.Unix(),
-			"owned_by": "aipi",
+			"owned_by": "AI PAI",
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -85,7 +93,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		return
 	}
 	var input compatImageInput
-	if err := decodeCompatJSON(req, &input); err != nil {
+	if err := decodeCompatImageInput(req, &input, isEdit); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "请求参数不正确", "invalid_request_error")
 		return
 	}
@@ -119,15 +127,6 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "当前模型未开放 "+strings.ToUpper(sizeTier)+" 清晰度", "invalid_request_error")
 		return
 	}
-	if err := r.requireGenerationQuota(ctx, auth.User.ID, *model, input.N); err != nil {
-		status := http.StatusInternalServerError
-		var appErr appError
-		if errors.As(err, &appErr) {
-			status = appErr.status
-		}
-		writeOpenAIError(w, status, err.Error(), "insufficient_quota")
-		return
-	}
 	outputFormat := normalizeOutputFormat(input.OutputFormat)
 	transparent := strings.EqualFold(input.Background, "transparent") || outputFormat == "png"
 	referencePayload := compatReferencePayload(req, input.ReferenceURLs)
@@ -138,35 +137,91 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 			return
 		}
 	}
-	task := tasks.Task{
-		ID:                    newID(),
-		UserID:                auth.User.ID,
-		ModelID:               model.ID,
-		ProviderID:            model.ProviderID,
-		Capability:            model.Capability,
-		Prompt:                input.Prompt,
-		ReferenceImageURL:     referencePayload,
-		SizeTier:              sizeTier,
-		Size:                  &size,
-		OutputFormat:          effectiveOutputFormat(outputFormat, transparent),
-		TransparentBackground: transparent,
-		Quantity:              input.N,
-		UserIP:                requestIP(req),
-		CostCredits:           0,
-		ModelCostCredits:      0,
-		RemainingCredits:      0,
-		DurationSeconds:       0,
-		Status:                tasks.StatusQueued,
-		PublicStatus:          "private",
-	}
-	savedTask, err := tasks.NewRepository(r.db).Create(ctx, task)
-	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
+	accessLogID := newID()
+	var savedTask *tasks.Task
+	if err := r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
+		if err := r.requireGenerationQuota(ctx, auth.User.ID, *model, input.N); err != nil {
+			return err
+		}
+		task := tasks.Task{
+			ID:                    newID(),
+			UserID:                auth.User.ID,
+			ModelID:               model.ID,
+			ProviderID:            model.ProviderID,
+			Capability:            model.Capability,
+			Prompt:                input.Prompt,
+			ReferenceImageURL:     referencePayload,
+			SizeTier:              sizeTier,
+			Size:                  &size,
+			OutputFormat:          effectiveOutputFormat(outputFormat, transparent),
+			TransparentBackground: transparent,
+			Quantity:              input.N,
+			UserIP:                requestIP(req),
+			CostCredits:           0,
+			ModelCostCredits:      0,
+			RemainingCredits:      0,
+			DurationSeconds:       0,
+			Status:                tasks.StatusQueued,
+			PublicStatus:          "private",
+		}
+		var err error
+		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
+		if err != nil {
+			return err
+		}
+		_, err = apiaccess.NewRepository(r.db).CreateLogWithTx(ctx, tx, apiaccess.UsageLog{
+			ID:             accessLogID,
+			UserID:         auth.User.ID,
+			APIKeyID:       auth.APIKey.ID,
+			TaskID:         &savedTask.ID,
+			Endpoint:       req.URL.Path,
+			Model:          input.Model,
+			Prompt:         input.Prompt,
+			Size:           size,
+			Quality:        defaultString(input.Quality, sizeTier),
+			Quantity:       input.N,
+			ImageCount:     0,
+			ResponseFormat: defaultString(input.ResponseFormat, "url"),
+			Status:         "queued",
+		})
+		return err
+	}); err != nil {
+		status := http.StatusInternalServerError
+		errorType := "api_error"
+		message := err.Error()
+		var appErr appError
+		if errors.As(err, &appErr) {
+			status = appErr.status
+			errorType = "insufficient_quota"
+			if status == http.StatusPaymentRequired {
+				message = "用户 Key 额度不足"
+				logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				errorMessage := message
+				_, _ = apiaccess.NewRepository(r.db).CreateLog(logCtx, apiaccess.UsageLog{
+					ID:             accessLogID,
+					UserID:         auth.User.ID,
+					APIKeyID:       auth.APIKey.ID,
+					Endpoint:       req.URL.Path,
+					Model:          input.Model,
+					Prompt:         input.Prompt,
+					Size:           size,
+					Quality:        defaultString(input.Quality, sizeTier),
+					Quantity:       input.N,
+					ImageCount:     0,
+					ResponseFormat: defaultString(input.ResponseFormat, "url"),
+					Status:         "failed",
+					ErrorMessage:   &errorMessage,
+				})
+				logCancel()
+			}
+		}
+		writeOpenAIError(w, status, message, errorType)
 		return
 	}
 	r.queue.Enqueue(savedTask.ID)
 	finalTask, err := r.waitForCompatTask(req.Context(), savedTask.ID)
 	if err != nil {
+		_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "failed", 0, err.Error())
 		writeOpenAIError(w, http.StatusGatewayTimeout, err.Error(), "api_error")
 		return
 	}
@@ -175,10 +230,12 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
 			message = *finalTask.ErrorMessage
 		}
+		_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "failed", 0, message)
 		writeOpenAIError(w, http.StatusInternalServerError, message, "api_error")
 		return
 	}
 	urls := tasks.ToPublic(finalTask).ResultURLs
+	_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "success", len(urls), "")
 	data := make([]map[string]string, 0, len(urls))
 	for _, url := range urls {
 		if strings.HasPrefix(url, "/") {
@@ -192,11 +249,11 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	})
 }
 
-func (r *Router) authenticateAPIKey(req *http.Request) (*apikeys.Authenticated, error) {
+func (r *Router) authenticateAPIKey(req *http.Request) (*apiaccess.Authenticated, error) {
 	token := bearerToken(req)
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	return apikeys.NewService(apikeys.NewRepository(r.db), users.NewRepository(r.db)).Authenticate(ctx, token)
+	return apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).Authenticate(ctx, token)
 }
 
 func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task, error) {
@@ -223,7 +280,7 @@ func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task,
 }
 
 func writeCompatAuthError(w http.ResponseWriter, err error) {
-	if errors.Is(err, apikeys.ErrMissingKey) || errors.Is(err, apikeys.ErrInvalidKey) {
+	if errors.Is(err, apiaccess.ErrMissingKey) || errors.Is(err, apiaccess.ErrInvalidKey) {
 		writeOpenAIError(w, http.StatusUnauthorized, err.Error(), "invalid_api_key")
 		return
 	}
@@ -384,7 +441,7 @@ func compatReferencePayload(req *http.Request, urls []string) *string {
 	cleaned := []string{}
 	for _, url := range urls {
 		if strings.TrimSpace(url) != "" {
-			cleaned = appendUniqueReferencePayload(cleaned, absoluteURL(req, strings.TrimSpace(url)))
+			cleaned = appendUniqueReferencePayload(cleaned, compatReferenceValue(req, strings.TrimSpace(url)))
 		}
 	}
 	if len(cleaned) == 0 {
@@ -407,11 +464,11 @@ func compatEditReferencePayload(req *http.Request, input compatImageInput) *stri
 	for _, item := range items {
 		item = strings.TrimSpace(item)
 		if item != "" {
-			cleaned = appendUniqueReferencePayload(cleaned, absoluteURL(req, item))
+			cleaned = appendUniqueReferencePayload(cleaned, compatReferenceValue(req, item))
 		}
 	}
 	if strings.TrimSpace(mask) != "" {
-		cleaned = appendUniqueReferencePayload(cleaned, "mask:"+absoluteURL(req, strings.TrimSpace(mask)))
+		cleaned = appendUniqueReferencePayload(cleaned, "mask:"+compatReferenceValue(req, strings.TrimSpace(mask)))
 	}
 	if len(cleaned) == 0 {
 		return nil
@@ -438,7 +495,7 @@ func extractCompatImageURLs(value any) []string {
 		}
 		return result
 	case map[string]any:
-		for _, key := range []string{"url", "image_url", "imageUrl"} {
+		for _, key := range []string{"url", "image_url", "imageUrl", "b64_json", "base64"} {
 			if result := extractCompatImageURLs(item[key]); len(result) > 0 {
 				return result
 			}
@@ -456,6 +513,107 @@ func firstCompatImageURL(value any) string {
 		return ""
 	}
 	return items[0]
+}
+
+func decodeCompatImageInput(req *http.Request, target *compatImageInput, isEdit bool) error {
+	contentType := strings.ToLower(req.Header.Get("Content-Type"))
+	if !strings.Contains(contentType, "multipart/form-data") {
+		return decodeCompatJSON(req, target)
+	}
+	if err := req.ParseMultipartForm(64 << 20); err != nil {
+		return err
+	}
+	target.Model = req.FormValue("model")
+	target.Prompt = req.FormValue("prompt")
+	target.Size = req.FormValue("size")
+	target.AspectRatio = req.FormValue("aspect_ratio")
+	target.Ratio = req.FormValue("ratio")
+	target.SizeTier = req.FormValue("size_tier")
+	target.Resolution = req.FormValue("resolution")
+	target.Quality = req.FormValue("quality")
+	target.ResponseFormat = req.FormValue("response_format")
+	target.Background = req.FormValue("background")
+	target.OutputFormat = req.FormValue("output_format")
+	target.N = compatFormInt(req.FormValue("n"), 0)
+	if !isEdit || req.MultipartForm == nil {
+		return nil
+	}
+	for _, field := range []string{"image", "images"} {
+		for _, header := range req.MultipartForm.File[field] {
+			dataURL, err := multipartImageDataURL(header)
+			if err != nil {
+				return err
+			}
+			target.ReferenceURLs = append(target.ReferenceURLs, dataURL)
+		}
+	}
+	if headers := req.MultipartForm.File["mask"]; len(headers) > 0 {
+		dataURL, err := multipartImageDataURL(headers[0])
+		if err != nil {
+			return err
+		}
+		target.Mask = dataURL
+	}
+	return nil
+}
+
+func compatFormInt(value string, fallback int) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func multipartImageDataURL(header *multipart.FileHeader) (string, error) {
+	file, err := header.Open()
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, 20*1024*1024+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > 20*1024*1024 {
+		return "", errors.New("参考图超过 20MB")
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(header.Header.Get("Content-Type"), ";")[0]))
+	if !strings.HasPrefix(contentType, "image/") {
+		contentType = strings.ToLower(http.DetectContentType(body))
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", errors.New("上传文件不是图片")
+	}
+	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(body), nil
+}
+
+func compatReferenceValue(req *http.Request, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "data:") {
+		return value
+	}
+	if looksLikeBase64Image(value) {
+		return value
+	}
+	return absoluteURL(req, value)
+}
+
+func looksLikeBase64Image(value string) bool {
+	compact := strings.NewReplacer("\r", "", "\n", "", "\t", "", " ", "").Replace(strings.TrimSpace(value))
+	if len(compact) < 32 || strings.Contains(compact, "://") || strings.Contains(compact, ",") {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(compact)
+	if err != nil || len(decoded) < 8 {
+		return false
+	}
+	contentType := http.DetectContentType(decoded)
+	return strings.HasPrefix(strings.ToLower(contentType), "image/")
 }
 
 func decodeCompatJSON(req *http.Request, target any) error {

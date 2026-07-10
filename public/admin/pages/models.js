@@ -1,6 +1,6 @@
 import { adminApi } from '../api.js'
-import { amount, formatDate, statusItem, text, toNumber } from '../format.js'
-import { CrudPage } from '../components/crud-page.js'
+import { amount, formatDate, statusItem, text, toNumber } from '../format.js?v=20260710-shanghai-tz-v1'
+import { CrudPage } from '../components/crud-page.js?v=20260710-shanghai-tz-v1'
 
 const { computed, onMounted, reactive, ref } = Vue
 const { message } = antd
@@ -19,7 +19,6 @@ function formatEnabledSizeTiers(value) {
 }
 
 const modelFields = [
-  { key: 'providerId', label: '服务商ID', required: true },
   { key: 'modelName', label: '模型名', required: true },
   { key: 'displayName', label: '展示名称', required: true },
   { key: 'capability', label: '用途', type: 'select', defaultValue: 'chat_image', options: modelCapabilityOptions },
@@ -53,6 +52,23 @@ export const ModelsPage = {
     const sortRows = ref([])
     const sortReload = ref(null)
     const isMappings = computed(() => props.mode === 'mappings')
+    const providerOptions = computed(() => providers.value.map((provider) => ({
+      label: `${provider.name || provider.id} · ${provider.type || 'custom'}`,
+      value: provider.id,
+      searchText: `${provider.name || ''} ${provider.type || ''} ${provider.baseUrl || ''} ${provider.id || ''}`,
+    })))
+    const modelDialogFields = computed(() => [
+      {
+        key: 'providerId',
+        label: '接口服务商',
+        type: 'select',
+        required: true,
+        showSearch: true,
+        placeholder: '请选择接口服务商',
+        options: providerOptions.value,
+      },
+      ...modelFields,
+    ])
     const modelSortActions = computed(() => [
       { key: 'sort', label: '排序', icon: 'ti-arrows-sort', onClick: openSort },
     ])
@@ -180,7 +196,7 @@ export const ModelsPage = {
     onMounted(() => {
       loadBase()
     })
-    return { modelFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, formatEnabledSizeTiers, amount, statusItem, text, formatDate }
+    return { modelFields, modelDialogFields, adminApi, isMappings, providers, models, providerId, keyword, markupPercent, remoteSource, remote, selected, loading, sortVisible, sortSaving, sortRows, modelSortActions, fetchRemote, filterRemote, saveSelected, toggleSelected, openSort, saveSortOrders, formatEnabledSizeTiers, amount, statusItem, text, formatDate }
   },
   template: `
     <div>
@@ -194,7 +210,7 @@ export const ModelsPage = {
           :create="adminApi.createModel"
           :update="adminApi.updateModel"
           :delete="adminApi.deleteModel"
-          :fields="modelFields"
+          :fields="modelDialogFields"
           :actions="modelSortActions"
           :columns="[
             { label: '展示名称', key: 'displayName' },

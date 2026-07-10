@@ -1,5 +1,5 @@
 import { API_BASE_URL, adminApi, getAdminToken } from '../api.js'
-import { formatDate } from '../format.js'
+import { formatDate } from '../format.js?v=20260710-shanghai-tz-v1'
 
 const { computed, nextTick, onBeforeUnmount, onMounted, ref } = Vue
 const { message, Modal } = antd

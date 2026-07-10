@@ -1,4 +1,4 @@
-import { RootApp } from './components/rootApp.js?v=20260707-subscription-dialog-compact-v1'
+import { RootApp } from './components/rootApp.js?v=20260710-api-access-v18'
 
 const app = Vue.createApp(RootApp)
 

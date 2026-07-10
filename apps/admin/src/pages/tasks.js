@@ -1,5 +1,5 @@
 import { API_BASE_URL, adminApi } from '../api.js'
-import { amount, formatDate, statusItem } from '../format.js'
+import { amount, formatDate, statusItem } from '../format.js?v=20260710-shanghai-tz-v1'
 import { CrudPage } from '../components/crud-page.js'
 
 const { computed, onMounted, ref, watch } = Vue

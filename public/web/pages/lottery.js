@@ -1,5 +1,5 @@
 import { clientApi } from '../common/api.js?v=20260706-lottery-copy-v1'
-import { formatDate } from '../common/format.js'
+import { formatDate } from '../common/format.js?v=20260710-shanghai-tz-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onMounted, ref, watch } = Vue

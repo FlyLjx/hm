@@ -1,4 +1,4 @@
-import { amount, formatDate, money, statusItem, text, toNumber } from '../format.js'
+import { amount, formatDate, money, statusItem, text, toNumber } from '../format.js?v=20260710-shanghai-tz-v1'
 import { renderMarkdown } from '../common/markdown.js'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
@@ -544,8 +544,22 @@ export const CrudPage = {
               </div>
             </div>
             <a-textarea v-else-if="field.type === 'textarea'" v-model:value="form[field.key]" :rows="field.rows || 4" />
-            <a-select v-else-if="field.type === 'select'" v-model:value="form[field.key]" style="width:100%">
-              <a-select-option v-for="option in field.options || []" :key="option.value" :value="option.value">{{ option.label }}</a-select-option>
+            <a-select
+              v-else-if="field.type === 'select'"
+              v-model:value="form[field.key]"
+              :show-search="Boolean(field.showSearch)"
+              :allow-clear="Boolean(field.allowClear)"
+              :placeholder="field.placeholder || '请选择'"
+              option-filter-prop="searchText"
+              style="width:100%"
+            >
+              <a-select-option
+                v-for="option in field.options || []"
+                :key="option.value"
+                :value="option.value"
+                :label="option.label"
+                :search-text="option.searchText || option.label"
+              >{{ option.label }}</a-select-option>
             </a-select>
             <a-select v-else-if="field.type === 'multiple-select'" v-model:value="form[field.key]" mode="multiple" show-search allow-clear :placeholder="field.placeholder || '请选择'" option-filter-prop="searchText" style="width:100%">
               <a-select-option v-for="option in field.options || []" :key="option.value" :value="option.value" :label="option.label" :search-text="option.searchText || option.label">{{ option.label }}</a-select-option>
