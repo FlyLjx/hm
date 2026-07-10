@@ -39,8 +39,8 @@ func main() {
 		Handler:           httpserver.NewRouter(cfg, db, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       90 * time.Second,
-		WriteTimeout:      120 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		WriteTimeout:      15 * time.Minute,
+		IdleTimeout:       180 * time.Second,
 	}
 
 	go func() {
