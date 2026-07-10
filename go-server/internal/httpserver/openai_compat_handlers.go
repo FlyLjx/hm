@@ -39,6 +39,18 @@ type compatImageInput struct {
 	Mask           any      `json:"mask"`
 }
 
+const (
+	compatTaskClientWaitTimeout = 8 * time.Minute
+	compatTaskLogWaitTimeout    = 30 * time.Minute
+)
+
+type compatTaskResult struct {
+	urls       []string
+	message    string
+	statusCode int
+	err        error
+}
+
 func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
@@ -219,25 +231,37 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		return
 	}
 	r.queue.Enqueue(savedTask.ID)
-	finalTask, err := r.waitForCompatTask(req.Context(), savedTask.ID)
-	if err != nil {
-		_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "failed", 0, err.Error())
-		writeOpenAIError(w, http.StatusGatewayTimeout, err.Error(), "api_error")
+
+	resultCh := make(chan compatTaskResult, 1)
+	go func() {
+		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID)
+	}()
+
+	var result compatTaskResult
+	select {
+	case result = <-resultCh:
+	case <-req.Context().Done():
+		return
+	case <-time.After(compatTaskClientWaitTimeout):
+		writeOpenAIError(w, http.StatusGatewayTimeout, "图片生成超时", "api_error")
 		return
 	}
-	if finalTask.Status != tasks.StatusSuccess {
-		message := "图片生成失败"
-		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
-			message = *finalTask.ErrorMessage
+
+	if result.err != nil {
+		status := result.statusCode
+		if status == 0 {
+			status = http.StatusInternalServerError
 		}
-		_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "failed", 0, message)
-		writeOpenAIError(w, http.StatusInternalServerError, message, "api_error")
+		message := result.message
+		if message == "" {
+			message = result.err.Error()
+		}
+		writeOpenAIError(w, status, message, "api_error")
 		return
 	}
-	urls := tasks.ToPublic(finalTask).ResultURLs
-	_ = apiaccess.NewRepository(r.db).FinishLog(context.Background(), accessLogID, "success", len(urls), "")
-	data := make([]map[string]string, 0, len(urls))
-	for _, url := range urls {
+
+	data := make([]map[string]string, 0, len(result.urls))
+	for _, url := range result.urls {
 		if strings.HasPrefix(url, "/") {
 			url = absoluteURL(req, url)
 		}
@@ -249,6 +273,49 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	})
 }
 
+func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compatTaskResult {
+	ctx, cancel := context.WithTimeout(context.Background(), compatTaskLogWaitTimeout)
+	defer cancel()
+	finalTask, err := r.waitForCompatTask(ctx, taskID)
+	if err != nil {
+		message := compatTaskWaitErrorMessage(err)
+		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		return compatTaskResult{
+			message:    message,
+			statusCode: http.StatusGatewayTimeout,
+			err:        err,
+		}
+	}
+	if finalTask.Status != tasks.StatusSuccess {
+		message := "图片生成失败"
+		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
+			message = *finalTask.ErrorMessage
+		}
+		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		return compatTaskResult{
+			message:    message,
+			statusCode: http.StatusInternalServerError,
+			err:        errors.New(message),
+		}
+	}
+	urls := tasks.ToPublic(finalTask).ResultURLs
+	r.finishCompatAccessLog(accessLogID, "success", len(urls), "")
+	return compatTaskResult{urls: urls}
+}
+
+func (r *Router) finishCompatAccessLog(accessLogID string, status string, imageCount int, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = apiaccess.NewRepository(r.db).FinishLog(ctx, accessLogID, status, imageCount, message)
+}
+
+func compatTaskWaitErrorMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "图片生成超时"
+	}
+	return err.Error()
+}
+
 func (r *Router) authenticateAPIKey(req *http.Request) (*apiaccess.Authenticated, error) {
 	token := bearerToken(req)
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
@@ -257,7 +324,6 @@ func (r *Router) authenticateAPIKey(req *http.Request) (*apiaccess.Authenticated
 }
 
 func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task, error) {
-	deadline := time.After(8 * time.Minute)
 	ticker := time.NewTicker(1200 * time.Millisecond)
 	defer ticker.Stop()
 	repo := tasks.NewRepository(r.db)
@@ -265,8 +331,6 @@ func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task,
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-deadline:
-			return nil, errors.New("图片生成超时")
 		case <-ticker.C:
 			task, err := repo.FindByID(context.Background(), id)
 			if err != nil {
