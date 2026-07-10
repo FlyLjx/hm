@@ -69,6 +69,7 @@ func (s Service) ListUserKeys(ctx context.Context, userID string) ([]PublicAcces
 	if _, err := s.users.FindByID(ctx, userID); err != nil {
 		return nil, err
 	}
+	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
 	keys, err := s.keys.ListKeys(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -77,6 +78,7 @@ func (s Service) ListUserKeys(ctx context.Context, userID string) ([]PublicAcces
 }
 
 func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
+	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
 	keys, err := s.keys.ListKeys(ctx, "")
 	if err != nil {
 		return nil, err
@@ -139,6 +141,7 @@ func (s Service) DeleteKey(ctx context.Context, id string, userID string) error 
 }
 
 func (s Service) ListLogs(ctx context.Context, input ListLogsInput) ([]PublicUsageLog, int, error) {
+	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
 	items, total, err := s.keys.ListLogs(ctx, input)
 	if err != nil {
 		return nil, 0, err

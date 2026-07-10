@@ -201,6 +201,97 @@ func (r *Repository) FinishLog(ctx context.Context, id string, status string, im
 	return err
 }
 
+func (r *Repository) FinishLogsForTask(ctx context.Context, taskID string, status string, imageCount int, message string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	var errorMessage any
+	if strings.TrimSpace(message) != "" {
+		errorMessage = strings.TrimSpace(message)
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE api_access_logs
+		SET status = ?, image_count = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP
+		WHERE task_id = ?
+			AND (
+				status IN ('queued', 'processing')
+				OR (status = 'failed' AND error_message = 'context canceled')
+			)
+	`, status, imageCount, errorMessage, taskID)
+	return err
+}
+
+func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error {
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_access_logs.id,
+			generation_tasks.status,
+			generation_tasks.quantity,
+			generation_tasks.error_message
+		FROM api_access_logs
+		INNER JOIN generation_tasks ON generation_tasks.id = api_access_logs.task_id
+		WHERE (
+				api_access_logs.status IN ('queued', 'processing')
+				OR (api_access_logs.status = 'failed' AND api_access_logs.error_message = 'context canceled')
+			)
+			AND generation_tasks.status IN ('success', 'failed', 'canceled')
+		ORDER BY api_access_logs.created_at DESC, api_access_logs.id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type terminalUpdate struct {
+		id           string
+		status       string
+		quantity     int
+		errorMessage sql.NullString
+	}
+	updates := []terminalUpdate{}
+	for rows.Next() {
+		var item terminalUpdate
+		if err := rows.Scan(&item.id, &item.status, &item.quantity, &item.errorMessage); err != nil {
+			return err
+		}
+		updates = append(updates, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range updates {
+		status := "failed"
+		imageCount := 0
+		message := strings.TrimSpace(item.errorMessage.String)
+		if item.status == "success" {
+			status = "success"
+			imageCount = item.quantity
+			if imageCount < 1 {
+				imageCount = 1
+			}
+			message = ""
+		} else if message == "" {
+			if item.status == "canceled" {
+				message = "任务已取消"
+			} else {
+				message = "图片生成失败"
+			}
+		}
+		if err := r.FinishLog(ctx, item.id, status, imageCount, message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Repository) FindLogByID(ctx context.Context, id string) (*UsageLog, error) {
 	row := r.db.QueryRowContext(ctx, usageLogSelect()+` WHERE api_access_logs.id = ? LIMIT 1`, id)
 	return scanUsageLog(row)

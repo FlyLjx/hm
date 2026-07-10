@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/tasks"
 )
 
 func (s *Service) Process(ctx context.Context, taskID string) error {
@@ -27,6 +30,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	model, provider, err := modelAndProvider(ctx, s.db, task)
 	if err != nil {
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
 		}
@@ -40,7 +44,11 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	}
 	if provider.Status != "active" || model.Status != "active" {
 		message := "模型或接口已禁用"
-		_, _ = s.tasks.FinishFailed(ctx, taskID, message, time.Since(startedAt).Seconds())
+		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, message, time.Since(startedAt).Seconds())
+		s.syncAPIAccessLogForTask(failed)
+		if failed != nil && s.hub != nil {
+			s.hub.PublishTask(*failed)
+		}
 		s.logger.Warn("[generation:finished]",
 			"taskId", taskID,
 			"status", "failed",
@@ -70,6 +78,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	})
 	if err != nil {
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
 		}
@@ -97,6 +106,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		Result:           result,
 	}); err != nil {
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
 		}
@@ -108,8 +118,11 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		)
 		return err
 	}
-	if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil && s.hub != nil {
-		s.hub.PublishTask(*finalTask)
+	if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil {
+		s.syncAPIAccessLogForTask(finalTask)
+		if s.hub != nil {
+			s.hub.PublishTask(*finalTask)
+		}
 	}
 	s.logger.Info("[generation:finished]",
 		"taskId", taskID,
@@ -120,6 +133,40 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"imageCount", actualQuantity,
 	)
 	return nil
+}
+
+func (s *Service) syncAPIAccessLogForTask(task *tasks.Task) {
+	if task == nil {
+		return
+	}
+	status := ""
+	imageCount := 0
+	message := ""
+	switch task.Status {
+	case tasks.StatusSuccess:
+		status = "success"
+		imageCount = len(tasks.ResultURLs(task.ResultJSON))
+		if imageCount < 1 {
+			imageCount = task.Quantity
+		}
+		if imageCount < 1 {
+			imageCount = 1
+		}
+	case tasks.StatusFailed, tasks.StatusCanceled:
+		status = "failed"
+		if task.ErrorMessage != nil && strings.TrimSpace(*task.ErrorMessage) != "" {
+			message = strings.TrimSpace(*task.ErrorMessage)
+		} else if task.Status == tasks.StatusCanceled {
+			message = "任务已取消"
+		} else {
+			message = "图片生成失败"
+		}
+	default:
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = apiaccess.NewRepository(s.db).FinishLogsForTask(ctx, task.ID, status, imageCount, message)
 }
 
 func taskOutputFormat(format string, transparent bool) string {
