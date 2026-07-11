@@ -1,8 +1,8 @@
-import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260711-api-key-concurrency-v1'
+import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './api.js?v=20260711-api-key-concurrency-visible-v1'
 
 const { computed, defineAsyncComponent, markRaw, onMounted, reactive, ref } = Vue
 const { message } = antd
-const ADMIN_ASSET_VERSION = '20260711-api-key-concurrency-v1'
+const ADMIN_ASSET_VERSION = '20260711-api-key-concurrency-visible-v1'
 
 const PageLoading = markRaw({
   template: `

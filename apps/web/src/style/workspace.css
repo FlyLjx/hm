@@ -11392,12 +11392,17 @@ body .api-access-v2-view-missing p {
 
 /* 20260710: API access quota and log modal. */
 body .api-access-v2-summary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 body .api-access-v2-summary article span.green {
   background: #ecfdf3;
   color: #047857;
+}
+
+body .api-access-v2-concurrency-strip {
+  border-color: #bbf7d0;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);
 }
 
 body .api-access-v2-quota-panel {

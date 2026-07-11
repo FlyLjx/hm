@@ -1,8 +1,9 @@
-import { clientApi } from '../common/api.js?v=20260710-api-quota-used-window-v1'
-import { formatDate } from '../common/format.js?v=20260710-api-quota-used-window-v1'
+import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-visible-v1'
+import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-visible-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
+const DEFAULT_API_KEY_CONCURRENCY = 10
 
 const LOG_STATUS_OPTIONS = Object.freeze([
   { value: 'all', label: '全部状态' },
@@ -139,6 +140,7 @@ export const ApiAccessPage = {
     const userName = computed(() => props.currentUser?.email || props.currentUser?.name || props.currentUser?.id || '当前账号')
     const userInitial = computed(() => String(userName.value || 'A').slice(0, 1).toUpperCase())
     const keyCountText = computed(() => `${keys.value.length} 个 Key`)
+    const defaultConcurrencyText = computed(() => `${numberText(DEFAULT_API_KEY_CONCURRENCY)} 个并发`)
     const viewingKeyText = computed(() => viewingKey.value?.keyPlain || viewingKey.value?.key || '')
     const selectedLogStatusLabel = computed(() => LOG_STATUS_OPTIONS.find((item) => item.value === logFilter.status)?.label || '全部状态')
     const totalLogPages = computed(() => Math.max(1, Math.ceil(Number(pagination.value.total || 0) / Number(pagination.value.pageSize || 1))))
@@ -365,6 +367,7 @@ export const ApiAccessPage = {
       userName,
       userInitial,
       keyCountText,
+      defaultConcurrencyText,
       viewingKeyText,
       selectedLogStatusLabel,
       totalLogPages,
@@ -427,6 +430,7 @@ export const ApiAccessPage = {
               <small>当前账号</small>
               <strong>{{ userName }}</strong>
               <em>已创建：{{ keyCountText }}</em>
+              <em>默认并发：{{ defaultConcurrencyText }}</em>
             </div>
           </div>
         </section>
@@ -441,6 +445,13 @@ export const ApiAccessPage = {
           </article>
           <article>
             <span class="blue"><i class="ti ti-route"></i></span>
+            <div>
+              <strong>{{ defaultConcurrencyText }}</strong>
+              <small>单 Key 默认并发</small>
+            </div>
+          </article>
+          <article>
+            <span class="blue"><i class="ti ti-chart-arrows-vertical"></i></span>
             <div>
               <strong>{{ numberText(stats.requests) }}</strong>
               <small>请求总数</small>
@@ -561,7 +572,7 @@ export const ApiAccessPage = {
                 <div v-if="!loading && !hasKeys" class="invite-v2-empty api-access-v2-empty">
                   <i class="ti ti-key-off"></i>
                   <strong>暂无 API Key</strong>
-                  <p>系统不会默认创建 Key，需要你手动创建。创建后即可按 OpenAI 图片接口规范调用生图。</p>
+                  <p>系统不会默认创建 Key，需要你手动创建。新建 Key 默认支持 {{ defaultConcurrencyText }}，超出后自动进入队列等待。</p>
                   <button class="invite-v2-primary" type="button" @click="openCreate">新建 Key</button>
                 </div>
               </div>
@@ -609,6 +620,14 @@ export const ApiAccessPage = {
                 <div>
                   <small>请求头</small>
                   <strong>Authorization: Bearer 你的 API Key</strong>
+                </div>
+              </section>
+
+              <section class="api-access-v2-auth-strip api-access-v2-concurrency-strip">
+                <span><i class="ti ti-arrows-split"></i></span>
+                <div>
+                  <small>并发规则</small>
+                  <strong>单 Key 默认 {{ defaultConcurrencyText }}，超出后排队处理</strong>
                 </div>
               </section>
 

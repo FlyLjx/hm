@@ -1,8 +1,9 @@
-import { adminApi } from '../api.js?v=20260711-api-key-concurrency-v1'
-import { formatDate, text } from '../format.js?v=20260711-api-key-concurrency-v1'
+import { adminApi } from '../api.js?v=20260711-api-key-concurrency-visible-v1'
+import { formatDate, text } from '../format.js?v=20260711-api-key-concurrency-visible-v1'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
+const DEFAULT_API_KEY_CONCURRENCY = 10
 
 function numberText(value) {
   return Number(value || 0).toLocaleString('zh-CN')
@@ -43,6 +44,7 @@ export const ApiAccessPage = {
     const filters = reactive({ keyword: '', status: 'all' })
 
     const activeKeyCount = computed(() => keys.value.filter((item) => item.status === 'active').length)
+    const defaultConcurrencyText = computed(() => `${numberText(DEFAULT_API_KEY_CONCURRENCY)} 个`)
 
     async function loadKeys() {
       loading.value = true
@@ -133,6 +135,7 @@ export const ApiAccessPage = {
       pagination,
       filters,
       activeKeyCount,
+      defaultConcurrencyText,
       loadKeys,
       loadLogs,
       refreshAll,
@@ -164,6 +167,7 @@ export const ApiAccessPage = {
         <div class="summary-grid admin-api-access-summary">
           <div class="summary-card"><span>Key 总数</span><b>{{ numberText(stats.totalKeys || keys.length) }}</b><div class="muted">用户手动创建</div></div>
           <div class="summary-card"><span>启用 Key</span><b>{{ numberText(stats.activeKeys || activeKeyCount) }}</b><div class="muted">可调用接口</div></div>
+          <div class="summary-card"><span>默认并发</span><b>{{ defaultConcurrencyText }}</b><div class="muted">单 Key 超出后排队</div></div>
           <div class="summary-card"><span>今日请求</span><b>{{ numberText(stats.todayRequests) }}</b><div class="muted">OpenAI 图片接口</div></div>
           <div class="summary-card"><span>今日生成</span><b>{{ numberText(stats.todayImageCount) }}</b><div class="muted">成功图片数</div></div>
         </div>

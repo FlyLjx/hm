@@ -287,7 +287,11 @@ func addColumnIfMissing(ctx context.Context, db *sql.DB, table string, column st
 }
 
 func normalizeAPIAccessKeyConcurrencyDefaults(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `ALTER TABLE api_access_keys ALTER COLUMN concurrency_limit SET DEFAULT 10`); err != nil {
+	defaultStatement := `ALTER TABLE api_access_keys MODIFY COLUMN concurrency_limit INTEGER NOT NULL DEFAULT 10`
+	if CurrentDialect() == DialectPostgres {
+		defaultStatement = `ALTER TABLE api_access_keys ALTER COLUMN concurrency_limit SET DEFAULT 10`
+	}
+	if _, err := db.ExecContext(ctx, defaultStatement); err != nil {
 		return err
 	}
 	_, err := db.ExecContext(ctx, Rebind(`
