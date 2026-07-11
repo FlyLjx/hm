@@ -108,7 +108,7 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 		KeyHash:          HashKey(raw),
 		KeyPlain:         &plain,
 		Status:           "active",
-		ConcurrencyLimit: 1,
+		ConcurrencyLimit: 10,
 	})
 	if err != nil {
 		return nil, err

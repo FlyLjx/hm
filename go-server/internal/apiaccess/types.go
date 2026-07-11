@@ -162,7 +162,7 @@ func formatTime(value *time.Time) *string {
 
 func normalizedConcurrencyLimit(value int) int {
 	if value < 1 {
-		return 1
+		return 10
 	}
 	return value
 }

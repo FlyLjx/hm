@@ -1,5 +1,5 @@
-import { adminApi } from '../api.js?v=20260710-shanghai-tz-v1'
-import { formatDate, text } from '../format.js?v=20260710-shanghai-tz-v1'
+import { adminApi } from '../api.js?v=20260711-api-key-concurrency-v1'
+import { formatDate, text } from '../format.js?v=20260711-api-key-concurrency-v1'
 
 const { computed, onMounted, reactive, ref, watch } = Vue
 const { message, Modal } = antd
