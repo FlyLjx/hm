@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -92,8 +93,26 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		return err
 	}
 	actualQuantity := len(ExtractImages(result))
-	if actualQuantity < 1 {
-		actualQuantity = task.Quantity
+	expectedQuantity := task.Quantity
+	if expectedQuantity < 1 {
+		expectedQuantity = 1
+	}
+	if actualQuantity < expectedQuantity {
+		err := fmt.Errorf("上游实际返回 %d 张，少于请求的 %d 张", actualQuantity, expectedQuantity)
+		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		s.syncAPIAccessLogForTask(failed)
+		if failed != nil && s.hub != nil {
+			s.hub.PublishTask(*failed)
+		}
+		s.logger.Error("[generation:finished]",
+			"taskId", taskID,
+			"status", "failed",
+			"durationSeconds", time.Since(startedAt).Seconds(),
+			"error", err,
+			"expectedQuantity", expectedQuantity,
+			"actualQuantity", actualQuantity,
+		)
+		return err
 	}
 	modelCostCredits := taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
 	if err := s.finishSuccessWithBilling(ctx, BillingSuccessInput{

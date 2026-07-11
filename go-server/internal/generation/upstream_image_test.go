@@ -388,6 +388,43 @@ func TestCallImageGenerationBatchesQuantityByUpstreamLimit(t *testing.T) {
 	}
 }
 
+func TestCallImageGenerationRequestsMissingImagesWhenBatchIsPartial(t *testing.T) {
+	receivedN := []int{}
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt64(&requestCount, 1)
+		var received map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		receivedN = append(receivedN, int(received["n"].(float64)))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": fmt.Sprintf("https://cdn.example.test/partial-%d.png", count)}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	input := testImageRequest(server.URL)
+	input.Quantity = 4
+	result, err := service.callImageGeneration(context.Background(), input)
+	if err != nil {
+		t.Fatalf("callImageGeneration returned error: %v", err)
+	}
+	wantN := []int{4, 3, 2, 1}
+	if fmt.Sprint(receivedN) != fmt.Sprint(wantN) {
+		t.Fatalf("expected upstream n batches %v, got %v", wantN, receivedN)
+	}
+	images := ExtractImages(result)
+	if len(images) != input.Quantity {
+		t.Fatalf("expected %d aggregated images, got %#v", input.Quantity, images)
+	}
+	if requestCount != int64(input.Quantity) {
+		t.Fatalf("expected %d upstream requests, got %d", input.Quantity, requestCount)
+	}
+}
+
 type errUnexpectedResult struct{}
 
 func (e errUnexpectedResult) Error() string {

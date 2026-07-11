@@ -120,6 +120,16 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 	req.Header.Set("Content-Type", "application/json")
 
 	startedAt := time.Now()
+	if s.logger != nil {
+		s.logger.Info("generation upstream image request",
+			"taskId", input.TaskID,
+			"providerId", input.Provider.ID,
+			"endpoint", endpoint,
+			"attempt", attempt,
+			"requestAttempt", requestAttempt,
+			"requestedQuantity", input.Quantity,
+		)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("上游中转服务连接中断：%w", err)
@@ -139,6 +149,7 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 			"requestAttempt", requestAttempt,
 			"status", resp.StatusCode,
 			"durationMs", time.Since(startedAt).Milliseconds(),
+			"requestedQuantity", input.Quantity,
 			"imageCount", len(ExtractImages(responseJSON)),
 			"errorMessage", trimLong(errorMessage, 300),
 			"auth", providers.APIKeyDiagnostics(input.Provider.APIKey),
