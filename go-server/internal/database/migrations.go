@@ -395,6 +395,15 @@ func schemaBootstrapStatements() []string {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
+			`CREATE TABLE IF NOT EXISTS generation_result_images (
+				id VARCHAR(36) PRIMARY KEY,
+				task_id VARCHAR(36) NOT NULL,
+				provider_id VARCHAR(36) NOT NULL,
+				url_hash CHAR(64) NOT NULL,
+				image_url TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT uq_generation_result_images_provider_hash UNIQUE (provider_id, url_hash)
+			)`,
 			`CREATE TABLE IF NOT EXISTS credit_logs (
 				id VARCHAR(36) PRIMARY KEY,
 				user_id VARCHAR(36) NOT NULL,
@@ -617,6 +626,7 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created_id ON generation_tasks (user_id, created_at, id)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_favorite ON generation_tasks (user_id, favorite_enabled, updated_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_public_status ON generation_tasks (public_status, updated_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_generation_result_images_task_id ON generation_result_images (task_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_credit_logs_user_id ON credit_logs (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_credit_logs_created_at ON credit_logs (created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_credit_logs_user_created_id ON credit_logs (user_id, created_at, id)`,
@@ -642,6 +652,16 @@ func schemaBootstrapStatements() []string {
 		}
 	}
 	return []string{
+		`CREATE TABLE IF NOT EXISTS generation_result_images (
+			id VARCHAR(36) PRIMARY KEY,
+			task_id VARCHAR(36) NOT NULL,
+			provider_id VARCHAR(36) NOT NULL,
+			url_hash CHAR(64) NOT NULL,
+			image_url TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE KEY uq_generation_result_images_provider_hash (provider_id, url_hash),
+			INDEX idx_generation_result_images_task_id (task_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS api_access_keys (
 			id VARCHAR(36) PRIMARY KEY,
 			user_id VARCHAR(36) NOT NULL,

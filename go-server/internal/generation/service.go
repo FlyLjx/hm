@@ -84,36 +84,52 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		ReferenceImageURLs:    referenceImages(task.ReferenceImageURL),
 		MaskImageURL:          maskImage(task.ReferenceImageURL),
 	}
-	releaseProvider := acquireUpstreamProvider(*provider)
-	defer releaseProvider()
 
-	result, actualQuantity, err := s.callImageGenerationWithGuards(ctx, taskID, provider.ID, expectedQuantity, request)
-	if err != nil {
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
-		s.syncAPIAccessLogForTask(failed)
-		if failed != nil && s.hub != nil {
-			s.hub.PublishTask(*failed)
+	var actualQuantity int
+	var modelCostCredits float64
+	var lastErr error
+	for attempt := 1; attempt <= upstreamDuplicateGuardAttempts; attempt++ {
+		result, quantity, err := s.callImageGenerationWithGuards(ctx, expectedQuantity, request)
+		if err != nil {
+			lastErr = err
+			break
 		}
-		s.logger.Error("[generation:finished]",
-			"taskId", taskID,
-			"status", "failed",
-			"durationSeconds", time.Since(startedAt).Seconds(),
-			"error", err,
-		)
-		return err
+		actualQuantity = quantity
+		modelCostCredits = taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
+		err = s.finishSuccessWithBilling(ctx, BillingSuccessInput{
+			TaskID:           taskID,
+			UserID:           task.UserID,
+			ProviderID:       provider.ID,
+			Quantity:         actualQuantity,
+			CostCredits:      0,
+			ModelCostCredits: modelCostCredits,
+			DurationSeconds:  time.Since(startedAt).Seconds(),
+			Remark:           "订阅生图：" + model.DisplayName,
+			Result:           result,
+		})
+		if err == nil {
+			lastErr = nil
+			break
+		}
+		lastErr = err
+		if !errors.Is(err, ErrDuplicateResultImage) || attempt >= upstreamDuplicateGuardAttempts {
+			break
+		}
+		if s.logger != nil {
+			s.logger.Warn("generation upstream duplicate image blocked",
+				"taskId", taskID,
+				"attempt", attempt,
+				"maxAttempts", upstreamDuplicateGuardAttempts,
+				"error", err.Error(),
+			)
+		}
+		if err := sleepImageRetry(ctx, attempt); err != nil {
+			lastErr = err
+			break
+		}
 	}
-	modelCostCredits := taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
-	if err := s.finishSuccessWithBilling(ctx, BillingSuccessInput{
-		TaskID:           taskID,
-		UserID:           task.UserID,
-		Quantity:         actualQuantity,
-		CostCredits:      0,
-		ModelCostCredits: modelCostCredits,
-		DurationSeconds:  time.Since(startedAt).Seconds(),
-		Remark:           "订阅生图：" + model.DisplayName,
-		Result:           result,
-	}); err != nil {
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+	if lastErr != nil {
+		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds())
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -122,9 +138,9 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 			"taskId", taskID,
 			"status", "failed",
 			"durationSeconds", time.Since(startedAt).Seconds(),
-			"error", err,
+			"error", lastErr,
 		)
-		return err
+		return lastErr
 	}
 	if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil {
 		s.syncAPIAccessLogForTask(finalTask)
@@ -143,43 +159,17 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	return nil
 }
 
-func (s *Service) callImageGenerationWithGuards(ctx context.Context, taskID string, providerID string, expectedQuantity int, request ImageRequest) (any, int, error) {
-	var lastDuplicateError error
-	for attempt := 1; attempt <= upstreamDuplicateGuardAttempts; attempt++ {
-		result, err := s.callImageGeneration(ctx, request)
-		if err != nil {
-			return nil, 0, err
-		}
-		images := ExtractImages(result)
-		actualQuantity := len(images)
-		if actualQuantity < expectedQuantity {
-			return nil, actualQuantity, fmt.Errorf("上游实际返回 %d 张，少于请求的 %d 张", actualQuantity, expectedQuantity)
-		}
-		urls := extractedImageURLs(images)
-		duplicateTaskID, duplicateURL, err := s.tasks.FindRecentSuccessfulTaskByResultURL(ctx, providerID, taskID, urls)
-		if err != nil {
-			return nil, actualQuantity, err
-		}
-		if duplicateURL == "" {
-			return result, actualQuantity, nil
-		}
-		lastDuplicateError = fmt.Errorf("上游返回了已被其他任务使用的图片，已阻止串图")
-		if s.logger != nil {
-			s.logger.Warn("generation upstream duplicate image blocked",
-				"taskId", taskID,
-				"duplicateTaskId", duplicateTaskID,
-				"duplicateUrl", trimLong(duplicateURL, 180),
-				"attempt", attempt,
-				"maxAttempts", upstreamDuplicateGuardAttempts,
-			)
-		}
-		if attempt < upstreamDuplicateGuardAttempts {
-			if err := sleepImageRetry(ctx, attempt); err != nil {
-				return nil, actualQuantity, err
-			}
-		}
+func (s *Service) callImageGenerationWithGuards(ctx context.Context, expectedQuantity int, request ImageRequest) (any, int, error) {
+	result, err := s.callImageGeneration(ctx, request)
+	if err != nil {
+		return nil, 0, err
 	}
-	return nil, 0, lastDuplicateError
+	images := ExtractImages(result)
+	actualQuantity := len(images)
+	if actualQuantity < expectedQuantity {
+		return nil, actualQuantity, fmt.Errorf("上游实际返回 %d 张，少于请求的 %d 张", actualQuantity, expectedQuantity)
+	}
+	return result, actualQuantity, nil
 }
 
 func extractedImageURLs(images []ExtractedImage) []string {
