@@ -12,6 +12,8 @@ import (
 	"aipi-go/internal/tasks"
 )
 
+const upstreamDuplicateGuardAttempts = 3
+
 func (s *Service) Process(ctx context.Context, taskID string) error {
 	startedAt := time.Now()
 	task, err := s.tasks.UpdateStatus(ctx, taskID, "processing")
@@ -63,7 +65,11 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if task.Size != nil && *task.Size != "" {
 		size = *task.Size
 	}
-	result, err := s.callImageGeneration(ctx, ImageRequest{
+	expectedQuantity := task.Quantity
+	if expectedQuantity < 1 {
+		expectedQuantity = 1
+	}
+	request := ImageRequest{
 		TaskID:                taskID,
 		Capability:            task.Capability,
 		Operation:             imageOperation(task.ReferenceImageURL),
@@ -77,7 +83,11 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		TransparentBackground: task.TransparentBackground,
 		ReferenceImageURLs:    referenceImages(task.ReferenceImageURL),
 		MaskImageURL:          maskImage(task.ReferenceImageURL),
-	})
+	}
+	releaseProvider := acquireUpstreamProvider(*provider)
+	defer releaseProvider()
+
+	result, actualQuantity, err := s.callImageGenerationWithGuards(ctx, taskID, provider.ID, expectedQuantity, request)
 	if err != nil {
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
 		s.syncAPIAccessLogForTask(failed)
@@ -89,28 +99,6 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 			"status", "failed",
 			"durationSeconds", time.Since(startedAt).Seconds(),
 			"error", err,
-		)
-		return err
-	}
-	actualQuantity := len(ExtractImages(result))
-	expectedQuantity := task.Quantity
-	if expectedQuantity < 1 {
-		expectedQuantity = 1
-	}
-	if actualQuantity < expectedQuantity {
-		err := fmt.Errorf("上游实际返回 %d 张，少于请求的 %d 张", actualQuantity, expectedQuantity)
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
-		s.syncAPIAccessLogForTask(failed)
-		if failed != nil && s.hub != nil {
-			s.hub.PublishTask(*failed)
-		}
-		s.logger.Error("[generation:finished]",
-			"taskId", taskID,
-			"status", "failed",
-			"durationSeconds", time.Since(startedAt).Seconds(),
-			"error", err,
-			"expectedQuantity", expectedQuantity,
-			"actualQuantity", actualQuantity,
 		)
 		return err
 	}
@@ -153,6 +141,59 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"imageCount", actualQuantity,
 	)
 	return nil
+}
+
+func (s *Service) callImageGenerationWithGuards(ctx context.Context, taskID string, providerID string, expectedQuantity int, request ImageRequest) (any, int, error) {
+	var lastDuplicateError error
+	for attempt := 1; attempt <= upstreamDuplicateGuardAttempts; attempt++ {
+		result, err := s.callImageGeneration(ctx, request)
+		if err != nil {
+			return nil, 0, err
+		}
+		images := ExtractImages(result)
+		actualQuantity := len(images)
+		if actualQuantity < expectedQuantity {
+			return nil, actualQuantity, fmt.Errorf("上游实际返回 %d 张，少于请求的 %d 张", actualQuantity, expectedQuantity)
+		}
+		urls := extractedImageURLs(images)
+		duplicateTaskID, duplicateURL, err := s.tasks.FindRecentSuccessfulTaskByResultURL(ctx, providerID, taskID, urls)
+		if err != nil {
+			return nil, actualQuantity, err
+		}
+		if duplicateURL == "" {
+			return result, actualQuantity, nil
+		}
+		lastDuplicateError = fmt.Errorf("上游返回了已被其他任务使用的图片，已阻止串图")
+		if s.logger != nil {
+			s.logger.Warn("generation upstream duplicate image blocked",
+				"taskId", taskID,
+				"duplicateTaskId", duplicateTaskID,
+				"duplicateUrl", trimLong(duplicateURL, 180),
+				"attempt", attempt,
+				"maxAttempts", upstreamDuplicateGuardAttempts,
+			)
+		}
+		if attempt < upstreamDuplicateGuardAttempts {
+			if err := sleepImageRetry(ctx, attempt); err != nil {
+				return nil, actualQuantity, err
+			}
+		}
+	}
+	return nil, 0, lastDuplicateError
+}
+
+func extractedImageURLs(images []ExtractedImage) []string {
+	result := []string{}
+	seen := map[string]bool{}
+	for _, image := range images {
+		url := strings.TrimSpace(image.URL)
+		if url == "" || seen[url] {
+			continue
+		}
+		seen[url] = true
+		result = append(result, url)
+	}
+	return result
 }
 
 func (s *Service) markAPIAccessLogProcessing(taskID string) {

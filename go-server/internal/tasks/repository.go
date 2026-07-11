@@ -78,6 +78,59 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Task, error) {
 	return scanTask(row)
 }
 
+func (r *Repository) FindRecentSuccessfulTaskByResultURL(ctx context.Context, providerID string, excludeTaskID string, urls []string) (string, string, error) {
+	providerID = strings.TrimSpace(providerID)
+	excludeTaskID = strings.TrimSpace(excludeTaskID)
+	urlSet := map[string]bool{}
+	for _, item := range urls {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			urlSet[item] = true
+		}
+	}
+	if providerID == "" || len(urlSet) == 0 {
+		return "", "", nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, result_json
+		FROM generation_tasks
+		WHERE provider_id = ?
+			AND id <> ?
+			AND status = 'success'
+			AND result_json IS NOT NULL
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT 500
+	`, providerID, excludeTaskID)
+	if err != nil {
+		return "", "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var taskID string
+		var resultJSON sql.NullString
+		if err := rows.Scan(&taskID, &resultJSON); err != nil {
+			return "", "", err
+		}
+		if !resultJSON.Valid || strings.TrimSpace(resultJSON.String) == "" {
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal([]byte(resultJSON.String), &payload); err != nil {
+			continue
+		}
+		for _, existingURL := range ResultURLs(payload) {
+			existingURL = strings.TrimSpace(existingURL)
+			if urlSet[existingURL] {
+				return taskID, existingURL, nil
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", err
+	}
+	return "", "", nil
+}
+
 func (r *Repository) FindAll(ctx context.Context, input ListInput) ([]Task, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	where, args := buildTaskWhere(input.Keyword, input.Status, input.Display)
