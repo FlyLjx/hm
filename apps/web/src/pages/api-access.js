@@ -1,5 +1,5 @@
-import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-visible-v1'
-import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-visible-v1'
+import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-align-v1'
+import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-align-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
@@ -441,13 +441,6 @@ export const ApiAccessPage = {
             <div>
               <strong>{{ numberText(keys.length) }}</strong>
               <small>API Key</small>
-            </div>
-          </article>
-          <article>
-            <span class="blue"><i class="ti ti-route"></i></span>
-            <div>
-              <strong>{{ defaultConcurrencyText }}</strong>
-              <small>单 Key 默认并发</small>
             </div>
           </article>
           <article>

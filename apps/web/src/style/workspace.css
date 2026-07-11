@@ -11392,7 +11392,7 @@ body .api-access-v2-view-missing p {
 
 /* 20260710: API access quota and log modal. */
 body .api-access-v2-summary {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 body .api-access-v2-summary article span.green {
