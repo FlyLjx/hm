@@ -10675,10 +10675,9 @@ body .api-access-v2-key-foot {
 
 body .api-access-v2-key-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 body .api-access-v2-key-title,
@@ -10686,6 +10685,13 @@ body .api-access-v2-endpoint,
 body .api-access-v2-model {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+body .api-access-v2-key-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -10751,16 +10757,17 @@ body .api-access-v2-result em.queued {
 
 body .api-access-v2-concurrency-badge {
   display: inline-flex;
-  min-height: 24px;
+  min-height: 22px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 1px solid #bbf7d0;
   border-radius: 999px;
   background: #f0fdf4;
   color: #047857;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 900;
   white-space: nowrap;
 }

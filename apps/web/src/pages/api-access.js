@@ -1,5 +1,5 @@
-import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-card-v1'
-import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-card-v1'
+import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-title-v1'
+import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-title-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
@@ -518,12 +518,14 @@ export const ApiAccessPage = {
                   <div class="api-access-v2-key-top">
                     <div class="api-access-v2-key-main">
                       <span :class="['api-access-v2-status', statusClass(item.status)]">{{ statusLabel(item.status) }}</span>
-                      <span class="api-access-v2-concurrency-badge">
-                        <i class="ti ti-arrows-split"></i>
-                        并发 {{ numberText(item.concurrencyLimit || 10) }}
-                      </span>
                       <div class="api-access-v2-key-title">
-                        <strong>{{ item.name }}</strong>
+                        <div class="api-access-v2-key-name-line">
+                          <strong>{{ item.name }}</strong>
+                          <span class="api-access-v2-concurrency-badge">
+                            <i class="ti ti-arrows-split"></i>
+                            并发 {{ numberText(item.concurrencyLimit || 10) }}
+                          </span>
+                        </div>
                         <small>Key 内容已隐藏，需要时点击右侧查看</small>
                       </div>
                     </div>
