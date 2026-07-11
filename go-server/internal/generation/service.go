@@ -17,6 +17,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
+	s.markAPIAccessLogProcessing(taskID)
 	if s.hub != nil {
 		s.hub.PublishTask(*task)
 		s.hub.PublishProgress(taskID, map[string]any{
@@ -133,6 +134,12 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"imageCount", actualQuantity,
 	)
 	return nil
+}
+
+func (s *Service) markAPIAccessLogProcessing(taskID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = apiaccess.NewRepository(s.db).MarkLogsProcessingForTask(ctx, taskID)
 }
 
 func (s *Service) syncAPIAccessLogForTask(task *tasks.Task) {

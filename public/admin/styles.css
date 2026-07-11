@@ -4124,3 +4124,14 @@ a {
     width: 100% !important;
   }
 }
+
+.admin-api-concurrency-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 132px;
+}
+
+.admin-api-concurrency-cell .ant-input-number {
+  width: 72px;
+}

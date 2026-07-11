@@ -3,23 +3,24 @@ package apiaccess
 import "time"
 
 type AccessKey struct {
-	ID           string
-	UserID       string
-	UserEmail    *string
-	Name         string
-	KeyPrefix    string
-	KeyHash      string
-	KeyPlain     *string
-	Status       string
-	LastUsedAt   *time.Time
-	DeletedAt    *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	RequestCount int
-	SuccessCount int
-	FailedCount  int
-	ImageCount   int
-	LastError    *string
+	ID               string
+	UserID           string
+	UserEmail        *string
+	Name             string
+	KeyPrefix        string
+	KeyHash          string
+	KeyPlain         *string
+	Status           string
+	ConcurrencyLimit int
+	LastUsedAt       *time.Time
+	DeletedAt        *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RequestCount     int
+	SuccessCount     int
+	FailedCount      int
+	ImageCount       int
+	LastError        *string
 }
 
 type UsageLog struct {
@@ -45,23 +46,24 @@ type UsageLog struct {
 }
 
 type PublicAccessKey struct {
-	ID           string  `json:"id"`
-	UserID       string  `json:"userId"`
-	UserEmail    *string `json:"userEmail,omitempty"`
-	Name         string  `json:"name"`
-	KeyPrefix    string  `json:"keyPrefix"`
-	KeyPlain     *string `json:"keyPlain,omitempty"`
-	Key          *string `json:"key,omitempty"`
-	Status       string  `json:"status"`
-	LastUsedAt   *string `json:"lastUsedAt"`
-	DeletedAt    *string `json:"deletedAt,omitempty"`
-	CreatedAt    string  `json:"createdAt"`
-	UpdatedAt    string  `json:"updatedAt"`
-	RequestCount int     `json:"requestCount"`
-	SuccessCount int     `json:"successCount"`
-	FailedCount  int     `json:"failedCount"`
-	ImageCount   int     `json:"imageCount"`
-	LastError    *string `json:"lastError,omitempty"`
+	ID               string  `json:"id"`
+	UserID           string  `json:"userId"`
+	UserEmail        *string `json:"userEmail,omitempty"`
+	Name             string  `json:"name"`
+	KeyPrefix        string  `json:"keyPrefix"`
+	KeyPlain         *string `json:"keyPlain,omitempty"`
+	Key              *string `json:"key,omitempty"`
+	Status           string  `json:"status"`
+	ConcurrencyLimit int     `json:"concurrencyLimit"`
+	LastUsedAt       *string `json:"lastUsedAt"`
+	DeletedAt        *string `json:"deletedAt,omitempty"`
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+	RequestCount     int     `json:"requestCount"`
+	SuccessCount     int     `json:"successCount"`
+	FailedCount      int     `json:"failedCount"`
+	ImageCount       int     `json:"imageCount"`
+	LastError        *string `json:"lastError,omitempty"`
 }
 
 type PublicUsageLog struct {
@@ -106,22 +108,23 @@ type AdminStats struct {
 
 func ToPublicKey(key AccessKey) PublicAccessKey {
 	return PublicAccessKey{
-		ID:           key.ID,
-		UserID:       key.UserID,
-		UserEmail:    key.UserEmail,
-		Name:         key.Name,
-		KeyPrefix:    key.KeyPrefix,
-		KeyPlain:     key.KeyPlain,
-		Status:       key.Status,
-		LastUsedAt:   formatTime(key.LastUsedAt),
-		DeletedAt:    formatTime(key.DeletedAt),
-		CreatedAt:    key.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    key.UpdatedAt.Format(time.RFC3339),
-		RequestCount: key.RequestCount,
-		SuccessCount: key.SuccessCount,
-		FailedCount:  key.FailedCount,
-		ImageCount:   key.ImageCount,
-		LastError:    key.LastError,
+		ID:               key.ID,
+		UserID:           key.UserID,
+		UserEmail:        key.UserEmail,
+		Name:             key.Name,
+		KeyPrefix:        key.KeyPrefix,
+		KeyPlain:         key.KeyPlain,
+		Status:           key.Status,
+		ConcurrencyLimit: normalizedConcurrencyLimit(key.ConcurrencyLimit),
+		LastUsedAt:       formatTime(key.LastUsedAt),
+		DeletedAt:        formatTime(key.DeletedAt),
+		CreatedAt:        key.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:        key.UpdatedAt.Format(time.RFC3339),
+		RequestCount:     key.RequestCount,
+		SuccessCount:     key.SuccessCount,
+		FailedCount:      key.FailedCount,
+		ImageCount:       key.ImageCount,
+		LastError:        key.LastError,
 	}
 }
 
@@ -155,4 +158,11 @@ func formatTime(value *time.Time) *string {
 	}
 	text := value.Format(time.RFC3339)
 	return &text
+}
+
+func normalizedConcurrencyLimit(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
 }

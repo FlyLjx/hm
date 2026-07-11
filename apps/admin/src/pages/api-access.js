@@ -16,14 +16,14 @@ function statusColor(status) {
   if (status === 'active') return 'green'
   if (status === 'success') return 'green'
   if (status === 'failed') return 'red'
-  if (status === 'queued') return 'blue'
+  if (status === 'queued' || status === 'processing') return 'blue'
   return 'default'
 }
 
 function logStatusLabel(status) {
   if (status === 'success') return '成功'
   if (status === 'failed') return '失败'
-  if (status === 'queued') return '处理中'
+  if (status === 'queued' || status === 'processing') return '处理中'
   return status || '-'
 }
 
@@ -91,6 +91,21 @@ export const ApiAccessPage = {
       }
     }
 
+    async function saveConcurrency(row) {
+      const value = Number(row.concurrencyLimit || 1)
+      if (!Number.isFinite(value) || value < 1 || value > 50) {
+        message.warning('并发上限必须在 1 到 50 之间')
+        return
+      }
+      try {
+        await adminApi.updateApiAccessKey(row.id, { concurrencyLimit: Math.floor(value) })
+        message.success('并发上限已保存')
+        await loadKeys()
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '并发设置失败')
+      }
+    }
+
     function deleteKey(row) {
       Modal.confirm({
         title: '删除 API Key',
@@ -122,6 +137,7 @@ export const ApiAccessPage = {
       loadLogs,
       refreshAll,
       toggleStatus,
+      saveConcurrency,
       deleteKey,
       numberText,
       statusLabel,
@@ -158,13 +174,19 @@ export const ApiAccessPage = {
         <a-spin :spinning="loading">
           <div class="data-table-wrap">
             <table class="data-table admin-api-key-table">
-              <thead><tr><th>用户</th><th>Key 名称</th><th>Key 前缀</th><th>状态</th><th>请求</th><th>成功/失败</th><th>图片</th><th>最近使用</th><th>创建时间</th><th>操作</th></tr></thead>
+              <thead><tr><th>用户</th><th>Key 名称</th><th>Key 前缀</th><th>状态</th><th>并发</th><th>请求</th><th>成功/失败</th><th>图片</th><th>最近使用</th><th>创建时间</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="row in keys" :key="row.id">
                   <td>{{ text(row.userEmail || row.userId) }}</td>
                   <td>{{ text(row.name) }}</td>
                   <td><code>{{ row.keyPrefix }}••••••</code></td>
                   <td><a-tag :color="statusColor(row.status)">{{ statusLabel(row.status) }}</a-tag></td>
+                  <td>
+                    <div class="admin-api-concurrency-cell">
+                      <a-input-number v-model:value="row.concurrencyLimit" :min="1" :max="50" size="small" />
+                      <a-button size="small" @click="saveConcurrency(row)">保存</a-button>
+                    </div>
+                  </td>
                   <td>{{ numberText(row.requestCount) }}</td>
                   <td><span class="admin-api-success">{{ numberText(row.successCount) }}</span> / <span class="admin-api-failed">{{ numberText(row.failedCount) }}</span></td>
                   <td>{{ numberText(row.imageCount) }}</td>
@@ -177,7 +199,7 @@ export const ApiAccessPage = {
                     </div>
                   </td>
                 </tr>
-                <tr v-if="!loading && !keys.length"><td colspan="10" class="muted" style="text-align:center;padding:28px">暂无用户 API Key</td></tr>
+                <tr v-if="!loading && !keys.length"><td colspan="11" class="muted" style="text-align:center;padding:28px">暂无用户 API Key</td></tr>
               </tbody>
             </table>
           </div>
@@ -194,7 +216,8 @@ export const ApiAccessPage = {
             <a-input v-model:value="filters.keyword" allow-clear placeholder="搜索用户 / 模型 / 提示词" style="width:260px" />
             <a-select v-model:value="filters.status" style="width:120px">
               <a-select-option value="all">全部状态</a-select-option>
-              <a-select-option value="queued">处理中</a-select-option>
+              <a-select-option value="queued">排队中</a-select-option>
+              <a-select-option value="processing">处理中</a-select-option>
               <a-select-option value="success">成功</a-select-option>
               <a-select-option value="failed">失败</a-select-option>
             </a-select>

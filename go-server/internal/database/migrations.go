@@ -69,6 +69,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_keys", "key_plain", "VARCHAR(255) NULL", "key_hash"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_keys", "concurrency_limit", "INTEGER NOT NULL DEFAULT 1", "status"); err != nil {
+		return err
+	}
 	if err := dropRemovedFeatureTables(ctx, db); err != nil {
 		return err
 	}
@@ -564,6 +567,7 @@ func schemaBootstrapStatements() []string {
 				key_hash VARCHAR(64) NOT NULL UNIQUE,
 				key_plain VARCHAR(255) NULL,
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
+				concurrency_limit INTEGER NOT NULL DEFAULT 1,
 				last_used_at TIMESTAMP NULL,
 				deleted_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -627,6 +631,7 @@ func schemaBootstrapStatements() []string {
 			key_hash VARCHAR(64) NOT NULL UNIQUE,
 			key_plain VARCHAR(255) NULL,
 			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			concurrency_limit INTEGER NOT NULL DEFAULT 1,
 			last_used_at DATETIME NULL,
 			deleted_at DATETIME NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

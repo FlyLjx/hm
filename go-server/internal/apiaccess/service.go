@@ -101,13 +101,14 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 	}
 	plain := raw
 	key, err := s.keys.CreateKey(ctx, AccessKey{
-		ID:        NewID(),
-		UserID:    userID,
-		Name:      keyName,
-		KeyPrefix: KeyPrefix(raw),
-		KeyHash:   HashKey(raw),
-		KeyPlain:  &plain,
-		Status:    "active",
+		ID:               NewID(),
+		UserID:           userID,
+		Name:             keyName,
+		KeyPrefix:        KeyPrefix(raw),
+		KeyHash:          HashKey(raw),
+		KeyPlain:         &plain,
+		Status:           "active",
+		ConcurrencyLimit: 1,
 	})
 	if err != nil {
 		return nil, err
@@ -118,10 +119,19 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 }
 
 func (s Service) UpdateKeyStatus(ctx context.Context, id string, userID string, status string) (*PublicAccessKey, error) {
-	if status != "active" && status != "disabled" {
+	return s.UpdateKeySettings(ctx, id, userID, status, nil)
+}
+
+func (s Service) UpdateKeySettings(ctx context.Context, id string, userID string, status string, concurrencyLimit *int) (*PublicAccessKey, error) {
+	if strings.TrimSpace(status) != "" && status != "active" && status != "disabled" {
 		return nil, errors.New("状态不正确")
 	}
-	updated, err := s.keys.UpdateKeyStatus(ctx, id, userID, status)
+	if concurrencyLimit != nil {
+		if *concurrencyLimit < 1 || *concurrencyLimit > 50 {
+			return nil, errors.New("并发上限必须在 1 到 50 之间")
+		}
+	}
+	updated, err := s.keys.UpdateKeySettings(ctx, id, userID, status, concurrencyLimit)
 	if err != nil {
 		return nil, err
 	}

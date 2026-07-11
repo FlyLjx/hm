@@ -24,9 +24,9 @@ type accessStore interface {
 
 func (r *Repository) CreateKey(ctx context.Context, key AccessKey) (*AccessKey, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO api_access_keys (id, user_id, name, key_prefix, key_hash, key_plain, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyPlain, key.Status)
+		INSERT INTO api_access_keys (id, user_id, name, key_prefix, key_hash, key_plain, status, concurrency_limit)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyPlain, key.Status, normalizedConcurrencyLimit(key.ConcurrencyLimit))
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +44,7 @@ func (r *Repository) FindActiveByPrefix(ctx context.Context, prefix string) ([]A
 			api_access_keys.key_hash,
 			api_access_keys.key_plain,
 			api_access_keys.status,
+			api_access_keys.concurrency_limit,
 			api_access_keys.last_used_at,
 			api_access_keys.deleted_at,
 			api_access_keys.created_at,
@@ -72,7 +73,7 @@ func (r *Repository) FindKeyByID(ctx context.Context, id string) (*AccessKey, er
 		WHERE api_access_keys.id = ?
 		GROUP BY api_access_keys.id, api_access_keys.user_id, users.email, api_access_keys.name,
 			api_access_keys.key_prefix, api_access_keys.key_hash, api_access_keys.key_plain, api_access_keys.status,
-			api_access_keys.last_used_at, api_access_keys.deleted_at,
+			api_access_keys.concurrency_limit, api_access_keys.last_used_at, api_access_keys.deleted_at,
 			api_access_keys.created_at, api_access_keys.updated_at
 		LIMIT 1
 	`, id)
@@ -89,7 +90,7 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 	rows, err := r.db.QueryContext(ctx, keyListSelect()+where+`
 		GROUP BY api_access_keys.id, api_access_keys.user_id, users.email, api_access_keys.name,
 			api_access_keys.key_prefix, api_access_keys.key_hash, api_access_keys.key_plain, api_access_keys.status,
-			api_access_keys.last_used_at, api_access_keys.deleted_at,
+			api_access_keys.concurrency_limit, api_access_keys.last_used_at, api_access_keys.deleted_at,
 			api_access_keys.created_at, api_access_keys.updated_at
 		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
 	`, args...)
@@ -111,6 +112,7 @@ func keyListSelect() string {
 			api_access_keys.key_hash,
 			api_access_keys.key_plain,
 			api_access_keys.status,
+			api_access_keys.concurrency_limit,
 			api_access_keys.last_used_at,
 			api_access_keys.deleted_at,
 			api_access_keys.created_at,
@@ -127,13 +129,31 @@ func keyListSelect() string {
 }
 
 func (r *Repository) UpdateKeyStatus(ctx context.Context, id string, userID string, status string) (*AccessKey, error) {
+	return r.UpdateKeySettings(ctx, id, userID, status, nil)
+}
+
+func (r *Repository) UpdateKeySettings(ctx context.Context, id string, userID string, status string, concurrencyLimit *int) (*AccessKey, error) {
+	assignments := []string{}
+	args := []any{}
+	if strings.TrimSpace(status) != "" {
+		assignments = append(assignments, "status = ?")
+		args = append(args, strings.TrimSpace(status))
+	}
+	if concurrencyLimit != nil {
+		assignments = append(assignments, "concurrency_limit = ?")
+		args = append(args, normalizedConcurrencyLimit(*concurrencyLimit))
+	}
+	if len(assignments) == 0 {
+		return r.FindKeyByID(ctx, id)
+	}
+	assignments = append(assignments, "updated_at = CURRENT_TIMESTAMP")
 	where := `id = ? AND deleted_at IS NULL`
-	args := []any{status, id}
+	args = append(args, id)
 	if strings.TrimSpace(userID) != "" {
 		where += ` AND user_id = ?`
 		args = append(args, strings.TrimSpace(userID))
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE api_access_keys SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE `+where, args...)
+	_, err := r.db.ExecContext(ctx, `UPDATE api_access_keys SET `+strings.Join(assignments, ", ")+` WHERE `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +206,19 @@ func (r *Repository) createLog(ctx context.Context, store accessStore, log Usage
 	}
 	row := store.QueryRowContext(ctx, usageLogSelect()+` WHERE api_access_logs.id = ? LIMIT 1`, log.ID)
 	return scanUsageLog(row)
+}
+
+func (r *Repository) MarkLogsProcessingForTask(ctx context.Context, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE api_access_logs
+		SET status = 'processing'
+		WHERE task_id = ? AND status = 'queued'
+	`, taskID)
+	return err
 }
 
 func (r *Repository) FinishLog(ctx context.Context, id string, status string, imageCount int, message string) error {
@@ -439,6 +472,7 @@ func scanAccessKey(row accessKeyScanner) (*AccessKey, error) {
 		&item.KeyHash,
 		&keyPlain,
 		&item.Status,
+		&item.ConcurrencyLimit,
 		&lastUsedAt,
 		&deletedAt,
 		&item.CreatedAt,

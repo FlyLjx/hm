@@ -15,6 +15,7 @@ import (
 
 	"aipi-go/internal/apiaccess"
 	"aipi-go/internal/database"
+	"aipi-go/internal/generation"
 	"aipi-go/internal/models"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
@@ -230,7 +231,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, status, message, errorType)
 		return
 	}
-	r.queue.Enqueue(savedTask.ID)
+	r.queue.EnqueueScoped(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), auth.APIKey.ConcurrencyLimit)
 
 	resultCh := make(chan compatTaskResult, 1)
 	go func() {

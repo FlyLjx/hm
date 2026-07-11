@@ -6,7 +6,8 @@ const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
 
 const LOG_STATUS_OPTIONS = Object.freeze([
   { value: 'all', label: '全部状态' },
-  { value: 'queued', label: '处理中' },
+  { value: 'queued', label: '排队中' },
+  { value: 'processing', label: '处理中' },
   { value: 'success', label: '成功' },
   { value: 'failed', label: '失败' },
 ])
@@ -40,7 +41,7 @@ function truncatePrompt(value) {
 function logStatusText(status) {
   if (status === 'success') return '成功'
   if (status === 'failed') return '失败'
-  if (status === 'queued') return '处理中'
+  if (status === 'queued' || status === 'processing') return '处理中'
   return '处理中'
 }
 
@@ -547,6 +548,7 @@ export const ApiAccessPage = {
                   <div class="api-access-v2-key-foot">
                     <div class="api-access-v2-key-meta">
                       <span><i class="ti ti-calendar"></i>创建：{{ formatDate(item.createdAt) }}</span>
+                      <span><i class="ti ti-arrows-split"></i>并发：{{ numberText(item.concurrencyLimit || 1) }}</span>
                       <span><i class="ti ti-clock"></i>最近使用：{{ item.lastUsedAt ? formatDate(item.lastUsedAt) : '暂无' }}</span>
                     </div>
                     <div class="api-access-v2-row-actions">

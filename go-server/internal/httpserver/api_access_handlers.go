@@ -187,7 +187,8 @@ func (r *Router) adminAPIAccessKeyByID(w http.ResponseWriter, req *http.Request)
 	switch req.Method {
 	case http.MethodPatch:
 		var input struct {
-			Status string `json:"status"`
+			Status           string `json:"status"`
+			ConcurrencyLimit *int   `json:"concurrencyLimit"`
 		}
 		if err := decodeCompatJSON(req, &input); err != nil {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -195,7 +196,7 @@ func (r *Router) adminAPIAccessKeyByID(w http.ResponseWriter, req *http.Request)
 		}
 		ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 		defer cancel()
-		item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).UpdateKeyStatus(ctx, id, "", input.Status)
+		item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).UpdateKeySettings(ctx, id, "", input.Status, input.ConcurrencyLimit)
 		if err != nil {
 			writeError(w, err)
 			return
