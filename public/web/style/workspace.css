@@ -10678,6 +10678,7 @@ body .api-access-v2-key-main {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 body .api-access-v2-key-title,
@@ -10746,6 +10747,22 @@ body .api-access-v2-result em.failed {
 body .api-access-v2-result em.queued {
   background: #f1f5f9;
   color: #475467;
+}
+
+body .api-access-v2-concurrency-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #047857;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 body .api-access-v2-key-stats {

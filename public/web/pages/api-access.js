@@ -1,5 +1,5 @@
-import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-align-v1'
-import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-align-v1'
+import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-card-v1'
+import { formatDate } from '../common/format.js?v=20260711-api-key-concurrency-card-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
@@ -429,8 +429,7 @@ export const ApiAccessPage = {
             <div>
               <small>当前账号</small>
               <strong>{{ userName }}</strong>
-              <em>已创建：{{ keyCountText }}</em>
-              <em>默认并发：{{ defaultConcurrencyText }}</em>
+              <em>已创建：{{ keyCountText }} · 默认并发：{{ defaultConcurrencyText }}</em>
             </div>
           </div>
         </section>
@@ -444,10 +443,10 @@ export const ApiAccessPage = {
             </div>
           </article>
           <article>
-            <span class="blue"><i class="ti ti-chart-arrows-vertical"></i></span>
+            <span class="blue"><i class="ti ti-arrows-split"></i></span>
             <div>
-              <strong>{{ numberText(stats.requests) }}</strong>
-              <small>请求总数</small>
+              <strong>{{ defaultConcurrencyText }}</strong>
+              <small>单 Key 默认并发</small>
             </div>
           </article>
           <article>
@@ -519,6 +518,10 @@ export const ApiAccessPage = {
                   <div class="api-access-v2-key-top">
                     <div class="api-access-v2-key-main">
                       <span :class="['api-access-v2-status', statusClass(item.status)]">{{ statusLabel(item.status) }}</span>
+                      <span class="api-access-v2-concurrency-badge">
+                        <i class="ti ti-arrows-split"></i>
+                        并发 {{ numberText(item.concurrencyLimit || 10) }}
+                      </span>
                       <div class="api-access-v2-key-title">
                         <strong>{{ item.name }}</strong>
                         <small>Key 内容已隐藏，需要时点击右侧查看</small>
