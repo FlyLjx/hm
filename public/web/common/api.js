@@ -98,6 +98,7 @@ export const clientApi = {
   updateTaskFavorite: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/favorite`, { method: 'PATCH', body: JSON.stringify(input) }),
   requestTaskPublic: (id, input) => request(`/api/tasks/${encodeURIComponent(id)}/public-request`, { method: 'POST', body: JSON.stringify(input) }),
   estimateTaskDuration: (input) => request(`/api/tasks/estimate${query(input)}`),
+  getUpstreamStability: () => request('/api/upstream/stability'),
 
   listSubscriptionPlans: () => request('/api/subscriptions/public/plans'),
   getCurrentSubscription: (userId) => request(`/api/subscriptions/public/current${query({ userId })}`),

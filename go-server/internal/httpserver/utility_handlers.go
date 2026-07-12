@@ -12,6 +12,78 @@ import (
 	"aipi-go/internal/users"
 )
 
+const upstreamStabilityEndpoint = "https://free-api.yccc.me/health/stability"
+
+func (r *Router) upstreamStability(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
+	defer cancel()
+
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamStabilityEndpoint, nil)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("请求创建失败："+err.Error(), 0)})
+		return
+	}
+	upstreamReq.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(upstreamReq)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口连接失败："+err.Error(), 0)})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口返回异常："+strings.TrimSpace(string(body)), resp.StatusCode)})
+		return
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口返回格式异常", resp.StatusCode)})
+		return
+	}
+	if data, ok := payload.(map[string]any); ok {
+		data["source"] = upstreamStabilityEndpoint
+		data["upstream_status_code"] = resp.StatusCode
+		data["reachable"] = true
+		data["fetched_at"] = time.Now().Format(time.RFC3339)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"status":               "unknown",
+		"source":               upstreamStabilityEndpoint,
+		"upstream_status_code": resp.StatusCode,
+		"reachable":            true,
+		"payload":              payload,
+		"fetched_at":           time.Now().Format(time.RFC3339),
+	}})
+}
+
+func upstreamStabilityFallback(message string, upstreamStatusCode int) map[string]any {
+	now := time.Now()
+	return map[string]any{
+		"window_seconds":       60,
+		"window_start":         now.Add(-60 * time.Second).Format(time.RFC3339),
+		"window_end":           now.Format(time.RFC3339),
+		"generated_at":         now.Format(time.RFC3339),
+		"fetched_at":           now.Format(time.RFC3339),
+		"total":                0,
+		"success":              0,
+		"failed":               0,
+		"stability_percent":    0,
+		"status":               "unreachable",
+		"series":               []any{},
+		"reachable":            false,
+		"source":               upstreamStabilityEndpoint,
+		"upstream_status_code": upstreamStatusCode,
+		"error":                strings.TrimSpace(message),
+	}
+}
+
 func (r *Router) accountPoolAccounts(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		writeMethodNotAllowed(w)

@@ -50,6 +50,7 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 
 func (r *Router) routes() {
 	r.mux.HandleFunc("/api/health", r.health)
+	r.mux.HandleFunc("/api/upstream/stability", r.upstreamStability)
 	r.mux.HandleFunc("/api/go/migration", r.migrationStatus)
 	r.mux.HandleFunc("/api/home/bootstrap", r.homeBootstrap)
 	r.mux.HandleFunc("/api/dashboard", r.dashboard)

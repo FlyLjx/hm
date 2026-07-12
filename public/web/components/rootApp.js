@@ -1,8 +1,8 @@
-import { clientApi } from '../common/api.js?v=20260711-api-key-concurrency-title-v1'
+import { clientApi } from '../common/api.js?v=20260713-status-page-align-v1'
 import { localReceipts, receiptKey, saveReceipt } from '../common/announcementReceipts.js'
-import { formatCurrency, formatDate } from '../common/format.js?v=20260711-api-key-concurrency-title-v1'
+import { formatCurrency, formatDate } from '../common/format.js?v=20260713-status-page-align-v1'
 import { renderMarkdown } from '../common/markdown.js'
-import { pageFromHash } from '../common/navigation.js?v=20260711-api-key-concurrency-title-v1'
+import { pageFromHash } from '../common/navigation.js?v=20260713-status-page-align-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 import { createQRCodeDataUrl } from '../common/qrCode.js'
 import { disconnectGenerationTaskSocket } from '../common/taskSocket.js'
@@ -10,7 +10,7 @@ import { clearCurrentUser, getCurrentUser, saveCurrentUser } from '../common/use
 import { disconnectCurrentUserSocket, subscribeCurrentUser } from '../common/userSocket.js'
 
 const { computed, defineAsyncComponent, markRaw, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
-const WEB_ASSET_VERSION = '20260711-api-key-concurrency-title-v1'
+const WEB_ASSET_VERSION = '20260713-status-page-align-v1'
 
 const PageLoading = markRaw({
   template: `
@@ -46,6 +46,7 @@ const ProfilePage = lazyPage(() => import(`../pages/profile.js?v=${WEB_ASSET_VER
 const InvitePage = lazyPage(() => import(`../pages/invite.js?v=${WEB_ASSET_VERSION}`), 'InvitePage')
 const LotteryPage = lazyPage(() => import(`../pages/lottery.js?v=${WEB_ASSET_VERSION}`), 'LotteryPage')
 const ApiAccessPage = lazyPage(() => import(`../pages/api-access.js?v=${WEB_ASSET_VERSION}`), 'ApiAccessPage')
+const StatusPage = lazyPage(() => import(`../pages/status.js?v=${WEB_ASSET_VERSION}`), 'StatusPage')
 
 function displayBrandName(value, fallback = 'AI-PAI') {
   const text = String(value || fallback).trim() || fallback
@@ -66,6 +67,7 @@ export const RootApp = {
     InvitePage,
     LotteryPage,
     ApiAccessPage,
+    StatusPage,
   },
   setup() {
     const activePage = ref(pageFromHash())
@@ -105,6 +107,7 @@ export const RootApp = {
       { id: 'plaza', label: '提示词广场', icon: 'ti-layout-grid' },
       { id: 'history', label: '作品库', icon: 'ti-photo-heart' },
       { id: 'api-access', label: 'API 管理', icon: 'ti-key' },
+      { id: 'status', label: '服务状态', icon: 'ti-activity-heartbeat' },
       { id: 'lottery', label: '抽订阅', icon: 'ti-gift' },
       { id: 'invite', label: '邀请好友', icon: 'ti-user-plus' },
       { id: 'profile', label: '用户中心', icon: 'ti-user-circle' },
@@ -120,7 +123,7 @@ export const RootApp = {
       return keys.length ? new Set(keys).size : announcements.value.length
     })
     const activeNav = computed(() => navItems.find((item) => item.id === activePage.value) || navItems[0])
-    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'announcements', 'chat', 'plaza', 'history', 'api-access', 'lottery', 'invite', 'profile'].includes(item.id)))
+    const primaryNavItems = computed(() => navItems.filter((item) => ['home', 'announcements', 'chat', 'plaza', 'history', 'api-access', 'status', 'lottery', 'invite', 'profile'].includes(item.id)))
     const bottomNavItems = computed(() => navItems.filter((item) => ['home', 'chat', 'history', 'profile'].includes(item.id)))
     const selectedSubscriptionPlan = computed(() => subscriptionState.plans.find((plan) => plan.id === subscriptionState.selectedPlanId) || null)
     const topAccountSubscription = computed(() => currentUser.value?.subscription || null)
@@ -969,6 +972,10 @@ export const RootApp = {
                     <i class="ti ti-key"></i>
                     <span>API 管理</span>
                   </button>
+                  <button type="button" @click="runNavAction(() => setPage('status'))">
+                    <i class="ti ti-activity-heartbeat"></i>
+                    <span>服务状态</span>
+                  </button>
                   <button type="button" @click="runNavAction(() => setPage('lottery'))">
                     <i class="ti ti-gift"></i>
                     <span>抽订阅</span>
@@ -1009,6 +1016,7 @@ export const RootApp = {
               <button type="button" @click="runNavAction(() => setPage('profile'))"><i class="ti ti-user-circle"></i><span>用户中心</span></button>
               <button type="button" @click="runNavAction(() => setPage('history'))"><i class="ti ti-photo-heart"></i><span>作品库</span></button>
               <button type="button" @click="runNavAction(() => setPage('api-access'))"><i class="ti ti-key"></i><span>API</span></button>
+              <button type="button" @click="runNavAction(() => setPage('status'))"><i class="ti ti-activity-heartbeat"></i><span>状态</span></button>
               <button type="button" @click="runNavAction(() => setPage('lottery'))"><i class="ti ti-gift"></i><span>抽订阅</span></button>
               <button type="button" @click="runNavAction(openInvite)"><i class="ti ti-user-plus"></i><span>邀请</span></button>
               <button v-if="supportVisible" type="button" @click="runNavAction(openSupport)"><i class="ti ti-headset"></i><span>客服</span></button>
@@ -1045,6 +1053,7 @@ export const RootApp = {
           <plaza-page v-if="activePage === 'plaza'" @go="setPage" @preview="previewImage = $event" />
           <history-page v-if="activePage === 'history'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @preview="previewImage = $event" />
           <api-access-page v-if="activePage === 'api-access'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @auth-expired="expireUserSession" />
+          <status-page v-if="activePage === 'status'" @go="setPage" />
           <lottery-page v-if="activePage === 'lottery'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @user-updated="updateCurrentUser" />
           <invite-page v-if="activePage === 'invite'" :current-user="currentUser" :site-name="siteName" @go="setPage" @login="loginOpen = true" />
           <profile-page v-if="activePage === 'profile'" :current-user="currentUser" @go="setPage" @login="loginOpen = true" @subscribe="openSubscription" @user-updated="updateCurrentUser" />
@@ -1261,3 +1270,11 @@ export const RootApp = {
     </main>
   `,
 }
+
+
+
+
+
+
+
+
