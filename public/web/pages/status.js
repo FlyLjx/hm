@@ -1,4 +1,4 @@
-import { clientApi } from '../common/api.js?v=20260713-status-page-align-v1'
+import { clientApi } from '../common/api.js?v=20260713-cache-fix-v1'
 import { notifyError } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, ref } = Vue
@@ -239,5 +239,6 @@ export const StatusPage = {
     </div>
   `,
 }
+
 
 

@@ -208,6 +208,9 @@ func (r *Router) staticFallback(w http.ResponseWriter, req *http.Request) {
 func setStaticNoStoreHeaders(w http.ResponseWriter, requestPath string) {
 	if requestPath == "/" ||
 		requestPath == "/admin" ||
+		requestPath == "/web" ||
+		requestPath == "/web/" ||
+		requestPath == "/admin/" ||
 		strings.HasSuffix(requestPath, ".html") {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
@@ -215,7 +218,16 @@ func setStaticNoStoreHeaders(w http.ResponseWriter, requestPath string) {
 		return
 	}
 	if strings.HasPrefix(requestPath, "/web/") || strings.HasPrefix(requestPath, "/admin/") {
-		w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+		if strings.HasSuffix(requestPath, ".js") ||
+			strings.HasSuffix(requestPath, ".css") ||
+			strings.HasSuffix(requestPath, ".json") ||
+			strings.HasSuffix(requestPath, ".svg") {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=3600")
 	}
 }
 

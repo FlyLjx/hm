@@ -1,4 +1,6 @@
-import { RootApp } from './components/rootApp.js?v=20260710-api-access-v18'
+const entryUrl = new URL(import.meta.url)
+const entryVersion = entryUrl.searchParams.get('v') || 'dev'
+const { RootApp } = await import(`./components/rootApp.js?v=${encodeURIComponent(entryVersion)}`)
 
 const app = Vue.createApp(RootApp)
 

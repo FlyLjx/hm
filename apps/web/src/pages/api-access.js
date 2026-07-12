@@ -1,5 +1,5 @@
-import { clientApi } from '../common/api.js?v=20260713-status-page-align-v1'
-import { formatDate } from '../common/format.js?v=20260713-status-page-align-v1'
+import { clientApi } from '../common/api.js?v=20260713-cache-fix-v1'
+import { formatDate } from '../common/format.js?v=20260713-cache-fix-v1'
 import { notifyError, notifySuccess } from '../common/notify.js'
 
 const { computed, onBeforeUnmount, onMounted, reactive, ref, watch } = Vue
@@ -826,6 +826,7 @@ export const ApiAccessPage = {
     </div>
   `,
 }
+
 
 
 
